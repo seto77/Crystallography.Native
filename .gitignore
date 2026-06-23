@@ -1,0 +1,12 @@
+.vs/
+bin/
+obj/
+x64/
+ARM64/
+Debug/
+Release/
+*.user
+*.suo
+*.csproj.lscache
+*.VC.db
+*.opendb
