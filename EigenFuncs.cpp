@@ -383,6 +383,160 @@ extern "C" {
 		}
 	}
 
+	// 260704Cl 追加: Hermitian化 + 吸収摂動 CBED ソルバー (ReciPro_BetheMethod高速化提案.md §8 Phase H0 検証用)
+	// 入力は現行 getEigenMatrix の出力そのまま A = (M+D_Q)·D_P⁻¹ (column-major, 非Hermitian) と対角 P (>0 必須, 呼び出し側で保証)。
+	// 対称化 Ã(i,j) = A(i,j)·√(P_j/P_i) は H + iH' (H, H' とも厳密に Hermitian; U(-g)=conj(U(g)) による) に分解でき、
+	// SelfAdjointEigenSolver(H) の実固有値 γ_j とユニタリ W に吸収 H' を摂動として載せる。
+	// ψ(t) = D_P^{1/2} W diag(exp(2πiλ_j t)) α,  α = W^H D_P^{-1/2} ψ0 (W ユニタリのため LU 不要)。
+	// perturb: 0 = 摂動なし (吸収完全無視, 比較用)
+	//          1 = 対角 1 次摂動 λ_j = γ_j + i·w_j^H H' w_j (準縮退で破綻し得る)
+	//          2 = 準縮退クラスター摂動: E = W^H H' W を作り、ペア条件 clusterTol·|E_jk| > γ_k−γ_j (結合強度 vs gap)
+	//              を満たす固有値区間をクラスター化し、クラスター内 m×m 行列 diag(γ_C) + i·E_C を厳密対角化
+	//              (縮退摂動論の標準処方)。W_C ← W_C·V_C, α_C ← V_C⁻¹·α_C で固有対も更新 (V_C は非ユニタリになり得る)
+	//          3 = 2 に加えクラスタ外ペアの固有ベクトル 1 次補正 + 固有値 2 次補正 (RS 摂動論):
+	//              U = blockdiag(V_C) + C, C_kj = (iE)_kj/(γ_j−γ_k) (別クラスタペアのみ)、
+	//              λ_j −= Σ_k |E_jk|²/(γ_j−γ_k) (単独列のみ, 実シフト)。V = W·U, α = U⁻¹ W^H D^{-1/2}ψ0 (U は N×N LU 1本)。
+	//              残差誤差は (|E|/gap) の 1 次 → 2 次に落ちる
+	// stats (perturb>=2 のとき書き込み, nullptr 可): [0] = クラスター化後の残差危険度 max |E_jk|/gap (クラスタ外ペア),
+	//              [1] = m>1 クラスター数, [2] = 最大クラスターサイズ
+	// 出力契約は _CBEDSolver_Eigen と同一 (result = dim×tDim column-major)。
+	EIGEN_FUNCS_API void _CBEDSolverHermitian(int dim, double potential[], double p[], double psi0[], int tDim, double thickness[], double result[], int perturb, double clusterTol, double stats[])
+	{
+		auto A = Map<Mat>((dcomplex*)potential, dim, dim);
+		VectorXd sq(dim);
+		for (int i = 0; i < dim; ++i)
+			sq[i] = sqrt(p[i]);
+
+		Mat At(dim, dim);
+		for (int j = 0; j < dim; ++j)
+		{
+			const double sj = sq[j];
+			for (int i = 0; i < dim; ++i)
+				At(i, j) = A(i, j) * (sj / sq[i]);
+		}
+
+		Mat H = (At + At.adjoint()) * 0.5;
+		SelfAdjointEigenSolver<Mat> solver(H);
+		const auto& gamma = solver.eigenvalues(); // 実固有値 (昇順)
+		Mat W = solver.eigenvectors();            // ユニタリ (クラスター処理で列を更新するためコピー)
+
+		// α = W^H D_P^{-1/2} ψ0 (クラスター処理前の W で計算し、後段で α_C ← V_C⁻¹ α_C を適用)
+		Vec dpsi0(dim);
+		for (int i = 0; i < dim; ++i)
+			dpsi0[i] = ((dcomplex*)psi0)[i] / sq[i];
+		Vec alpha;
+		alpha.noalias() = W.adjoint() * dpsi0;
+
+		Vec lambda(dim);
+		if (perturb == 0)
+			for (int j = 0; j < dim; ++j)
+				lambda[j] = gamma[j];
+		else
+		{
+			Mat Habs = (At - At.adjoint()) * dcomplex(0, -0.5); // H' (Hermitian, 吸収)
+			Mat T;
+			T.noalias() = Habs * W; // O(N³) GEMM
+			if (perturb == 1)
+			{
+				for (int j = 0; j < dim; ++j)
+					lambda[j] = dcomplex(gamma[j], W.col(j).dot(T.col(j)).real()); // E_jj (Hermitian 二次形式なので実)
+			}
+			else
+			{
+				Mat E;
+				E.noalias() = W.adjoint() * T; // E = W^H H' W (Hermitian)。O(N³) GEMM もう1本 (EVD 比では小)
+				for (int j = 0; j < dim; ++j)
+					lambda[j] = dcomplex(gamma[j], E(j, j).real());
+
+				// ペア条件による区間併合: clusterTol·|E_jk| > gap なら [j,k] を同一クラスタへ (γ はソート済み)
+				std::vector<int> reach(dim);
+				for (int j = 0; j < dim; ++j)
+					reach[j] = j;
+				for (int j = 0; j < dim; ++j)
+					for (int k = j + 1; k < dim; ++k)
+						if (clusterTol * abs(E(j, k)) > gamma[k] - gamma[j] && k > reach[j])
+							reach[j] = k;
+
+				std::vector<int> clusterOf(dim);
+				Mat U = Mat::Identity(dim, dim); // 基底 W 上の合成変換 (クラスタ回転 + ベクトル1次補正)
+				bool hasU = false;
+				int nClusters = 0, maxCluster = 1;
+				int s = 0;
+				while (s < dim)
+				{
+					int t2 = reach[s];
+					for (int q = s; q <= t2; ++q) // 推移閉包 (区間の連鎖拡張)
+						t2 = max(t2, reach[q]);
+					const int m = t2 - s + 1;
+					for (int q = s; q <= t2; ++q)
+						clusterOf[q] = s;
+					if (m > 1)
+					{
+						++nClusters;
+						maxCluster = max(maxCluster, m);
+						hasU = true;
+						// クラスター内 m×m: B = diag(γ_C) + i·E_C を厳密対角化
+						Mat B = dcomplex(0, 1) * E.block(s, s, m, m);
+						for (int k = 0; k < m; ++k)
+							B(k, k) += gamma[s + k];
+						ComplexEigenSolver<Mat> cs(B);
+						lambda.segment(s, m) = cs.eigenvalues();
+						U.block(s, s, m, m) = cs.eigenvectors();
+					}
+					s = t2 + 1;
+				}
+
+				if (perturb >= 3)
+				{   // クラスタ外ペアの RS 摂動: 固有ベクトル 1 次 C_kj = (iE)_kj/(γ_j−γ_k)、単独列の固有値 2 次 (実シフト)
+					for (int j = 0; j < dim; ++j)
+					{
+						double shift2 = 0;
+						for (int k = 0; k < dim; ++k)
+							if (clusterOf[k] != clusterOf[j])
+							{
+								const double dg = gamma[j] - gamma[k];
+								U(k, j) += dcomplex(0, 1) * E(k, j) / dg;
+								shift2 -= (E(j, k) * E(k, j)).real() / dg; // = −|E_jk|²/dg (E は Hermitian)
+							}
+						if (clusterOf[j] == j && (j + 1 >= dim || clusterOf[j + 1] != j)) // 単独列のみ (クラスタ列の外部 2 次は高次扱いで省略)
+							lambda[j] += shift2;
+					}
+					hasU = true;
+				}
+
+				if (hasU)
+				{
+					alpha = U.partialPivLu().solve(alpha.eval()); // α = U⁻¹ (W^H D^{-1/2} ψ0)
+					W = (W * U).eval();                           // V = W·U
+				}
+
+				if (stats != nullptr)
+				{
+					double resid = 0; // クラスター化されずに残ったペアの max |E_jk|/gap = 1次近似の危険度
+					for (int j = 0; j < dim; ++j)
+						for (int k = j + 1; k < dim; ++k)
+							if (clusterOf[j] != clusterOf[k])
+								resid = max(resid, abs(E(j, k)) / (gamma[k] - gamma[j]));
+					stats[0] = resid;
+					stats[1] = nClusters;
+					stats[2] = maxCluster;
+				}
+			}
+		}
+
+		auto res = Map<Mat>((dcomplex*)result, dim, tDim);
+		Vec ga(dim);
+		for (int t = 0; t < tDim; ++t)
+		{
+			const auto coeff = two_pi_i * thickness[t];
+			for (int j = 0; j < dim; ++j)
+				ga[j] = exp(lambda[j] * coeff) * alpha[j];
+			res.col(t).noalias() = W * ga;
+			for (int g = 0; g < dim; ++g)
+				res(g, t) *= sq[g]; // ψ = D_P^{1/2}·(W·ga)
+		}
+	}
+
 	//CBEDソルバー
 	EIGEN_FUNCS_API void _CBEDSolver_MtxExp(int dim, double potential[], double psi0[], int tDim, double tStart, double tStep, double result[])
 	{

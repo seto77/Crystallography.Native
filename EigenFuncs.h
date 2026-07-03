@@ -39,6 +39,7 @@ extern "C" {
 	EIGEN_FUNCS_API void _CBEDSolver_Eigen(int gDim, double _potential[], double _phi0[], int tDim, double thickness[], double result[]);
 	EIGEN_FUNCS_API void _CBEDSolver_Eigen2(int dim, double potential[], double psi0[], int tDim, double thickness[], double Values[], double Vectors[], double Alphas[], double Tg[]);
 	EIGEN_FUNCS_API void _CBEDSolver_MatExp(int gDim, double _potential[], double _phi0[], int tDim, double tStart, double tStep, double result[]);
+	EIGEN_FUNCS_API void _CBEDSolverHermitian(int dim, double potential[], double p[], double psi0[], int tDim, double thickness[], double result[], int perturb, double clusterTol, double stats[]); // 260704Cl 追加 (提案書§8 Phase H0)
 
 	EIGEN_FUNCS_API void _PartialPivLuSolve(int dim, double mat[], double vec[], double result[]);
 
