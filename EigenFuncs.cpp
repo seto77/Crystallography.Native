@@ -384,10 +384,13 @@ extern "C" {
 	}
 
 	// 260704Cl 追加: Hermitian化 + 吸収摂動 CBED ソルバー (ReciPro_BetheMethod高速化提案.md §8 Phase H0 検証用)
-	// 入力は現行 getEigenMatrix の出力そのまま A = (M+D_Q)·D_P⁻¹ (column-major, 非Hermitian) と対角 P (>0 必須, 呼び出し側で保証)。
-	// 対称化 Ã(i,j) = A(i,j)·√(P_j/P_i) は H + iH' (H, H' とも厳密に Hermitian; U(-g)=conj(U(g)) による) に分解でき、
+	// 260829Cl 変更: managed getEigenMatrix の P 除算が列割り M = B̃D_P⁻¹ から行割り A = D_P⁻¹B̃ へ修正されたのに追随し、
+	//   √P 変換の向きを反転 (At の si/sj、ψ0 側の ×√P、出力側の ÷√P の 3 箇所)。対称化後の S = D_P^{-1/2}B̃D_P^{-1/2}
+	//   自体は両規約で同一なので、H/H'/摂動機構は無変更。
+	// 入力は現行 getEigenMatrix の出力そのまま A = D_P⁻¹·(M+D_Q) (column-major, 行割り, 非Hermitian) と対角 P (>0 必須, 呼び出し側で保証)。
+	// 対称化 Ã(i,j) = A(i,j)·√(P_i/P_j) は H + iH' (H, H' とも厳密に Hermitian; U(-g)=conj(U(g)) による) に分解でき、
 	// SelfAdjointEigenSolver(H) の実固有値 γ_j とユニタリ W に吸収 H' を摂動として載せる。
-	// ψ(t) = D_P^{1/2} W diag(exp(2πiλ_j t)) α,  α = W^H D_P^{-1/2} ψ0 (W ユニタリのため LU 不要)。
+	// ψ(t) = D_P^{-1/2} W diag(exp(2πiλ_j t)) α,  α = W^H D_P^{+1/2} ψ0 (W ユニタリのため LU 不要)。
 	// perturb: 0 = 摂動なし (吸収完全無視, 比較用)
 	//          1 = 対角 1 次摂動 λ_j = γ_j + i·w_j^H H' w_j (準縮退で破綻し得る)
 	//          2 = 準縮退クラスター摂動: E = W^H H' W を作り、ペア条件 clusterTol·|E_jk| > γ_k−γ_j (結合強度 vs gap)
@@ -412,7 +415,7 @@ extern "C" {
 		{
 			const double sj = sq[j];
 			for (int i = 0; i < dim; ++i)
-				At(i, j) = A(i, j) * (sj / sq[i]);
+				At(i, j) = A(i, j) * (sq[i] / sj); // 260829Cl 変更: 行割り入力 A に対し Ã = D^{+1/2}AD^{-1/2}。変更前: A(i, j) * (sj / sq[i])
 		}
 
 		Mat H = (At + At.adjoint()) * 0.5;
@@ -420,10 +423,10 @@ extern "C" {
 		const auto& gamma = solver.eigenvalues(); // 実固有値 (昇順)
 		Mat W = solver.eigenvectors();            // ユニタリ (クラスター処理で列を更新するためコピー)
 
-		// α = W^H D_P^{-1/2} ψ0 (クラスター処理前の W で計算し、後段で α_C ← V_C⁻¹ α_C を適用)
+		// α = W^H D_P^{+1/2} ψ0 (クラスター処理前の W で計算し、後段で α_C ← V_C⁻¹ α_C を適用)
 		Vec dpsi0(dim);
 		for (int i = 0; i < dim; ++i)
-			dpsi0[i] = ((dcomplex*)psi0)[i] / sq[i];
+			dpsi0[i] = ((dcomplex*)psi0)[i] * sq[i]; // 260829Cl 変更: 行割り規約では ×√P。変更前: / sq[i]
 		Vec alpha;
 		alpha.noalias() = W.adjoint() * dpsi0;
 
@@ -533,7 +536,7 @@ extern "C" {
 				ga[j] = exp(lambda[j] * coeff) * alpha[j];
 			res.col(t).noalias() = W * ga;
 			for (int g = 0; g < dim; ++g)
-				res(g, t) *= sq[g]; // ψ = D_P^{1/2}·(W·ga)
+				res(g, t) /= sq[g]; // ψ = D_P^{-1/2}·(W·ga)。260829Cl 変更 (行割り規約)。変更前: *= sq[g]
 		}
 	}
 
