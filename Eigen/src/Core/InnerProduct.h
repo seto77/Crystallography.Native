@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_INNER_PRODUCT_EVAL_H
 #define EIGEN_INNER_PRODUCT_EVAL_H
@@ -19,8 +20,8 @@ namespace internal {
 
 // recursively searches for the largest simd type that does not exceed Size, or the smallest if no such type exists
 template <typename Scalar, int Size, typename Packet = typename packet_traits<Scalar>::type,
-          bool Stop =
-              (unpacket_traits<Packet>::size <= Size) || is_same<Packet, typename unpacket_traits<Packet>::half>::value>
+          bool Stop = (unpacket_traits<Packet>::size <= Size) ||
+                      std::is_same<Packet, typename unpacket_traits<Packet>::half>::value>
 struct find_inner_product_packet_helper;
 
 template <typename Scalar, int Size, typename Packet>
@@ -221,8 +222,7 @@ struct scalar_inner_product_op {
 template <typename Scalar, bool Conj>
 struct scalar_inner_product_op<
     Scalar,
-    std::enable_if_t<internal::is_same<typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType, Scalar>::value,
-                     Scalar>,
+    std::enable_if_t<std::is_same<typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType, Scalar>::value, Scalar>,
     Conj> {
   using result_type = Scalar;
   using conj_helper = conditional_conj<Scalar, Conj>;
@@ -256,8 +256,111 @@ struct default_inner_product_impl {
   }
 };
 
+template <typename T>
+struct unwrap_unary {
+  using type = T;
+  static constexpr bool HasDirectAccess = bool(traits<type>::Flags & DirectAccessBit);
+
+  static EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE constexpr T const& get(T const& xpr) { return xpr; }
+};
+
+template <typename T>
+struct unwrap_unary<T const> : unwrap_unary<T> {};
+
+template <typename Op, typename Xpr>
+struct unwrap_unary<CwiseUnaryOp<Op, Xpr>> : unwrap_unary<Xpr> {
+  static EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE constexpr typename unwrap_unary<Xpr>::type const& get(
+      CwiseUnaryOp<Op, Xpr> const& xpr) {
+    return unwrap_unary<Xpr>::get(xpr.nestedExpression());
+  }
+};
+
+template <typename T, typename Target>
+struct rewrap_unary {
+  using type = Target;
+
+  static EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE constexpr Target const& apply(T const&, Target const& target) {
+    return target;
+  }
+};
+
+template <typename T, typename Target>
+struct rewrap_unary<T const, Target> : rewrap_unary<T, Target const> {};
+
+template <typename Op, typename Xpr, typename Target>
+struct rewrap_unary<CwiseUnaryOp<Op, Xpr>, Target> {
+  using type = CwiseUnaryOp<Op, typename rewrap_unary<Xpr, Target>::type>;
+
+  static EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE constexpr type apply(CwiseUnaryOp<Op, Xpr> const& base,
+                                                                    Target const& target) {
+    return rewrap_unary<Xpr, Target>::apply(base.nestedExpression(), target).unaryExpr(base.functor());
+  }
+};
+
+template <typename Lhs, typename Rhs, bool MayMap = false>
+struct dot_impl_helper {
+  using LhsScalar = typename traits<Lhs>::Scalar;
+  using RhsScalar = typename traits<Rhs>::Scalar;
+  using ResultType = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType run(const MatrixBase<Lhs>& a, const MatrixBase<Rhs>& b) {
+    return default_inner_product_impl<Lhs, Rhs, true>::run(a, b);
+  }
+};
+
 template <typename Lhs, typename Rhs>
-struct dot_impl : default_inner_product_impl<Lhs, Rhs, true> {};
+struct dot_impl_helper<Lhs, Rhs, true> {
+  using LhsScalar = typename traits<Lhs>::Scalar;
+  using RhsScalar = typename traits<Rhs>::Scalar;
+  using ResultType = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType run(const MatrixBase<Lhs>& a, const MatrixBase<Rhs>& b) {
+    using LhsUnwrapper = unwrap_unary<Lhs>;
+    using RhsUnwrapper = unwrap_unary<Rhs>;
+    using LhsInner = typename LhsUnwrapper::type;
+    using RhsInner = typename RhsUnwrapper::type;
+
+    LhsInner const& lhs_inner = LhsUnwrapper::get(a.derived());
+    RhsInner const& rhs_inner = RhsUnwrapper::get(b.derived());
+
+    if (lhs_inner.innerStride() == 1 && rhs_inner.innerStride() == 1) {
+      using LhsMap = Map<Vector<typename LhsInner::Scalar, size_of_xpr_at_compile_time<LhsInner>::value> const,
+                         evaluator<LhsInner>::Alignment>;
+      using RhsMap = Map<Vector<typename RhsInner::Scalar, size_of_xpr_at_compile_time<RhsInner>::value> const,
+                         evaluator<RhsInner>::Alignment>;
+
+      LhsMap const lhs_map(lhs_inner.data(), lhs_inner.size());
+      RhsMap const rhs_map(rhs_inner.data(), rhs_inner.size());
+
+      using LhsRewrap = rewrap_unary<Lhs, LhsMap>;
+      using RhsRewrap = rewrap_unary<Rhs, RhsMap>;
+
+      return default_inner_product_impl<typename LhsRewrap::type, typename RhsRewrap::type, true>::run(
+          LhsRewrap::apply(a.derived(), lhs_map), RhsRewrap::apply(b.derived(), rhs_map));
+    }
+
+    return default_inner_product_impl<Lhs, Rhs, true>::run(a, b);
+  }
+};
+
+template <typename Lhs, typename Rhs>
+struct dot_impl {
+  using LhsScalar = typename traits<Lhs>::Scalar;
+  using RhsScalar = typename traits<Rhs>::Scalar;
+  using ResultType = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType run(const MatrixBase<Lhs>& a, const MatrixBase<Rhs>& b) {
+    using LhsUnwrapper = unwrap_unary<Lhs>;
+    using RhsUnwrapper = unwrap_unary<Rhs>;
+
+    constexpr bool has_dynamic_or_nonunit_stride =
+        inner_stride_at_compile_time<typename LhsUnwrapper::type>::value != 1 ||
+        inner_stride_at_compile_time<typename RhsUnwrapper::type>::value != 1;
+    constexpr bool MayMap = LhsUnwrapper::HasDirectAccess && RhsUnwrapper::HasDirectAccess && has_dynamic_or_nonunit_stride;
+
+    return dot_impl_helper<Lhs, Rhs, MayMap>::run(a, b);
+  }
+};
 
 }  // namespace internal
 }  // namespace Eigen

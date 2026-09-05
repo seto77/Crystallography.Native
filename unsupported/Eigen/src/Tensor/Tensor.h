@@ -7,9 +7,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_H
-#define EIGEN_CXX11_TENSOR_TENSOR_H
+#ifndef EIGEN_TENSOR_TENSOR_H
+#define EIGEN_TENSOR_TENSOR_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -17,7 +18,7 @@
 namespace Eigen {
 
 /** \class Tensor
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief The tensor class.
  *
@@ -34,9 +35,9 @@ namespace Eigen {
  * \tparam Options_  A combination of either \b #RowMajor or \b #ColMajor, and of either
  *                 \b #AutoAlign or \b #DontAlign.
  *                 The former controls \ref TopicStorageOrders "storage order", and defaults to column-major. The latter
- * controls alignment, which is required for vectorization. It defaults to aligning tensors. Note that tensors currently
- * do not support any operations that profit from vectorization. Support for such operations (i.e. adding two tensors
- * etc.) is planned.
+ * controls alignment, which is required for vectorization. It defaults to aligning tensors. Tensor expressions such as
+ * the sum of two tensors are evaluated with packet instructions whenever the evaluators involved support packet
+ * access.
  *
  * You can access elements of tensors using normal subscripting:
  *
@@ -55,10 +56,10 @@ namespace Eigen {
  * <dt><b>Relation to other parts of Eigen:</b></dt>
  * <dd>The midterm development goal for this class is to have a similar hierarchy as Eigen uses for matrices, so that
  * taking blocks or using tensors in expressions is easily possible, including an interface with the vector/matrix code
- * by providing .asMatrix() and .asVector() (or similar) methods for rank 2 and 1 tensors. However, currently, the
- * %Tensor class does not provide any of these features and is only available as a stand-alone class that just allows
- * for coefficient access. Also, when fixed-size tensors are implemented, the number of template arguments is likely to
- * change dramatically.</dd>
+ * by providing .asMatrix() and .asVector() (or similar) methods for rank 2 and 1 tensors. Taking blocks and using
+ * tensors in expressions is already supported through \c TensorBase; interoperability with the vector/matrix code
+ * currently relies on wrapping the data in a \c Map or a \c TensorMap instead of dedicated methods. Fixed-size tensors
+ * are provided by the separate \c TensorFixedSize class.</dd>
  * </dl>
  *
  * \ref TopicStorageOrders
@@ -69,7 +70,7 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
  public:
   typedef Tensor<Scalar_, NumIndices_, Options_, IndexType_> Self;
   typedef TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexType_> > Base;
-  typedef typename Eigen::internal::nested<Self>::type Nested;
+  typedef typename Eigen::internal::ref_selector<Self>::type Nested;
   typedef typename internal::traits<Self>::StorageKind StorageKind;
   typedef typename internal::traits<Self>::Index Index;
   typedef Scalar_ Scalar;
@@ -88,7 +89,7 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
 
   template <typename CustomIndices>
   struct isOfNormalIndex {
-    static constexpr bool is_array = internal::is_base_of<array<Index, NumIndices>, CustomIndices>::value;
+    static constexpr bool is_array = std::is_base_of<array<Index, NumIndices>, CustomIndices>::value;
     static constexpr bool is_int = NumTraits<CustomIndices>::IsInteger;
     static constexpr bool value = is_array | is_int;
   };
@@ -113,7 +114,8 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
                                                             IndexTypes... otherIndices) const {
     // The number of indices used to access a tensor coefficient must be equal to the rank of the tensor.
     EIGEN_STATIC_ASSERT(sizeof...(otherIndices) + 2 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
-    return coeff(array<Index, NumIndices>{{firstIndex, secondIndex, otherIndices...}});
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    return coeff(array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
   }
 
   // normal indices
@@ -142,7 +144,8 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
   inline Scalar& coeffRef(Index firstIndex, Index secondIndex, IndexTypes... otherIndices) {
     // The number of indices used to access a tensor coefficient must be equal to the rank of the tensor.
     EIGEN_STATIC_ASSERT(sizeof...(otherIndices) + 2 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
-    return coeffRef(array<Index, NumIndices>{{firstIndex, secondIndex, otherIndices...}});
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    return coeffRef(array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
   }
 
   // normal indices
@@ -171,7 +174,8 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
   inline const Scalar& operator()(Index firstIndex, Index secondIndex, IndexTypes... otherIndices) const {
     // The number of indices used to access a tensor coefficient must be equal to the rank of the tensor.
     EIGEN_STATIC_ASSERT(sizeof...(otherIndices) + 2 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
-    return this->operator()(array<Index, NumIndices>{{firstIndex, secondIndex, otherIndices...}});
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    return this->operator()(array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
   }
 
   // custom indices
@@ -205,7 +209,8 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
   inline Scalar& operator()(Index firstIndex, Index secondIndex, IndexTypes... otherIndices) {
     // The number of indices used to access a tensor coefficient must be equal to the rank of the tensor.
     EIGEN_STATIC_ASSERT(sizeof...(otherIndices) + 2 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
-    return operator()(array<Index, NumIndices>{{firstIndex, secondIndex, otherIndices...}});
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    return operator()(array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
   }
 
   // normal indices
@@ -230,14 +235,14 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar& operator[](Index index) {
-    // The bracket operator is only for vectors, use the parenthesis operator instead
+    // The bracket operator is only for vectors, use the parenthesis operator instead.
     EIGEN_STATIC_ASSERT(NumIndices == 1, YOU_MADE_A_PROGRAMMING_MISTAKE)
     return coeffRef(index);
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Tensor() : m_storage() {}
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Tensor(const Self& other) : Base(other), m_storage(other.m_storage) {}
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Tensor(const Self& other) = default;
 
   template <typename... IndexTypes>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Tensor(Index firstDimension, IndexTypes... otherDimensions)
@@ -296,7 +301,8 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
   EIGEN_DEVICE_FUNC void resize(Index firstDimension, IndexTypes... otherDimensions) {
     // The number of dimensions used to resize a tensor must be equal to the rank of the tensor.
     EIGEN_STATIC_ASSERT(sizeof...(otherDimensions) + 1 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
-    resize(array<Index, NumIndices>{{firstDimension, otherDimensions...}});
+    eigen_assert(internal::indices_fit<Index>(otherDimensions...));
+    resize(array<Index, NumIndices>{{firstDimension, static_cast<Index>(otherDimensions)...}});
   }
 
   /** Normal Dimension */
@@ -340,7 +346,7 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
     resize(internal::customIndices2Array<Index, NumIndices>(dimensions));
   }
 
-  template <typename std::ptrdiff_t... Indices>
+  template <std::ptrdiff_t... Indices>
   EIGEN_DEVICE_FUNC void resize(const Sizes<Indices...>& dimensions) {
     array<Index, NumIndices> dims;
     for (int i = 0; i < NumIndices; ++i) {
@@ -355,21 +361,14 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
 
  protected:
   bool checkIndexRange(const array<Index, NumIndices>& indices) const {
-    using internal::array_apply_and_reduce;
-    using internal::array_zip_and_reduce;
-    using internal::greater_equal_zero_op;
-    using internal::lesser_op;
-    using internal::logical_and_op;
-
-    return
-        // check whether the indices are all >= 0
-        array_apply_and_reduce<logical_and_op, greater_equal_zero_op>(indices) &&
-        // check whether the indices fit in the dimensions
-        array_zip_and_reduce<logical_and_op, lesser_op>(indices, m_storage.dimensions());
+    for (std::size_t i = 0; i < NumIndices; ++i) {
+      if (indices[i] < 0 || indices[i] >= m_storage.dimensions()[i]) return false;
+    }
+    return true;
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index linearizedIndex(const array<Index, NumIndices>& indices) const {
-    if (Options & RowMajor) {
+    EIGEN_IF_CONSTEXPR (Options & RowMajor) {
       return m_storage.dimensions().IndexOfRowMajor(indices);
     } else {
       return m_storage.dimensions().IndexOfColMajor(indices);
@@ -379,4 +378,4 @@ class Tensor : public TensorBase<Tensor<Scalar_, NumIndices_, Options_, IndexTyp
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_H
+#endif  // EIGEN_TENSOR_TENSOR_H

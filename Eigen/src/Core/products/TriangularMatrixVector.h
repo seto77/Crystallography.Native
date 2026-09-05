@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_TRIANGULARMATRIXVECTOR_H
 #define EIGEN_TRIANGULARMATRIXVECTOR_H
@@ -23,8 +24,8 @@ struct triangular_matrix_vector_product;
 
 template <typename Index, int Mode, typename LhsScalar, bool ConjLhs, typename RhsScalar, bool ConjRhs, int Version>
 struct triangular_matrix_vector_product<Index, Mode, LhsScalar, ConjLhs, RhsScalar, ConjRhs, ColMajor, Version> {
-  typedef typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType ResScalar;
-  static constexpr bool IsLower = ((Mode & Lower) == Lower);
+  using ResScalar = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
+  static constexpr bool IsLower = (Mode & Lower) == Lower;
   static constexpr bool HasUnitDiag = (Mode & UnitDiag) == UnitDiag;
   static constexpr bool HasZeroDiag = (Mode & ZeroDiag) == ZeroDiag;
   static EIGEN_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
@@ -43,8 +44,8 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
   Index rows = IsLower ? _rows : (std::min)(_rows, _cols);
   Index cols = IsLower ? (std::min)(_rows, _cols) : _cols;
 
-  typedef const_blas_data_mapper<LhsScalar, Index, ColMajor> LhsMapper;
-  typedef const_blas_data_mapper<RhsScalar, Index, RowMajor> RhsMapper;
+  using LhsMapper = const_blas_data_mapper<LhsScalar, Index, ColMajor>;
+  using RhsMapper = const_blas_data_mapper<RhsScalar, Index, RowMajor>;
 
   conj_if<ConjLhs> cjl;
   conj_if<ConjRhs> cjr;
@@ -54,7 +55,7 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
 
     // Process the triangular panel using raw pointer operations with 2-column batching
     // to eliminate expression template overhead and share result loads/stores.
-    if (IsLower) {
+    EIGEN_IF_CONSTEXPR (IsLower) {
       Index k = 0;
       for (; k + 1 < actualPanelWidth; k += 2) {
         Index i0 = pi + k;
@@ -65,18 +66,18 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
         const LhsScalar* EIGEN_RESTRICT c1 = lhs_ + i1 * lhsStride;
 
         // Diagonal of column 0
-        if (!(HasUnitDiag || HasZeroDiag)) res_[i0] += s0 * cjl(c0[i0]);
+        EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) res_[i0] += s0 * cjl(c0[i0]);
         // Row i1: contribution from column 0 + diagonal of column 1
         {
           ResScalar r1 = s0 * cjl(c0[i1]);
-          if (!(HasUnitDiag || HasZeroDiag)) r1 += s1 * cjl(c1[i1]);
+          EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) r1 += s1 * cjl(c1[i1]);
           res_[i1] += r1;
         }
         // Shared rows where both columns contribute
         Index panelEnd = pi + actualPanelWidth;
         for (Index j = i1 + 1; j < panelEnd; ++j) res_[j] += s0 * cjl(c0[j]) + s1 * cjl(c1[j]);
 
-        if (HasUnitDiag) {
+        EIGEN_IF_CONSTEXPR (HasUnitDiag) {
           res_[i0] += s0;
           res_[i1] += s1;
         }
@@ -85,8 +86,8 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
         Index i = pi + k;
         ResScalar s = alpha * cjr(rhs_[i * rhsIncr]);
         const LhsScalar* EIGEN_RESTRICT c = lhs_ + i * lhsStride;
-        if (!(HasUnitDiag || HasZeroDiag)) res_[i] += s * cjl(c[i]);
-        if (HasUnitDiag) res_[i] += s;
+        EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) res_[i] += s * cjl(c[i]);
+        EIGEN_IF_CONSTEXPR (HasUnitDiag) res_[i] += s;
       }
     } else {
       // Upper triangular: process 2 columns at a time
@@ -105,13 +106,13 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
         // Row i0: diagonal of col0 + contribution from col1
         {
           ResScalar r0 = s1 * cjl(c1[i0]);
-          if (!(HasUnitDiag || HasZeroDiag)) r0 += s0 * cjl(c0[i0]);
+          EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) r0 += s0 * cjl(c0[i0]);
           res_[i0] += r0;
         }
         // Diagonal of column 1
-        if (!(HasUnitDiag || HasZeroDiag)) res_[i1] += s1 * cjl(c1[i1]);
+        EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) res_[i1] += s1 * cjl(c1[i1]);
 
-        if (HasUnitDiag) {
+        EIGEN_IF_CONSTEXPR (HasUnitDiag) {
           res_[i0] += s0;
           res_[i1] += s1;
         }
@@ -121,8 +122,8 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
         ResScalar s = alpha * cjr(rhs_[i * rhsIncr]);
         const LhsScalar* EIGEN_RESTRICT c = lhs_ + i * lhsStride;
         for (Index j = pi; j < i; ++j) res_[j] += s * cjl(c[j]);
-        if (!(HasUnitDiag || HasZeroDiag)) res_[i] += s * cjl(c[i]);
-        if (HasUnitDiag) res_[i] += s;
+        EIGEN_IF_CONSTEXPR (!(HasUnitDiag || HasZeroDiag)) res_[i] += s * cjl(c[i]);
+        EIGEN_IF_CONSTEXPR (HasUnitDiag) res_[i] += s;
       }
     }
 
@@ -135,17 +136,19 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
                                                   RhsMapper(&rhs_[pi * rhsIncr], rhsIncr), &res_[s], resIncr, alpha);
     }
   }
-  if ((!IsLower) && cols > size) {
-    general_matrix_vector_product<Index, LhsScalar, LhsMapper, ColMajor, ConjLhs, RhsScalar, RhsMapper, ConjRhs>::run(
-        rows, cols - size, LhsMapper(&lhs_[size * lhsStride], lhsStride), RhsMapper(&rhs_[size * rhsIncr], rhsIncr),
-        res_, resIncr, alpha);
+  EIGEN_IF_CONSTEXPR (!IsLower) {
+    if (cols > size) {
+      general_matrix_vector_product<Index, LhsScalar, LhsMapper, ColMajor, ConjLhs, RhsScalar, RhsMapper, ConjRhs>::run(
+          rows, cols - size, LhsMapper(&lhs_[size * lhsStride], lhsStride), RhsMapper(&rhs_[size * rhsIncr], rhsIncr),
+          res_, resIncr, alpha);
+    }
   }
 }
 
 template <typename Index, int Mode, typename LhsScalar, bool ConjLhs, typename RhsScalar, bool ConjRhs, int Version>
 struct triangular_matrix_vector_product<Index, Mode, LhsScalar, ConjLhs, RhsScalar, ConjRhs, RowMajor, Version> {
-  typedef typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType ResScalar;
-  static constexpr bool IsLower = ((Mode & Lower) == Lower);
+  using ResScalar = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
+  static constexpr bool IsLower = (Mode & Lower) == Lower;
   static constexpr bool HasUnitDiag = (Mode & UnitDiag) == UnitDiag;
   static constexpr bool HasZeroDiag = (Mode & ZeroDiag) == ZeroDiag;
   static EIGEN_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
@@ -164,8 +167,8 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
   Index rows = IsLower ? _rows : diagSize;
   Index cols = IsLower ? diagSize : _cols;
 
-  typedef const_blas_data_mapper<LhsScalar, Index, RowMajor> LhsMapper;
-  typedef const_blas_data_mapper<RhsScalar, Index, RowMajor> RhsMapper;
+  using LhsMapper = const_blas_data_mapper<LhsScalar, Index, RowMajor>;
+  using RhsMapper = const_blas_data_mapper<RhsScalar, Index, RowMajor>;
 
   conj_if<ConjLhs> cjl;
   conj_if<ConjRhs> cjr;
@@ -180,7 +183,7 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
       const LhsScalar* EIGEN_RESTRICT row_i = lhs_ + i * lhsStride;
       ResScalar dot = ResScalar(0);
 
-      if (IsLower) {
+      EIGEN_IF_CONSTEXPR (IsLower) {
         Index s = pi;
         Index len = (HasUnitDiag || HasZeroDiag) ? k : k + 1;
         for (Index j = 0; j < len; ++j) dot += cjl(row_i[s + j]) * cjr(rhs_[s + j]);
@@ -190,7 +193,7 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
         for (Index j = 0; j < len; ++j) dot += cjl(row_i[s + j]) * cjr(rhs_[s + j]);
       }
       res_[i * resIncr] += alpha * dot;
-      if (HasUnitDiag) res_[i * resIncr] += alpha * cjr(rhs_[i]);
+      EIGEN_IF_CONSTEXPR (HasUnitDiag) res_[i * resIncr] += alpha * cjr(rhs_[i]);
     }
 
     // Rectangular part: delegate to optimized GEMV
@@ -202,10 +205,12 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
                                                   RhsMapper(&rhs_[s], rhsIncr), &res_[pi * resIncr], resIncr, alpha);
     }
   }
-  if (IsLower && rows > diagSize) {
-    general_matrix_vector_product<Index, LhsScalar, LhsMapper, RowMajor, ConjLhs, RhsScalar, RhsMapper, ConjRhs>::run(
-        rows - diagSize, cols, LhsMapper(&lhs_[diagSize * lhsStride], lhsStride), RhsMapper(rhs_, rhsIncr),
-        &res_[diagSize * resIncr], resIncr, alpha);
+  EIGEN_IF_CONSTEXPR (IsLower) {
+    if (rows > diagSize) {
+      general_matrix_vector_product<Index, LhsScalar, LhsMapper, RowMajor, ConjLhs, RhsScalar, RhsMapper, ConjRhs>::run(
+          rows - diagSize, cols, LhsMapper(&lhs_[diagSize * lhsStride], lhsStride), RhsMapper(rhs_, rhsIncr),
+          &res_[diagSize * resIncr], resIncr, alpha);
+    }
   }
 }
 
@@ -250,24 +255,29 @@ struct triangular_product_impl<Mode, false, Lhs, true, Rhs, false> {
 
 namespace internal {
 
-// TODO: find a way to factorize this piece of code with gemv_selector since the logic is exactly the same.
+template <int Mode, typename Lhs, typename Rhs, typename Dest, typename LhsScalar>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void trmv_correct_unit_diagonal(const Lhs& lhs, const Rhs& rhs, Dest& dest,
+                                                                      const LhsScalar& lhs_alpha) {
+  EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) == UnitDiag) {
+    if (!numext::is_exactly_one(lhs_alpha)) {
+      Index diagSize = (std::min)(lhs.rows(), lhs.cols());
+      dest.head(diagSize) -= (lhs_alpha - LhsScalar(1)) * rhs.head(diagSize);
+    }
+  }
+}
 
 template <int Mode>
 struct trmv_selector<Mode, ColMajor> {
   template <typename Lhs, typename Rhs, typename Dest>
   static void run(const Lhs& lhs, const Rhs& rhs, Dest& dest, const typename Dest::Scalar& alpha) {
-    typedef typename Lhs::Scalar LhsScalar;
-    typedef typename Rhs::Scalar RhsScalar;
-    typedef typename Dest::Scalar ResScalar;
+    using LhsScalar = typename Lhs::Scalar;
+    using RhsScalar = typename Rhs::Scalar;
+    using ResScalar = typename Dest::Scalar;
 
-    typedef internal::blas_traits<Lhs> LhsBlasTraits;
-    typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhsType;
-    typedef internal::blas_traits<Rhs> RhsBlasTraits;
-    typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhsType;
-    constexpr int Alignment = (std::min)(int(AlignedMax), int(internal::packet_traits<ResScalar>::size));
-
-    typedef Map<Matrix<ResScalar, Dynamic, 1>, Alignment> MappedDest;
-
+    using LhsBlasTraits = internal::blas_traits<Lhs>;
+    using ActualLhsType = typename LhsBlasTraits::DirectLinearAccessType;
+    using RhsBlasTraits = internal::blas_traits<Rhs>;
+    using ActualRhsType = typename RhsBlasTraits::DirectLinearAccessType;
     add_const_on_value_type_t<ActualLhsType> actualLhs = LhsBlasTraits::extract(lhs);
     add_const_on_value_type_t<ActualRhsType> actualRhs = RhsBlasTraits::extract(rhs);
 
@@ -284,48 +294,23 @@ struct trmv_selector<Mode, ColMajor> {
     gemv_static_vector_if<ResScalar, Dest::SizeAtCompileTime, Dest::MaxSizeAtCompileTime, MightCannotUseDest>
         static_dest;
 
-    bool alphaIsCompatible = (!ComplexByReal) || numext::is_exactly_zero(numext::imag(actualAlpha));
-    bool evalToDest = EvalToDestAtCompileTime && alphaIsCompatible;
-
-    RhsScalar compatibleAlpha = get_factor<ResScalar, RhsScalar>::run(actualAlpha);
+    gemv_destination_policy<RhsScalar, ResScalar, EvalToDestAtCompileTime, ComplexByReal> destPolicy(actualAlpha);
 
     ei_declare_aligned_stack_constructed_variable(ResScalar, actualDestPtr, dest.size(),
-                                                  evalToDest ? dest.data() : static_dest.data());
+                                                  destPolicy.eval_to_dest() ? dest.data() : static_dest.data());
 
-    if (!evalToDest) {
-#ifdef EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-      constexpr int Size = Dest::SizeAtCompileTime;
-      Index size = dest.size();
-      EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-#endif
-      if (!alphaIsCompatible) {
-        MappedDest(actualDestPtr, dest.size()).setZero();
-        compatibleAlpha = RhsScalar(1);
-      } else
-        MappedDest(actualDestPtr, dest.size()) = dest;
-    }
+    destPolicy.prepare(dest, actualDestPtr);
 
     internal::triangular_matrix_vector_product<Index, Mode, LhsScalar, LhsBlasTraits::NeedToConjugate, RhsScalar,
-                                               RhsBlasTraits::NeedToConjugate, ColMajor>::run(actualLhs.rows(),
-                                                                                              actualLhs.cols(),
-                                                                                              actualLhs.data(),
-                                                                                              actualLhs.outerStride(),
-                                                                                              actualRhs.data(),
-                                                                                              actualRhs.innerStride(),
-                                                                                              actualDestPtr, 1,
-                                                                                              compatibleAlpha);
+                                               RhsBlasTraits::NeedToConjugate,
+                                               ColMajor>::run(actualLhs.rows(), actualLhs.cols(), actualLhs.data(),
+                                                              actualLhs.outerStride(), actualRhs.data(),
+                                                              actualRhs.innerStride(), actualDestPtr, 1,
+                                                              destPolicy.compatible_alpha());
 
-    if (!evalToDest) {
-      if (!alphaIsCompatible)
-        dest += actualAlpha * MappedDest(actualDestPtr, dest.size());
-      else
-        dest = MappedDest(actualDestPtr, dest.size());
-    }
+    destPolicy.copy_back(dest, actualDestPtr);
 
-    if (((Mode & UnitDiag) == UnitDiag) && !numext::is_exactly_one(lhs_alpha)) {
-      Index diagSize = (std::min)(lhs.rows(), lhs.cols());
-      dest.head(diagSize) -= (lhs_alpha - LhsScalar(1)) * rhs.head(diagSize);
-    }
+    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, lhs_alpha);
   }
 };
 
@@ -333,15 +318,15 @@ template <int Mode>
 struct trmv_selector<Mode, RowMajor> {
   template <typename Lhs, typename Rhs, typename Dest>
   static void run(const Lhs& lhs, const Rhs& rhs, Dest& dest, const typename Dest::Scalar& alpha) {
-    typedef typename Lhs::Scalar LhsScalar;
-    typedef typename Rhs::Scalar RhsScalar;
-    typedef typename Dest::Scalar ResScalar;
+    using LhsScalar = typename Lhs::Scalar;
+    using RhsScalar = typename Rhs::Scalar;
+    using ResScalar = typename Dest::Scalar;
 
-    typedef internal::blas_traits<Lhs> LhsBlasTraits;
-    typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhsType;
-    typedef internal::blas_traits<Rhs> RhsBlasTraits;
-    typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhsType;
-    typedef internal::remove_all_t<ActualRhsType> ActualRhsTypeCleaned;
+    using LhsBlasTraits = internal::blas_traits<Lhs>;
+    using ActualLhsType = typename LhsBlasTraits::DirectLinearAccessType;
+    using RhsBlasTraits = internal::blas_traits<Rhs>;
+    using ActualRhsType = typename RhsBlasTraits::DirectLinearAccessType;
+    using ActualRhsTypeCleaned = internal::remove_all_t<ActualRhsType>;
 
     std::add_const_t<ActualLhsType> actualLhs = LhsBlasTraits::extract(lhs);
     std::add_const_t<ActualRhsType> actualRhs = RhsBlasTraits::extract(rhs);
@@ -352,40 +337,15 @@ struct trmv_selector<Mode, RowMajor> {
 
     constexpr bool DirectlyUseRhs = ActualRhsTypeCleaned::InnerStrideAtCompileTime == 1;
 
-    const RhsScalar* actualRhsPtr = actualRhs.data();
-
-    // Potentially create a temporary buffer to copy RHS to contiguous memory.
     gemv_static_vector_if<RhsScalar, ActualRhsTypeCleaned::SizeAtCompileTime,
                           ActualRhsTypeCleaned::MaxSizeAtCompileTime, !DirectlyUseRhs>
-        static_rhs;  // Fixed-sized array.
-    RhsScalar* buffer = nullptr;
-    if (!DirectlyUseRhs) {
-      // Maybe used fixed-sized buffer, otherwise allocate.
-      if (static_rhs.data() != nullptr) {
-        buffer = static_rhs.data();
-      } else {
-        // Allocate either with alloca or malloc.
-        Eigen::internal::check_size_for_overflow<RhsScalar>(actualRhs.size());
-#ifdef EIGEN_ALLOCA
-        buffer = static_cast<RhsScalar*>((sizeof(RhsScalar) * actualRhs.size() <= EIGEN_STACK_ALLOCATION_LIMIT)
-                                             ? EIGEN_ALIGNED_ALLOCA(sizeof(RhsScalar) * actualRhs.size())
-                                             : Eigen::internal::aligned_malloc(sizeof(RhsScalar) * actualRhs.size()));
-#else
-        buffer = static_cast<RhsScalar*>(Eigen::internal::aligned_malloc(sizeof(RhsScalar) * actualRhs.size()));
-#endif
-      }
-#ifdef EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-      constexpr int Size = ActualRhsTypeCleaned::SizeAtCompileTime;
-      Index size = actualRhs.size();
-      EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-#endif
-      Map<typename ActualRhsTypeCleaned::PlainObject, Eigen::AlignedMax>(buffer, actualRhs.size()) = actualRhs;
-      actualRhsPtr = buffer;
-    }
-    // Deallocate only if malloced.
-    Eigen::internal::aligned_stack_memory_handler<RhsScalar> buffer_stack_memory_destructor(
-        buffer, actualRhs.size(),
-        !DirectlyUseRhs && static_rhs.data() == nullptr && actualRhs.size() > EIGEN_STACK_ALLOCATION_LIMIT);
+        static_rhs;
+
+    ei_declare_aligned_stack_constructed_variable(
+        RhsScalar, actualRhsPtr, actualRhs.size(),
+        DirectlyUseRhs ? const_cast<RhsScalar*>(actualRhs.data()) : static_rhs.data());
+
+    gemv_prepare_rhs<DirectlyUseRhs>(actualRhs, actualRhsPtr);
 
     internal::triangular_matrix_vector_product<Index, Mode, LhsScalar, LhsBlasTraits::NeedToConjugate, RhsScalar,
                                                RhsBlasTraits::NeedToConjugate, RowMajor>::run(actualLhs.rows(),
@@ -397,10 +357,7 @@ struct trmv_selector<Mode, RowMajor> {
                                                                                               dest.innerStride(),
                                                                                               actualAlpha);
 
-    if (((Mode & UnitDiag) == UnitDiag) && !numext::is_exactly_one(lhs_alpha)) {
-      Index diagSize = (std::min)(lhs.rows(), lhs.cols());
-      dest.head(diagSize) -= (lhs_alpha - LhsScalar(1)) * rhs.head(diagSize);
-    }
+    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, lhs_alpha);
   }
 };
 

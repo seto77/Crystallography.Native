@@ -6,14 +6,15 @@
 // Luke Iwanski  Codeplay Software Ltd.
 // Contact: <eigen@codeplay.com>
 // Copyright (C) 2016 Benoit Steiner <benoit.steiner.goog@gmail.com>
+// SPDX-License-Identifier: MPL-2.0
 
 //
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_CONVOLUTION_SYCL_H
-#define EIGEN_CXX11_TENSOR_TENSOR_CONVOLUTION_SYCL_H
+#ifndef EIGEN_TENSOR_TENSOR_CONVOLUTION_SYCL_H
+#define EIGEN_TENSOR_TENSOR_CONVOLUTION_SYCL_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -51,7 +52,7 @@ struct EigenConvolutionKernel<Evaluator, CoeffReturnType, KernelType, Index, Inp
 
   template <typename BooleanDim2>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool boundary_check(const BooleanDim2 boolean_check) const {
-    return (boolean_check[0] && boolean_check[1]);
+    return boolean_check[0] && boolean_check[1];
   }
   void operator()(cl::sycl::nd_item<2> itemID) const {
     auto buffer_ptr = buffer_acc;
@@ -117,7 +118,7 @@ struct EigenConvolutionKernel<Evaluator, CoeffReturnType, KernelType, Index, Inp
         input_range(input_range_) {}
   template <typename BooleanDim3>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool boundary_check(const BooleanDim3 boolean_check) const {
-    return (boolean_check[0] && boolean_check[1] && boolean_check[2]);
+    return boolean_check[0] && boolean_check[1] && boolean_check[2];
   }
 
   void operator()(cl::sycl::nd_item<3> itemID) const {
@@ -206,7 +207,7 @@ struct EigenConvolutionKernel<Evaluator, CoeffReturnType, KernelType, Index, Inp
         numP(numP_) {}
   template <typename BooleanDim3>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool boundary_check(const BooleanDim3 boolean_check) const {
-    return (boolean_check[0] && boolean_check[1] && boolean_check[2]);
+    return boolean_check[0] && boolean_check[1] && boolean_check[2];
   }
   void operator()(cl::sycl::nd_item<3> itemID) const {
     auto buffer_ptr = buffer_acc;
@@ -305,8 +306,8 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
         m_kernelArg(op.kernelExpression()),
         m_kernelImpl(op.kernelExpression(), device),
         m_indices(op.indices()),
-        m_buf(NULL),
-        m_kernel(NULL),
+        m_buf(nullptr),
+        m_kernel(nullptr),
         m_local_kernel(false),
         m_device(device) {
     EIGEN_STATIC_ASSERT((static_cast<int>(TensorEvaluator<InputArgType, Eigen::SyclDevice>::Layout) ==
@@ -331,7 +332,7 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
     preloadKernel();
-    m_inputImpl.evalSubExprsIfNeeded(NULL);
+    m_inputImpl.evalSubExprsIfNeeded(nullptr);
     if (data) {
       executeEval(data);
       return false;
@@ -347,13 +348,13 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
     m_inputImpl.cleanup();
     if (m_buf) {
       m_device.deallocate_temp(m_buf);
-      m_buf = NULL;
+      m_buf = nullptr;
     }
     if (m_local_kernel) {
       m_device.deallocate_temp(m_kernel);
       m_local_kernel = false;
     }
-    m_kernel = NULL;
+    m_kernel = nullptr;
   }
   /// used by sycl in order to build the sycl buffer
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Device &device() const { return m_device; }
@@ -493,14 +494,14 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType coeff(Index index) const {
-    eigen_assert(m_buf != NULL);
+    eigen_assert(m_buf != nullptr);
     eigen_assert(index < m_dimensions.TotalSize());
     return m_buf[index];
   }
 
   template <int LoadMode>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packet(const Index index) const {
-    eigen_assert(m_buf != NULL);
+    eigen_assert(m_buf != nullptr);
     eigen_assert(index < m_dimensions.TotalSize());
     return internal::ploadt<PacketReturnType, LoadMode>(m_buf + index);
   }
@@ -521,7 +522,7 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
 
  private:
   // No assignment (copies are needed by the kernels)
-  TensorEvaluator &operator=(const TensorEvaluator &);
+  TensorEvaluator &operator=(const TensorEvaluator &) = delete;
   TensorEvaluator<InputArgType, Eigen::SyclDevice> m_inputImpl;
   KernelArgType m_kernelArg;
   TensorEvaluator<KernelArgType, Eigen::SyclDevice> m_kernelImpl;
@@ -531,8 +532,8 @@ struct TensorEvaluator<const TensorConvolutionOp<Indices, InputArgType, KernelAr
   typename KernelStorage::Type m_kernel;
   bool m_local_kernel;
   const Eigen::SyclDevice EIGEN_DEVICE_REF m_device;
-};  // namespace Eigen
+};
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_CONVOLUTION_H
+#endif  // EIGEN_TENSOR_TENSOR_CONVOLUTION_SYCL_H

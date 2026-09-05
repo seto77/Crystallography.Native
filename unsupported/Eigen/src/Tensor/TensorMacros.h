@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_META_MACROS_H
-#define EIGEN_CXX11_TENSOR_TENSOR_META_MACROS_H
+#ifndef EIGEN_TENSOR_TENSOR_META_MACROS_H
+#define EIGEN_TENSOR_TENSOR_META_MACROS_H
 
 /** use this macro in sfinae selection in templated functions
  *
@@ -19,8 +20,8 @@
  *
  *   becomes =>
  *
- *   template<typename TopoType,
- *           SFINAE_ENABLE_IF( isBanana<T>::value )
+ *   template<typename T,
+ *           EIGEN_SFINAE_ENABLE_IF( isBanana<T>::value )
  *   >
  *   void foo(){}
  */
@@ -55,31 +56,5 @@
 #elif !defined(EIGEN_SYCL_LOCAL_MEM) && defined(EIGEN_SYCL_NO_LOCAL_MEM)
 #define EIGEN_SYCL_LOCAL_MEM_UNSET_OR_OFF 1
 #endif
-
-#if EIGEN_COMP_CLANG  // workaround clang bug (see http://forum.kde.org/viewtopic.php?f=74&t=102653)
-#define EIGEN_TENSOR_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)                         \
-  using Base::operator=;                                                                \
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& operator=(const Derived& other) {      \
-    Base::operator=(other);                                                             \
-    return *this;                                                                       \
-  }                                                                                     \
-  template <typename OtherDerived>                                                      \
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& operator=(const OtherDerived& other) { \
-    Base::operator=(other);                                                             \
-    return *this;                                                                       \
-  }
-#else
-#define EIGEN_TENSOR_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived) EIGEN_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)
-#endif
-
-/** \internal
- * \brief Macro to manually inherit assignment operators.
- * This is necessary, because the implicitly defined assignment operator gets deleted when a custom operator= is
- * defined. This also inherits template<OtherDerived> operator=(const OtherDerived&) assignments. With C++11 or later
- * this also default-implements the copy-constructor
- */
-#define EIGEN_TENSOR_INHERIT_ASSIGNMENT_OPERATORS(Derived) \
-  EIGEN_TENSOR_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)  \
-  EIGEN_DEFAULT_COPY_CONSTRUCTOR(Derived)
 
 #endif

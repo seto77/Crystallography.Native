@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_VECTORBLOCK_H
 #define EIGEN_VECTORBLOCK_H
@@ -51,14 +52,13 @@ struct traits<VectorBlock<VectorType, Size> >
  * \include class_FixedVectorBlock.cpp
  * Output: \verbinclude class_FixedVectorBlock.out
  *
- * \sa class Block, DenseBase::segment(Index,Index,Index,Index), DenseBase::segment(Index,Index)
+ * \sa class Block, DenseBase::segment(Index,Index)
  */
 template <typename VectorType, int Size>
 class VectorBlock : public Block<VectorType, internal::traits<VectorType>::Flags & RowMajorBit ? 1 : Size,
                                  internal::traits<VectorType>::Flags & RowMajorBit ? Size : 1> {
-  typedef Block<VectorType, internal::traits<VectorType>::Flags & RowMajorBit ? 1 : Size,
-                internal::traits<VectorType>::Flags & RowMajorBit ? Size : 1>
-      Base;
+  using Base = Block<VectorType, internal::traits<VectorType>::Flags & RowMajorBit ? 1 : Size,
+                     internal::traits<VectorType>::Flags & RowMajorBit ? Size : 1>;
   enum { IsColVector = !(internal::traits<VectorType>::Flags & RowMajorBit) };
 
  public:

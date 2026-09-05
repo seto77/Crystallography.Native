@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: The Eigen Authors
+# SPDX-License-Identifier: MPL-2.0
+
 cmake_minimum_required(VERSION 3.10)
 project(EigenUnsupportedBenchmarks CXX)
 
@@ -31,5 +34,12 @@ add_subdirectory(MatrixFunctions)
 add_subdirectory(SpecialFunctions)
 add_subdirectory(AutoDiff)
 add_subdirectory(Splines)
-add_subdirectory(IterativeSolvers)
 add_subdirectory(KroneckerProduct)
+add_subdirectory(StructuredMatrices)
+
+# GPU benchmarks have their own CMake project (needs CUDAToolkit).
+# They can also be built standalone: cmake -B build -S unsupported/benchmarks/GPU
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND)
+  add_subdirectory(GPU)
+endif()

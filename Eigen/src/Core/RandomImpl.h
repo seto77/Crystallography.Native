@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_RANDOM_IMPL_H
 #define EIGEN_RANDOM_IMPL_H
@@ -28,24 +29,19 @@ template <typename Scalar>
 struct random_impl : random_default_impl<Scalar, NumTraits<Scalar>::IsComplex, NumTraits<Scalar>::IsInteger> {};
 
 template <typename Scalar>
-struct random_retval {
-  typedef Scalar type;
-};
-
-template <typename Scalar>
-inline EIGEN_MATHFUNC_RETVAL(random, Scalar) random(const Scalar& x, const Scalar& y) {
+inline Scalar random(const Scalar& x, const Scalar& y) {
   return EIGEN_MATHFUNC_IMPL(random, Scalar)::run(x, y);
 }
 
 template <typename Scalar>
-inline EIGEN_MATHFUNC_RETVAL(random, Scalar) random() {
+inline Scalar random() {
   return EIGEN_MATHFUNC_IMPL(random, Scalar)::run();
 }
 
 // TODO: replace or provide alternatives to this, e.g. std::random_device
 struct eigen_random_device {
   using ReturnType = int;
-  static constexpr int Entropy = meta_floor_log2<(unsigned int)(RAND_MAX) + 1>::value;
+  static constexpr int Entropy = floor_log2((unsigned int)(RAND_MAX) + 1);
   static constexpr ReturnType Highest = RAND_MAX;
   static EIGEN_DEVICE_FUNC inline ReturnType run() { return std::rand(); }
 };
@@ -193,7 +189,7 @@ struct random_int_impl<Scalar, false, true> {
     Scalar randomBits;
     do {
       randomBits = getRandomBits<Scalar>(numRandomBits);
-      // if the random draw is outside [0, range), try again (rejection sampling)
+      // if the random draw is outside [0, range], try again (rejection sampling)
       // in the worst-case scenario, the probability of rejection is: 1/2 - 1/2^numRandomBits < 50%
     } while (randomBits >= count);
     Scalar result = x + randomBits;
@@ -240,12 +236,12 @@ struct random_impl<bool> {
     if (y <= x) return x;
     return run();
   }
-  static EIGEN_DEVICE_FUNC inline bool run() { return getRandomBits<unsigned>(1) ? true : false; }
+  static EIGEN_DEVICE_FUNC inline bool run() { return getRandomBits<unsigned>(1) != 0; }
 };
 
 template <typename Scalar>
 struct random_default_impl<Scalar, true, false> {
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
   using Impl = random_impl<RealScalar>;
   static EIGEN_DEVICE_FUNC inline Scalar run(const Scalar& x, const Scalar& y, int numRandomBits) {
     return Scalar(Impl::run(x.real(), y.real(), numRandomBits), Impl::run(x.imag(), y.imag(), numRandomBits));

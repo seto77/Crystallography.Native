@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COMPLEX_AVX512_H
 #define EIGEN_COMPLEX_AVX512_H
@@ -16,6 +17,8 @@
 namespace Eigen {
 
 namespace internal {
+
+EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_PUSH
 
 //---------- float ----------
 struct Packet8cf {
@@ -200,7 +203,7 @@ EIGEN_STRONG_INLINE Packet8cf pdiv<Packet8cf>(const Packet8cf& a, const Packet8c
 
 template <>
 EIGEN_STRONG_INLINE Packet8cf pcplxflip<Packet8cf>(const Packet8cf& x) {
-  return Packet8cf(_mm512_shuffle_ps(x.v, x.v, _MM_SHUFFLE(2, 3, 0, 1)));
+  return Packet8cf(EIGEN_AVX512_SHUFFLE_PS(x.v, x.v, _MM_SHUFFLE(2, 3, 0, 1)));
 }
 
 //---------- double ----------
@@ -445,6 +448,8 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet4cd, 4>& kernel) {
 
 EIGEN_INSTANTIATE_COMPLEX_MATH_FUNCS(Packet4cd)
 EIGEN_INSTANTIATE_COMPLEX_MATH_FUNCS(Packet8cf)
+
+EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_POP
 
 }  // end namespace internal
 }  // end namespace Eigen

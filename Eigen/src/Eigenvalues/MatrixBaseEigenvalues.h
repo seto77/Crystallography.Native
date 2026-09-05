@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MATRIXBASEEIGENVALUES_H
 #define EIGEN_MATRIXBASEEIGENVALUES_H
@@ -22,7 +23,7 @@ template <typename Derived, bool IsComplex>
 struct eigenvalues_selector {
   // this is the implementation for the case IsComplex = true
   static inline typename MatrixBase<Derived>::EigenvaluesReturnType const run(const MatrixBase<Derived>& m) {
-    typedef typename Derived::PlainObject PlainObject;
+    using PlainObject = typename Derived::PlainObject;
     PlainObject m_eval(m);
     return ComplexEigenSolver<PlainObject>(m_eval, false).eigenvalues();
   }
@@ -31,7 +32,7 @@ struct eigenvalues_selector {
 template <typename Derived>
 struct eigenvalues_selector<Derived, false> {
   static inline typename MatrixBase<Derived>::EigenvaluesReturnType const run(const MatrixBase<Derived>& m) {
-    typedef typename Derived::PlainObject PlainObject;
+    using PlainObject = typename Derived::PlainObject;
     PlainObject m_eval(m);
     return EigenSolver<PlainObject>(m_eval, false).eigenvalues();
   }

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MATRIX_SQUARE_ROOT
 #define EIGEN_MATRIX_SQUARE_ROOT
@@ -39,7 +40,7 @@ void matrix_sqrt_quasi_triangular_1x1_off_diagonal_block(const MatrixType& T, In
   sqrtT.coeffRef(i, j) = (T.coeff(i, j) - tmp) / (sqrtT.coeff(i, i) + sqrtT.coeff(j, j));
 }
 
-// similar to compute1x1offDiagonalBlock()
+// similar to matrix_sqrt_quasi_triangular_1x1_off_diagonal_block()
 template <typename MatrixType, typename ResultType>
 void matrix_sqrt_quasi_triangular_1x2_off_diagonal_block(const MatrixType& T, Index i, Index j, ResultType& sqrtT) {
   typedef typename traits<MatrixType>::Scalar Scalar;
@@ -50,7 +51,7 @@ void matrix_sqrt_quasi_triangular_1x2_off_diagonal_block(const MatrixType& T, In
   sqrtT.template block<1, 2>(i, j).transpose() = A.fullPivLu().solve(rhs.transpose());
 }
 
-// similar to compute1x1offDiagonalBlock()
+// similar to matrix_sqrt_quasi_triangular_1x1_off_diagonal_block()
 template <typename MatrixType, typename ResultType>
 void matrix_sqrt_quasi_triangular_2x1_off_diagonal_block(const MatrixType& T, Index i, Index j, ResultType& sqrtT) {
   typedef typename traits<MatrixType>::Scalar Scalar;
@@ -95,7 +96,7 @@ void matrix_sqrt_quasi_triangular_solve_auxiliary_equation(MatrixType& X, const 
   X.coeffRef(1, 1) = result.coeff(3);
 }
 
-// similar to compute1x1offDiagonalBlock()
+// similar to matrix_sqrt_quasi_triangular_1x1_off_diagonal_block()
 template <typename MatrixType, typename ResultType>
 void matrix_sqrt_quasi_triangular_2x2_off_diagonal_block(const MatrixType& T, Index i, Index j, ResultType& sqrtT) {
   typedef typename traits<MatrixType>::Scalar Scalar;
@@ -324,7 +325,7 @@ class MatrixSquareRootReturnValue : public ReturnByValue<MatrixSquareRootReturnV
   Index cols() const { return m_src.cols(); }
 
  protected:
-  const DerivedNested m_src;
+  DerivedNested m_src;
 };
 
 namespace internal {
@@ -342,4 +343,4 @@ const MatrixSquareRootReturnValue<Derived> MatrixBase<Derived>::sqrt() const {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_MATRIX_FUNCTION
+#endif  // EIGEN_MATRIX_SQUARE_ROOT

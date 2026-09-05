@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPECIALFUNCTIONS_PACKETMATH_H
 #define EIGEN_SPECIALFUNCTIONS_PACKETMATH_H
@@ -98,7 +99,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pigammac(const Packet& a, const Pac
   return igammac(a, x);
 }
 
-/** \internal \returns the complementary incomplete gamma function betainc(\a a, \a b, \a x) */
+/** \internal \returns the incomplete beta function betainc(\a a, \a b, \a x) */
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pbetainc(const Packet& a, const Packet& b, const Packet& x) {
   using numext::betainc;

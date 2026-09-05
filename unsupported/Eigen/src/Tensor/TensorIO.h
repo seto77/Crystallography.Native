@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_IO_H
-#define EIGEN_CXX11_TENSOR_TENSOR_IO_H
+#ifndef EIGEN_TENSOR_TENSOR_IO_H
+#define EIGEN_TENSOR_TENSOR_IO_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -40,7 +41,7 @@ struct TensorIOFormatBase {
   }
 
   void init_spacer() {
-    if ((flags & DontAlignCols)) return;
+    if (flags & DontAlignCols) return;
     spacer.resize(prefix.size());
     spacer[0] = "";
     int i = int(tenPrefix.length()) - 1;
@@ -126,7 +127,7 @@ class TensorWithFormat<T, RowMajor, rank, Format> {
     typedef TensorEvaluator<const TensorForcedEvalOp<const T>, DefaultDevice> Evaluator;
     TensorForcedEvalOp<const T> eval = wf.t_tensor.eval();
     Evaluator tensor(eval, DefaultDevice());
-    tensor.evalSubExprsIfNeeded(NULL);
+    tensor.evalSubExprsIfNeeded(nullptr);
     internal::TensorPrinter<Evaluator, rank, Format>::run(os, tensor, wf.t_format);
     // Cleanup.
     tensor.cleanup();
@@ -156,7 +157,7 @@ class TensorWithFormat<T, ColMajor, rank, Format> {
     typedef TensorEvaluator<const TensorForcedEvalOp<const decltype(tensor_row_major)>, DefaultDevice> Evaluator;
     TensorForcedEvalOp<const decltype(tensor_row_major)> eval = tensor_row_major.eval();
     Evaluator tensor(eval, DefaultDevice());
-    tensor.evalSubExprsIfNeeded(NULL);
+    tensor.evalSubExprsIfNeeded(nullptr);
     internal::TensorPrinter<Evaluator, rank, Format>::run(os, tensor, wf.t_format);
     // Cleanup.
     tensor.cleanup();
@@ -178,7 +179,7 @@ class TensorWithFormat<T, ColMajor, 0, Format> {
     typedef TensorEvaluator<const TensorForcedEvalOp<const T>, DefaultDevice> Evaluator;
     TensorForcedEvalOp<const T> eval = wf.t_tensor.eval();
     Evaluator tensor(eval, DefaultDevice());
-    tensor.evalSubExprsIfNeeded(NULL);
+    tensor.evalSubExprsIfNeeded(nullptr);
     internal::TensorPrinter<Evaluator, 0, Format>::run(os, tensor, wf.t_format);
     // Cleanup.
     tensor.cleanup();
@@ -220,13 +221,14 @@ struct TensorPrinter {
     typedef typename Tensor::Index IndexType;
 
     eigen_assert(Tensor::Layout == RowMajor);
-    typedef std::conditional_t<is_same<Scalar, char>::value || is_same<Scalar, unsigned char>::value ||
-                                   is_same<Scalar, numext::int8_t>::value || is_same<Scalar, numext::uint8_t>::value,
+    typedef std::conditional_t<std::is_same<Scalar, char>::value || std::is_same<Scalar, unsigned char>::value ||
+                                   std::is_same<Scalar, numext::int8_t>::value ||
+                                   std::is_same<Scalar, numext::uint8_t>::value,
                                int,
-                               std::conditional_t<is_same<Scalar, std::complex<char>>::value ||
-                                                      is_same<Scalar, std::complex<unsigned char>>::value ||
-                                                      is_same<Scalar, std::complex<numext::int8_t>>::value ||
-                                                      is_same<Scalar, std::complex<numext::uint8_t>>::value,
+                               std::conditional_t<std::is_same<Scalar, std::complex<char>>::value ||
+                                                      std::is_same<Scalar, std::complex<unsigned char>>::value ||
+                                                      std::is_same<Scalar, std::complex<numext::int8_t>>::value ||
+                                                      std::is_same<Scalar, std::complex<numext::uint8_t>>::value,
                                                   std::complex<int>, const Scalar&>>
         PrintType;
 
@@ -236,7 +238,7 @@ struct TensorPrinter {
     if (fmt.precision == StreamPrecision) {
       explicit_precision = 0;
     } else if (fmt.precision == FullPrecision) {
-      if (NumTraits<Scalar>::IsInteger) {
+      EIGEN_IF_CONSTEXPR (NumTraits<Scalar>::IsInteger) {
         explicit_precision = 0;
       } else {
         explicit_precision = significant_decimals_impl<Scalar>::run();
@@ -264,7 +266,7 @@ struct TensorPrinter {
       std::array<bool, rank> is_at_end{};
       std::array<bool, rank> is_at_begin{};
 
-      // is the ith element the end of an coeff (always true), of a row, of a matrix, ...?
+      // is the ith element the end of a coeff (always true), of a row, of a matrix, ...?
       for (std::size_t k = 0; k < rank; k++) {
         if ((i + 1) % (std::accumulate(tensor.dimensions().rbegin(), tensor.dimensions().rbegin() + k, 1,
                                        std::multiplies<IndexType>())) ==
@@ -273,7 +275,7 @@ struct TensorPrinter {
         }
       }
 
-      // is the ith element the begin of an coeff (always true), of a row, of a matrix, ...?
+      // is the ith element the begin of a coeff (always true), of a row, of a matrix, ...?
       for (std::size_t k = 0; k < rank; k++) {
         if (i % (std::accumulate(tensor.dimensions().rbegin(), tensor.dimensions().rbegin() + k, 1,
                                  std::multiplies<IndexType>())) ==
@@ -384,7 +386,7 @@ struct TensorPrinter<Tensor, 0, Format> {
     if (fmt.precision == StreamPrecision) {
       explicit_precision = 0;
     } else if (fmt.precision == FullPrecision) {
-      if (NumTraits<Scalar>::IsInteger) {
+      EIGEN_IF_CONSTEXPR (NumTraits<Scalar>::IsInteger) {
         explicit_precision = 0;
       } else {
         explicit_precision = significant_decimals_impl<Scalar>::run();
@@ -410,4 +412,4 @@ std::ostream& operator<<(std::ostream& s, const TensorBase<T, ReadOnlyAccessors>
 }
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_IO_H
+#endif  // EIGEN_TENSOR_TENSOR_IO_H

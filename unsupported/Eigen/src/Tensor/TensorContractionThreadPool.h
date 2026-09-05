@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H
-#define EIGEN_CXX11_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H
+#ifndef EIGEN_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H
+#define EIGEN_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H
 
 // evaluator for thread pool device
 #ifdef EIGEN_USE_THREADS
@@ -93,7 +94,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     //     completed.
     //
     // (2) In async mode we allocate Context on the heap, and after all tasks
-    //     are finished, we call provided the done callback, and delete a
+    //     are finished, we call the provided done callback, and delete a
     //     context from the heap.
     //
     // (*) EvalParallelContext & EvalShardedByInnerDimContext owns all the state
@@ -104,7 +105,19 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     const Index m = this->m_i_size;
     const Index n = this->m_j_size;
     const Index k = this->m_k_size;
-    if (m == 0 || n == 0 || k == 0) return;
+    if (m == 0 || n == 0) {
+      EIGEN_IF_CONSTEXPR (!IsEvalInSyncMode) done();
+      return;
+    }
+    if (k == 0) {
+      internal::tensor_contraction_dispatch(
+          [&](auto lhs_c, auto rhs_c, auto rhs_r) {
+            this->template evalProductSequential<lhs_c(), rhs_c(), rhs_r(), Unaligned>(buffer);
+          },
+          this->m_lhs_inner_dim_contiguous, this->m_rhs_inner_dim_contiguous, this->m_rhs_inner_dim_reordered);
+      EIGEN_IF_CONSTEXPR (!IsEvalInSyncMode) done();
+      return;
+    }
 
     // Compute a set of algorithm parameters:
     // - kernel block sizes (bm, bn, bk)
@@ -126,7 +139,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
 
     // Compute whether we want to shard by row or by column.
     // This is a first approximation, it will be refined later. Since we don't
-    // know number of threads yet we use 2, because what's we are most
+    // know number of threads yet we use 2, because what we are most
     // interested in at this point is whether it makes sense to use
     // parallelization at all or not.
     bool shard_by_col = shardByCol(m, n, 2);
@@ -159,7 +172,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     if (shardByInnerDim(m, n, k, num_threads, num_threads_by_k)) {
       // We are in the scenario where it is more effective to shard by the
       // inner dimension.
-      if (IsEvalInSyncMode) {
+      EIGEN_IF_CONSTEXPR (IsEvalInSyncMode) {
         EvalShardedByInnerDimContext<DoneCallback> ctx(this, num_threads_by_k, buffer, m, n, k, std::move(done));
         ctx.template run<Alignment>();
       } else {
@@ -181,7 +194,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
             this->template evalProductSequential<lhs_c(), rhs_c(), rhs_r(), Unaligned>(buffer);
           },
           this->m_lhs_inner_dim_contiguous, this->m_rhs_inner_dim_contiguous, this->m_rhs_inner_dim_reordered);
-      if (!IsEvalInSyncMode) done();
+      EIGEN_IF_CONSTEXPR (!IsEvalInSyncMode) done();
       return;
     }
 
@@ -264,13 +277,12 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
 
     internal::tensor_contraction_dispatch(
         [&](auto lhs_c, auto rhs_c, auto rhs_r) {
-          EIGEN_IF_CONSTEXPR(IsEvalInSyncMode) {
+          EIGEN_IF_CONSTEXPR (IsEvalInSyncMode) {
             EvalParallelContext<NoCallback, lhs_c(), rhs_c(), rhs_r(), Alignment> ctx(
                 this, num_threads, buffer, m, n, k, bm, bn, bk, nm, nn, nk, gm, gn, nm0, nn0, shard_by_col,
                 parallel_pack, parallelize_by_sharding_dim_only, NoCallback());
             ctx.run();
-          }
-          else {
+          } else {
             auto* ctx = new EvalParallelContext<DoneCallback, lhs_c(), rhs_c(), rhs_r(), Alignment>(
                 this, num_threads, buffer, m, n, k, bm, bn, bk, nm, nn, nk, gm, gn, nm0, nn0, shard_by_col,
                 parallel_pack, parallelize_by_sharding_dim_only, std::move(done));
@@ -523,7 +535,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     // Task grain sizes (number of kernels executed per task).
     const Index gm_;
     const Index gn_;
-    // Number of blocks (this is different from ni_/nn_ because of task size
+    // Number of blocks (this is different from nm_/nn_ because of task size
     // coarsening).
     const Index nm0_;
     const Index nn0_;
@@ -842,17 +854,19 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
 
       const Index nend = n * gn_ + gn(n);
       for (Index n1 = n * gn_; n1 < nend; n1++) {
-        if (!TensorContractionKernel::HasBeta && k == 0) {
-          // Zero the output memory in parallel, only if contraction kernel does
-          // not support `beta`. Otherwise we will pass beta 0.0 to the first
-          // call to the `TensorContractionKernel::invoke()`.
-          //
-          // On 10000x2x10000 mm zeroing can easily take half of time. Zero (bn
-          // x m) row. Safe to do here because all kernels that will write to
-          // this memory depend on completion of this task. Note: don't call
-          // device_.fill() here. device_.fill() blocks on thread pool
-          // worker thread, which can lead to underutilization and deadlocks.
-          std::fill_n(buffer_ + n1 * bn_ * m_, bn(n1) * m_, Scalar(0));
+        EIGEN_IF_CONSTEXPR (!TensorContractionKernel::HasBeta) {
+          if (k == 0) {
+            // Zero the output memory in parallel, only if contraction kernel does
+            // not support `beta`. Otherwise we will pass beta 0.0 to the first
+            // call to the `TensorContractionKernel::invoke()`.
+            //
+            // On 10000x2x10000 mm zeroing can easily take half of time. Zero (bn
+            // x m) row. Safe to do here because all kernels that will write to
+            // this memory depend on completion of this task. Note: don't call
+            // device_.fill() here. device_.fill() blocks on thread pool
+            // worker thread, which can lead to underutilization and deadlocks.
+            std::fill_n(buffer_ + n1 * bn_ * m_, bn(n1) * m_, Scalar(0));
+          }
         }
         kernel_.packRhs(&packed_rhs(n, k, n1, use_thread_local), rhs_.getSubMapper(k * bk_, n1 * bn_), bk(k), bn(n1));
       }
@@ -991,7 +1005,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
         //     to the execution of the first kernel of the k+1 slice, before
         //     completing a call to the last kernel of the k slice.
         // (2) all pack tasks for sharded dim must be executed in a thread
-        //     pool to get pre-allocated thead local buffers.
+        //     pool to get pre-allocated thread local buffers.
         bool pack_async = (start == 0) && (parallelize_by_sharding_dim_only_ && shard_by_col_ == rhs) &&
                           (k > 0 || std::this_thread::get_id() == created_by_thread_id_);
 
@@ -1202,13 +1216,13 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     // Compute block size with accounting for potentially incomplete last block.
     Index actualBlockSize(Index block_idx) const {
       return block_idx + 1 < num_blocks ? block_size : k + block_size - block_size * num_blocks;
-    };
+    }
 
     // Compute range size with accounting for potentially incomplete last range.
     Index actualRangeSize(Index num_ranges, Index range_size, Index range_idx) const {
       eigen_assert(range_idx < num_ranges);
       return range_idx + 1 < num_ranges ? range_size : num_blocks + range_size - range_size * num_ranges;
-    };
+    }
 
     template <int Alignment>
     EIGEN_STRONG_INLINE static void addToBuffer(size_t n, const Scalar* src_buf, Scalar* tgt_buf) {
@@ -1507,7 +1521,7 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
     int num_threads = 1;
     double min_cost = total_parallel_cost;
     double kPerThreadOverHead = 3000;
-    double kFixedOverHead = 100000;
+    double kFixedOverHead = 20000;
     for (int nt = 2; nt <= this->m_device.numThreads(); nt += 2) {
       double sequential_cost = kFixedOverHead + nt * (reduction_cost + kPerThreadOverHead);
       double parallel_cost = total_parallel_cost / nt + sequential_cost;
@@ -1540,4 +1554,4 @@ struct TensorEvaluator<const TensorContractionOp<Indices, LeftArgType, RightArgT
 }  // end namespace Eigen
 
 #endif  // EIGEN_USE_THREADS
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H
+#endif  // EIGEN_TENSOR_TENSOR_CONTRACTION_THREAD_POOL_H

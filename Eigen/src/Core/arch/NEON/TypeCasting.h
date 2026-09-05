@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_TYPE_CASTING_NEON_H
 #define EIGEN_TYPE_CASTING_NEON_H
@@ -178,6 +179,42 @@ EIGEN_STRONG_INLINE Packet2ul preinterpret<Packet2ul, Packet2l>(const Packet2l& 
   return Packet2ul(vreinterpretq_u64_s64(a));
 }
 
+#if EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
+template <>
+EIGEN_STRONG_INLINE Packet4hf preinterpret<Packet4hf, Packet4s>(const Packet4s& a) {
+  return Packet4hf(vreinterpret_f16_s16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet4hf preinterpret<Packet4hf, Packet4us>(const Packet4us& a) {
+  return Packet4hf(vreinterpret_f16_u16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet8hf preinterpret<Packet8hf, Packet8s>(const Packet8s& a) {
+  return Packet8hf(vreinterpretq_f16_s16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet8hf preinterpret<Packet8hf, Packet8us>(const Packet8us& a) {
+  return Packet8hf(vreinterpretq_f16_u16(a));
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4s preinterpret<Packet4s, Packet4hf>(const Packet4hf& a) {
+  return Packet4s(vreinterpret_s16_f16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet8s preinterpret<Packet8s, Packet8hf>(const Packet8hf& a) {
+  return Packet8s(vreinterpretq_s16_f16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet4us preinterpret<Packet4us, Packet4hf>(const Packet4hf& a) {
+  return Packet4us(vreinterpret_u16_f16(a));
+}
+template <>
+EIGEN_STRONG_INLINE Packet8us preinterpret<Packet8us, Packet8hf>(const Packet8hf& a) {
+  return Packet8us(vreinterpretq_u16_f16(a));
+}
+#endif  // EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
+
 //==============================================================================
 // pcast, SrcType = float
 //==============================================================================
@@ -227,10 +264,31 @@ EIGEN_STRONG_INLINE Packet2ul pcast<Packet4f, Packet2ul>(const Packet4f& a) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet2ul pcast<Packet2f, Packet2ul>(const Packet2f& a) {
-  // Discard second half of input.
   return vmovl_u32(vcvt_u32_f32(a));
 }
 #endif  // EIGEN_ARCH_ARM64
+
+#if EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
+template <>
+struct type_casting_traits<float, half> {
+  enum { VectorizedCast = 1, SrcCoeffRatio = 2, TgtCoeffRatio = 1 };
+};
+
+template <>
+EIGEN_STRONG_INLINE Packet8hf pcast<Packet4f, Packet8hf>(const Packet4f& a, const Packet4f& b) {
+  return vcombine_f16(vcvt_f16_f32(a), vcvt_f16_f32(b));
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4hf pcast<Packet4f, Packet4hf>(const Packet4f& a) {
+  return vcvt_f16_f32(a);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4hf pcast<Packet2f, Packet4hf>(const Packet2f& a, const Packet2f& b) {
+  return vcvt_f16_f32(vcombine_f32(a, b));
+}
+#endif  // EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
 
 template <>
 struct type_casting_traits<float, numext::int32_t> {
@@ -346,6 +404,26 @@ template <>
 EIGEN_STRONG_INLINE Packet4uc pcast<Packet4f, Packet4uc>(const Packet4f& a) {
   return static_cast<Packet4uc>(pcast<Packet4f, Packet4c>(a));
 }
+
+#if EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
+//==============================================================================
+// pcast, SrcType = half
+//==============================================================================
+template <>
+struct type_casting_traits<half, float> {
+  enum { VectorizedCast = 1, SrcCoeffRatio = 1, TgtCoeffRatio = 2 };
+};
+
+template <>
+EIGEN_STRONG_INLINE Packet4f pcast<Packet8hf, Packet4f>(const Packet8hf& a) {
+  return vcvt_f32_f16(vget_low_f16(a));
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4f pcast<Packet4hf, Packet4f>(const Packet4hf& a) {
+  return vcvt_f32_f16(a);
+}
+#endif  // EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
 
 //==============================================================================
 // pcast, SrcType = int8_t
@@ -1103,11 +1181,12 @@ EIGEN_STRONG_INLINE Packet4f pcast<Packet2l, Packet4f>(const Packet2l& a, const 
 #if EIGEN_ARCH_ARM64
   return vcombine_f32(vcvt_f32_f64(vcvtq_f64_s64(a)), vcvt_f32_f64(vcvtq_f64_s64(b)));
 #else
-  EIGEN_ALIGN_MAX int64_t lvals[4];
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2l>::alignment) int64_t lvals[4];
   pstore(lvals, a);
   pstore(lvals + 2, b);
-  EIGEN_ALIGN_MAX float fvals[4] = {static_cast<float>(lvals[0]), static_cast<float>(lvals[1]),
-                                    static_cast<float>(lvals[2]), static_cast<float>(lvals[3])};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet4f>::alignment)
+  float fvals[4] = {static_cast<float>(lvals[0]), static_cast<float>(lvals[1]), static_cast<float>(lvals[2]),
+                    static_cast<float>(lvals[3])};
   return pload<Packet4f>(fvals);
 #endif
 }
@@ -1117,9 +1196,10 @@ EIGEN_STRONG_INLINE Packet2f pcast<Packet2l, Packet2f>(const Packet2l& a) {
 #if EIGEN_ARCH_ARM64
   return vcvt_f32_f64(vcvtq_f64_s64(a));
 #else
-  EIGEN_ALIGN_MAX int64_t lvals[2];
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2l>::alignment) int64_t lvals[2];
   pstore(lvals, a);
-  EIGEN_ALIGN_MAX float fvals[2] = {static_cast<float>(lvals[0]), static_cast<float>(lvals[1])};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2f>::alignment)
+  float fvals[2] = {static_cast<float>(lvals[0]), static_cast<float>(lvals[1])};
   return pload<Packet2f>(fvals);
 #endif
 }
@@ -1241,11 +1321,12 @@ EIGEN_STRONG_INLINE Packet4f pcast<Packet2ul, Packet4f>(const Packet2ul& a, cons
 #if EIGEN_ARCH_ARM64
   return vcombine_f32(vcvt_f32_f64(vcvtq_f64_u64(a)), vcvt_f32_f64(vcvtq_f64_u64(b)));
 #else
-  EIGEN_ALIGN_MAX uint64_t uvals[4];
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2ul>::alignment) uint64_t uvals[4];
   pstore(uvals, a);
   pstore(uvals + 2, b);
-  EIGEN_ALIGN_MAX float fvals[4] = {static_cast<float>(uvals[0]), static_cast<float>(uvals[1]),
-                                    static_cast<float>(uvals[2]), static_cast<float>(uvals[3])};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet4f>::alignment)
+  float fvals[4] = {static_cast<float>(uvals[0]), static_cast<float>(uvals[1]), static_cast<float>(uvals[2]),
+                    static_cast<float>(uvals[3])};
   return pload<Packet4f>(fvals);
 #endif
 }
@@ -1254,9 +1335,10 @@ EIGEN_STRONG_INLINE Packet2f pcast<Packet2ul, Packet2f>(const Packet2ul& a) {
 #if EIGEN_ARCH_ARM64
   return vcvt_f32_f64(vcvtq_f64_u64(a));
 #else
-  EIGEN_ALIGN_MAX uint64_t uvals[2];
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2ul>::alignment) uint64_t uvals[2];
   pstore(uvals, a);
-  EIGEN_ALIGN_MAX float fvals[2] = {static_cast<float>(uvals[0]), static_cast<float>(uvals[1])};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet2f>::alignment)
+  float fvals[2] = {static_cast<float>(uvals[0]), static_cast<float>(uvals[1])};
   return pload<Packet2f>(fvals);
 #endif
 }

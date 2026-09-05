@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPECIAL_FUNCTIONS_H
 #define EIGEN_SPECIAL_FUNCTIONS_H
@@ -40,22 +41,17 @@ namespace internal {
 //    Steve
 
 /****************************************************************************
- * Implementation of lgamma, requires C++11/C99                             *
+ * Implementation of lgamma                                                 *
  ****************************************************************************/
 
 template <typename Scalar>
 struct lgamma_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar) { return Scalar(0); }
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar) {
+    EIGEN_STATIC_ASSERT((!std::is_same<Scalar, Scalar>::value), THIS_TYPE_IS_NOT_SUPPORTED)
+    return Scalar(0);
+  }
 };
 
-template <typename Scalar>
-struct lgamma_retval {
-  typedef Scalar type;
-};
-
-#if EIGEN_HAS_C99_MATH
 // Since glibc 2.19
 #if defined(__GLIBC__) && ((__GLIBC__ >= 2 && __GLIBC_MINOR__ >= 19) || __GLIBC__ > 2) && \
     (defined(_DEFAULT_SOURCE) || defined(_BSD_SOURCE) || defined(_SVID_SOURCE))
@@ -97,16 +93,10 @@ struct lgamma_impl<double> {
 };
 
 #undef EIGEN_HAS_LGAMMA_R
-#endif
 
 /****************************************************************************
  * Implementation of digamma (psi), based on Cephes                         *
  ****************************************************************************/
-
-template <typename Scalar>
-struct digamma_retval {
-  typedef Scalar type;
-};
 
 /*
  *
@@ -123,7 +113,7 @@ struct digamma_retval {
  */
 template <typename Scalar>
 struct digamma_impl_maybe_poly {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar) { return Scalar(0); }
 };
@@ -230,7 +220,13 @@ struct digamma_impl {
     const Scalar half = Scalar(0.5);
     nz = zero;
 
-    if (x <= zero) {
+    // Near 0, psi(x) ~ -1/x - gamma.
+    // For x = +0.0: psi(+0.0) -> -infinity.
+    // For x = -0.0: psi(-0.0) -> +infinity.
+    if (x == zero) {
+      return (std::signbit(x)) ? NumTraits<Scalar>::infinity() : -NumTraits<Scalar>::infinity();
+    }
+    if (x < zero) {
       negative = true;
       q = x;
       p = numext::floor(q);
@@ -269,6 +265,27 @@ struct digamma_impl {
   }
 };
 
+// Does unqualified lookup of erf/erfc succeed for T? The lookup below mirrors
+// the one at the call sites in erf_impl/erfc_impl, so it finds std::erf/std::erfc
+// and any overload visible through argument-dependent lookup.
+namespace unqualified_erf {
+EIGEN_USING_STD(erf)
+EIGEN_USING_STD(erfc)
+template <typename T>
+auto test_erf(int) -> decltype(void(erf(std::declval<const T&>())), std::true_type{});
+template <typename T>
+std::false_type test_erf(...);
+template <typename T>
+auto test_erfc(int) -> decltype(void(erfc(std::declval<const T&>())), std::true_type{});
+template <typename T>
+std::false_type test_erfc(...);
+}  // namespace unqualified_erf
+
+template <typename T>
+struct has_erf : decltype(unqualified_erf::test_erf<T>(0)) {};
+template <typename T>
+struct has_erfc : decltype(unqualified_erf::test_erfc<T>(0)) {};
+
 /***************************************************************************
  * Implementation of erfc.
  ****************************************************************************/
@@ -282,7 +299,7 @@ template <>
 template <typename T>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erfc<float>::run(const T& x_in) {
   constexpr float kClamp = 11.0f;
-  const T x = pmin(pmax(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
+  const T x = pmin<PropagateNaN>(pmax<PropagateNaN>(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
 
   // erfc(x) = 1 + x * S(x^2), |x| <= 1.
   //
@@ -388,7 +405,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T erfc_double_large(const T& x, const T& x
   const T x2_lo = twoprod_low(x, x, x2);
   // Here we use that
   //   exp(-x^2) = exp(-(x2+x2_lo)^2) ~= exp(-x2)*exp(-x2_lo) ~= exp(-x2)*(1-x2_lo)
-  // since x2_lo < kClamp *eps << 1 in the region we care about. This trick reduces the max error
+  // since x2_lo < kClamp * eps << 1 in the region we care about. This trick reduces the max error
   // from 258 ulps to below 7 ulps.
   const T exp2_hi = pexp(pnegate(x2));
   const T z = pnmadd(exp2_hi, x2_lo, exp2_hi);
@@ -407,7 +424,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erfc<double>::run(const T& 
   // Clamp x to [-28:28] beyond which erfc(x) is either two or zero (below the underflow threshold).
   // This avoids having to deal with twoprod(x,x) producing NaN for sufficiently large x.
   constexpr double kClamp = 28.0;
-  const T x = pmin(pmax(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
+  const T x = pmin<PropagateNaN>(pmax<PropagateNaN>(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
 
   // For |x| < 1, we use erfc(x) = 1 - erf(x).
   const T x2 = pmul(x, x);
@@ -426,15 +443,34 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erfc<double>::run(const T& 
 template <typename T>
 struct erfc_impl {
   typedef typename unpacket_traits<T>::type Scalar;
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) { return generic_fast_erfc<Scalar>::run(x); }
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) { return run_impl(x, std::is_same<T, Scalar>()); }
+
+ private:
+  // Packets of float/double: vectorized rational approximation.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_impl(const T& x, std::false_type) {
+    return generic_fast_erfc<Scalar>::run(x);
+  }
+  // Any other scalar type: defer to an erfc found by argument-dependent lookup
+  // (or std::erfc), keeping custom scalars on their own implementation instead
+  // of the float/double-tuned polynomials.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_impl(const T& x, std::true_type) {
+    EIGEN_STATIC_ASSERT_NON_INTEGER(T)
+    return run_scalar(x, has_erfc<T>());
+  }
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_scalar(const T& x, std::true_type) {
+    EIGEN_USING_STD(erfc);
+    return erfc(x);
+  }
+  // Reject the type here instead of letting overload resolution fail inside the
+  // call above: the approximations in this file are tuned for float and double
+  // and are not valid for an arbitrary scalar, so a scalar type that wants erfc
+  // has to supply it.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_scalar(const T& x, std::false_type) {
+    EIGEN_STATIC_ASSERT(has_erfc<T>::value, SCALAR_TYPE_MUST_PROVIDE_AN_ERFC_OVERLOAD_FOUND_BY_ADL_OR_IN_NAMESPACE_STD)
+    return x;
+  }
 };
 
-template <typename Scalar>
-struct erfc_retval {
-  typedef Scalar type;
-};
-
-#if EIGEN_HAS_C99_MATH
 template <>
 struct erfc_impl<float> {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE float run(const float x) {
@@ -456,7 +492,6 @@ struct erfc_impl<double> {
 #endif
   }
 };
-#endif  // EIGEN_HAS_C99_MATH
 
 /****************************************************************************
  * Implementation of erf.
@@ -469,7 +504,7 @@ struct generic_fast_erf {
 };
 
 /** \internal \returns the error function of \a a (coeff-wise)
-    This uses a 11/10-degree rational interpolantand is accurate to 3 ulp for
+    This uses a 11/10-degree rational interpolant and is accurate to 3 ulp for
     normalized floats.
 
     This implementation works on both scalars and SIMD "packets".
@@ -488,20 +523,20 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erf<float>::run(const T& x)
                             4.99425798654556274414062500000e-01f, 1.0f};
 
   // Since the polynomials are odd/even, we need x^2.
-  // Since erf(4) == 1 in float, we clamp x^2 to 16 to avoid
-  // computing Inf/Inf below.
+  // Since erf(4) == 1 in float, we clamp x^2 to 16 to avoid computing Inf/Inf below.
+  // NaN need not survive this clamp: multiplying by x below restores it.
   const T x2 = pmin(pset1<T>(16.0f), pmul(x, x));
 
   // Evaluate the numerator polynomial p.
   T p = ppolevl<T, 5>::run(x2, alpha);
   p = pmul(x, p);
 
-  // Evaluate the denominator polynomial p.
+  // Evaluate the denominator polynomial q.
   T q = ppolevl<T, 5>::run(x2, beta);
   const T r = pdiv(p, q);
 
   // Clamp to [-1:1].
-  return pmax(pmin(r, pset1<T>(1.0f)), pset1<T>(-1.0f));
+  return pmax<PropagateNaN>(pmin<PropagateNaN>(r, pset1<T>(1.0f)), pset1<T>(-1.0f));
 }
 
 template <>
@@ -510,7 +545,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erf<double>::run(const T& x
   // Clamp x to [-28:28] beyond which erf(x) is ±1 within double precision.
   // This avoids NaN from twoprod and exp operations for infinite inputs.
   constexpr double kClamp = 28.0;
-  const T x = pmin(pmax(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
+  const T x = pmin<PropagateNaN>(pmax<PropagateNaN>(x_in, pset1<T>(-kClamp)), pset1<T>(kClamp));
   T x2 = pmul(x, x);
   T erf_small = pmul(x, erf_over_x_double_small(x2));
 
@@ -528,15 +563,34 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_fast_erf<double>::run(const T& x
 template <typename T>
 struct erf_impl {
   typedef typename unpacket_traits<T>::type Scalar;
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) { return generic_fast_erf<Scalar>::run(x); }
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) { return run_impl(x, std::is_same<T, Scalar>()); }
+
+ private:
+  // Packets of float/double: vectorized rational approximation.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_impl(const T& x, std::false_type) {
+    return generic_fast_erf<Scalar>::run(x);
+  }
+  // Any other scalar type: defer to an erf found by argument-dependent lookup
+  // (or std::erf), keeping custom scalars on their own implementation instead
+  // of the float/double-tuned polynomials.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_impl(const T& x, std::true_type) {
+    EIGEN_STATIC_ASSERT_NON_INTEGER(T)
+    return run_scalar(x, has_erf<T>());
+  }
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_scalar(const T& x, std::true_type) {
+    EIGEN_USING_STD(erf);
+    return erf(x);
+  }
+  // Reject the type here instead of letting overload resolution fail inside the
+  // call above: the approximations in this file are tuned for float and double
+  // and are not valid for an arbitrary scalar, so a scalar type that wants erf
+  // has to supply it.
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run_scalar(const T& x, std::false_type) {
+    EIGEN_STATIC_ASSERT(has_erf<T>::value, SCALAR_TYPE_MUST_PROVIDE_AN_ERF_OVERLOAD_FOUND_BY_ADL_OR_IN_NAMESPACE_STD)
+    return x;
+  }
 };
 
-template <typename Scalar>
-struct erf_retval {
-  typedef Scalar type;
-};
-
-#if EIGEN_HAS_C99_MATH
 template <>
 struct erf_impl<float> {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE float run(const float x) {
@@ -558,7 +612,6 @@ struct erf_impl<double> {
 #endif
   }
 };
-#endif  // EIGEN_HAS_C99_MATH
 
 /***************************************************************************
  * Implementation of ndtri.                                                 *
@@ -615,23 +668,44 @@ struct erf_impl<double> {
 
 // TODO: Add a cheaper approximation for float.
 
+template <typename T, bool IsScalar = is_scalar<T>::value>
+struct flipsign_impl;
+
+template <typename T>
+struct flipsign_impl<T, false> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T run(const T& should_flipsign, const T& x) {
+    const T sign_mask = psignmask<T>();
+    const T sign_bit = pand<T>(should_flipsign, sign_mask);
+    return pxor<T>(sign_bit, x);
+  }
+};
+
+template <typename T>
+struct flipsign_impl<T, true> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T run(const T& should_flipsign, const T& x) {
+    return should_flipsign == T(0) ? x : -x;
+  }
+};
+
 template <typename T>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T flipsign(const T& should_flipsign, const T& x) {
-  typedef typename unpacket_traits<T>::type Scalar;
-  const T sign_mask = pset1<T>(Scalar(-0.0));
-  T sign_bit = pand<T>(should_flipsign, sign_mask);
-  return pxor<T>(sign_bit, x);
+  return flipsign_impl<T>::run(should_flipsign, x);
 }
 
-template <>
-EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE double flipsign<double>(const double& should_flipsign, const double& x) {
-  return should_flipsign == 0 ? x : -x;
-}
+template <typename T, bool IsScalar = is_scalar<T>::value>
+struct ndtri_negative_infinity_impl;
 
-template <>
-EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE float flipsign<float>(const float& should_flipsign, const float& x) {
-  return should_flipsign == 0 ? x : -x;
-}
+template <typename T>
+struct ndtri_negative_infinity_impl<T, false> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T run(const T& positive_infinity) {
+    return por(psignmask<T>(), positive_infinity);
+  }
+};
+
+template <typename T>
+struct ndtri_negative_infinity_impl<T, true> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T run(const T& positive_infinity) { return -positive_infinity; }
+};
 
 // We split this computation in to two so that in the scalar path
 // only one branch is evaluated (due to our template specialization of pselect
@@ -713,8 +787,8 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T generic_ndtri_lt_exp_neg_two(const T& b,
 
 template <typename T, typename ScalarType>
 EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE T generic_ndtri(const T& a) {
-  const T maxnum = pset1<T>(NumTraits<ScalarType>::infinity());
-  const T neg_maxnum = pset1<T>(-NumTraits<ScalarType>::infinity());
+  const T maxnum = pinf<T>();
+  const T neg_maxnum = ndtri_negative_infinity_impl<T>::run(maxnum);
 
   const T zero = pset1<T>(ScalarType(0));
   const T one = pset1<T>(ScalarType(1));
@@ -732,36 +806,13 @@ EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE T generic_ndtri(const T& a) {
 }
 
 template <typename Scalar>
-struct ndtri_retval {
-  typedef Scalar type;
-};
-
-#if !EIGEN_HAS_C99_MATH
-
-template <typename Scalar>
-struct ndtri_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar) { return Scalar(0); }
-};
-
-#else
-
-template <typename Scalar>
 struct ndtri_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar x) { return generic_ndtri<Scalar, Scalar>(x); }
 };
 
-#endif  // EIGEN_HAS_C99_MATH
-
 /**************************************************************************************************************
- * Implementation of igammac (complemented incomplete gamma integral), based on Cephes but requires C++11/C99 *
+ * Implementation of igammac (complemented incomplete gamma integral), based on Cephes                       *
  **************************************************************************************************************/
-
-template <typename Scalar>
-struct igammac_retval {
-  typedef Scalar type;
-};
 
 // NOTE: cephes_helper is also used to implement zeta
 template <typename Scalar>
@@ -822,20 +873,13 @@ EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar main_igamma_term(Scalar a, S
 }
 
 template <typename Scalar, IgammaComputationMode mode>
-EIGEN_DEVICE_FUNC int igamma_num_iterations() {
+EIGEN_DEVICE_FUNC constexpr int igamma_num_iterations() {
   /* Returns the maximum number of internal iterations for igamma computation.
    */
-  if (mode == VALUE) {
-    return 2000;
-  }
-
-  if (internal::is_same<Scalar, float>::value) {
-    return 200;
-  } else if (internal::is_same<Scalar, double>::value) {
-    return 500;
-  } else {
-    return 2000;
-  }
+  return mode == VALUE                         ? 2000
+         : std::is_same<Scalar, float>::value  ? 200
+         : std::is_same<Scalar, double>::value ? 500
+                                               : 2000;
 }
 
 template <typename Scalar, IgammaComputationMode mode>
@@ -1025,17 +1069,6 @@ struct igamma_series_impl {
   }
 };
 
-#if !EIGEN_HAS_C99_MATH
-
-template <typename Scalar>
-struct igammac_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static Scalar run(Scalar a, Scalar x) { return Scalar(0); }
-};
-
-#else
-
 template <typename Scalar>
 struct igammac_impl {
   EIGEN_DEVICE_FUNC static Scalar run(Scalar a, Scalar x) {
@@ -1116,22 +1149,9 @@ struct igammac_impl {
   }
 };
 
-#endif  // EIGEN_HAS_C99_MATH
-
 /************************************************************************************************
- * Implementation of igamma (incomplete gamma integral), based on Cephes but requires C++11/C99 *
+ * Implementation of igamma (incomplete gamma integral), based on Cephes                         *
  ************************************************************************************************/
-
-#if !EIGEN_HAS_C99_MATH
-
-template <typename Scalar, IgammaComputationMode mode>
-struct igamma_generic_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(Scalar a, Scalar x) { return Scalar(0); }
-};
-
-#else
 
 template <typename Scalar, IgammaComputationMode mode>
 struct igamma_generic_impl {
@@ -1177,13 +1197,6 @@ struct igamma_generic_impl {
     }
     return ret;
   }
-};
-
-#endif  // EIGEN_HAS_C99_MATH
-
-template <typename Scalar>
-struct igamma_retval {
-  typedef Scalar type;
 };
 
 template <typename Scalar>
@@ -1258,9 +1271,6 @@ struct igamma_impl : igamma_generic_impl<Scalar, VALUE> {
 };
 
 template <typename Scalar>
-struct igamma_der_a_retval : igamma_retval<Scalar> {};
-
-template <typename Scalar>
 struct igamma_der_a_impl : igamma_generic_impl<Scalar, DERIVATIVE> {
   /* Derivative of the incomplete Gamma function with respect to a.
    *
@@ -1277,9 +1287,6 @@ struct igamma_der_a_impl : igamma_generic_impl<Scalar, DERIVATIVE> {
    * integral". Journal of the Royal Statistical Society. 1982
    */
 };
-
-template <typename Scalar>
-struct gamma_sample_der_alpha_retval : igamma_retval<Scalar> {};
 
 template <typename Scalar>
 struct gamma_sample_der_alpha_impl : igamma_generic_impl<Scalar, SAMPLE_DERIVATIVE> {
@@ -1327,13 +1334,8 @@ struct gamma_sample_der_alpha_impl : igamma_generic_impl<Scalar, SAMPLE_DERIVATI
  *****************************************************************************/
 
 template <typename Scalar>
-struct zeta_retval {
-  typedef Scalar type;
-};
-
-template <typename Scalar>
 struct zeta_impl_series {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(const Scalar) { return Scalar(0); }
 };
@@ -1525,24 +1527,8 @@ struct zeta_impl {
 };
 
 /****************************************************************************
- * Implementation of polygamma function, requires C++11/C99                 *
+ * Implementation of polygamma function                                      *
  ****************************************************************************/
-
-template <typename Scalar>
-struct polygamma_retval {
-  typedef Scalar type;
-};
-
-#if !EIGEN_HAS_C99_MATH
-
-template <typename Scalar>
-struct polygamma_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(Scalar n, Scalar x) { return Scalar(0); }
-};
-
-#else
 
 template <typename Scalar>
 struct polygamma_impl {
@@ -1567,33 +1553,14 @@ struct polygamma_impl {
   }
 };
 
-#endif  // EIGEN_HAS_C99_MATH
-
 /************************************************************************************************
- * Implementation of betainc (incomplete beta integral), based on Cephes but requires C++11/C99 *
+ * Implementation of betainc (incomplete beta integral), based on Cephes                         *
  ************************************************************************************************/
 
 template <typename Scalar>
-struct betainc_retval {
-  typedef Scalar type;
-};
-
-#if !EIGEN_HAS_C99_MATH
-
-template <typename Scalar>
 struct betainc_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(Scalar a, Scalar b, Scalar x) { return Scalar(0); }
-};
-
-#else
-
-template <typename Scalar>
-struct betainc_impl {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, Scalar>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
-
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(Scalar, Scalar, Scalar) {
+    EIGEN_STATIC_ASSERT((!std::is_same<Scalar, Scalar>::value), THIS_TYPE_IS_NOT_SUPPORTED)
     /*	betaincf.c
      *
      *	Incomplete beta integral
@@ -1671,7 +1638,7 @@ struct betainc_impl {
  */
 template <typename Scalar>
 struct incbeta_cfe {
-  EIGEN_STATIC_ASSERT((internal::is_same<Scalar, float>::value || internal::is_same<Scalar, double>::value),
+  EIGEN_STATIC_ASSERT((std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value),
                       THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar run(Scalar a, Scalar b, Scalar x, bool small_branch) {
@@ -1688,9 +1655,9 @@ struct incbeta_cfe {
     Scalar ans;
     int n;
 
-    const int num_iters = (internal::is_same<Scalar, float>::value) ? 100 : 300;
-    const Scalar thresh = (internal::is_same<Scalar, float>::value) ? machep : Scalar(3) * machep;
-    Scalar r = (internal::is_same<Scalar, float>::value) ? zero : one;
+    constexpr int num_iters = (std::is_same<Scalar, float>::value) ? 100 : 300;
+    const Scalar thresh = (std::is_same<Scalar, float>::value) ? machep : Scalar(3) * machep;
+    Scalar r = (std::is_same<Scalar, float>::value) ? zero : one;
 
     if (small_branch) {
       k1 = a;
@@ -1915,7 +1882,7 @@ struct betainc_helper<double> {
     */
     t = lgamma_impl<double>::run(a + b) - lgamma_impl<double>::run(a) - lgamma_impl<double>::run(b) + u +
         numext::log(s);
-    return s = numext::exp(t);
+    return numext::exp(t);
   }
 };
 
@@ -2011,71 +1978,74 @@ struct betainc_impl<double> {
   }
 };
 
-#endif  // EIGEN_HAS_C99_MATH
-
 }  // end namespace internal
 
 namespace numext {
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(lgamma, Scalar) lgamma(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto lgamma(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(lgamma, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(lgamma, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(digamma, Scalar) digamma(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto digamma(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(digamma, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(digamma, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(zeta, Scalar) zeta(const Scalar& x, const Scalar& q) {
+EIGEN_DEVICE_FUNC inline auto zeta(const Scalar& x, const Scalar& q)
+    -> decltype(EIGEN_MATHFUNC_IMPL(zeta, Scalar)::run(x, q)) {
   return EIGEN_MATHFUNC_IMPL(zeta, Scalar)::run(x, q);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(polygamma, Scalar) polygamma(const Scalar& n, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto polygamma(const Scalar& n, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(polygamma, Scalar)::run(n, x)) {
   return EIGEN_MATHFUNC_IMPL(polygamma, Scalar)::run(n, x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(erf, Scalar) erf(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto erf(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(erf, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(erf, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(erfc, Scalar) erfc(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto erfc(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(erfc, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(erfc, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(ndtri, Scalar) ndtri(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto ndtri(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(ndtri, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(ndtri, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(igamma, Scalar) igamma(const Scalar& a, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto igamma(const Scalar& a, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(igamma, Scalar)::run(a, x)) {
   return EIGEN_MATHFUNC_IMPL(igamma, Scalar)::run(a, x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(igamma_der_a, Scalar) igamma_der_a(const Scalar& a, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto igamma_der_a(const Scalar& a, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(igamma_der_a, Scalar)::run(a, x)) {
   return EIGEN_MATHFUNC_IMPL(igamma_der_a, Scalar)::run(a, x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(gamma_sample_der_alpha, Scalar)
-    gamma_sample_der_alpha(const Scalar& a, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto gamma_sample_der_alpha(const Scalar& a, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(gamma_sample_der_alpha, Scalar)::run(a, x)) {
   return EIGEN_MATHFUNC_IMPL(gamma_sample_der_alpha, Scalar)::run(a, x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(igammac, Scalar) igammac(const Scalar& a, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto igammac(const Scalar& a, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(igammac, Scalar)::run(a, x)) {
   return EIGEN_MATHFUNC_IMPL(igammac, Scalar)::run(a, x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(betainc, Scalar)
-    betainc(const Scalar& a, const Scalar& b, const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto betainc(const Scalar& a, const Scalar& b, const Scalar& x)
+    -> decltype(EIGEN_MATHFUNC_IMPL(betainc, Scalar)::run(a, b, x)) {
   return EIGEN_MATHFUNC_IMPL(betainc, Scalar)::run(a, b, x);
 }
 

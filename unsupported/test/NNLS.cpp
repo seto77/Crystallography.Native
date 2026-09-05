@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #define EIGEN_RUNTIME_NO_MALLOC
 
@@ -167,6 +168,18 @@ void test_nnls_handles_0x0_matrix() {
   VERIFY_IS_EQUAL(x.size(), 0);
 }
 
+void test_nnls_handles_0xN_matrix() {
+  const MatrixXd A(0, 3);
+  const VectorXd b(0);
+
+  NNLS<MatrixXd> nnls(A, 0, 0.0);
+  const VectorXd x = nnls.solve(b);
+
+  VERIFY_IS_EQUAL(nnls.info(), ComputationInfo::Success);
+  VERIFY_IS_EQUAL(nnls.iterations(), 0);
+  VERIFY_IS_EQUAL(x, VectorXd::Zero(3));
+}
+
 void test_nnls_handles_dependent_columns() {
   //
   // SETUP
@@ -180,7 +193,11 @@ void test_nnls_handles_dependent_columns() {
   //
   // ACT
   //
-  const double tolerance = 1e-8;
+  // The default-constructed solver stops when the gradient falls below
+  // dummy_precision(); the independent A^T*(A*x-b) recomputation in the check
+  // can exceed that by a small factor, larger here because the dependent
+  // columns make the problem degenerate.
+  const double tolerance = 32 * NumTraits<double>::dummy_precision();
   NNLS<MatrixXd> nnls(A);
   const VectorXd &x = nnls.solve(b);
 
@@ -209,7 +226,9 @@ void test_nnls_handles_wide_matrix() {
   //
   // ACT
   //
-  const double tolerance = 1e-8;
+  // As above, the check tolerance tracks the solver's dummy_precision() stopping
+  // criterion plus the small slack from recomputing the gradient independently.
+  const double tolerance = 2 * NumTraits<double>::dummy_precision();
   NNLS<MatrixXd> nnls(A);
   const VectorXd &x = nnls.solve(b);
 
@@ -227,6 +246,46 @@ void test_nnls_handles_wide_matrix() {
   if (nnls.info() == ComputationInfo::Success) {
     verify_nnls_optimality(A, b, x, tolerance);
   }
+}
+
+void test_nnls_wide_matrix_at_row_capacity() {
+  Matrix<double, 2, 3> A;
+  A << 1, 0, -1, 0, 1, -1;
+  Vector2d b;
+  b << 1, 2;
+
+  NNLS<Matrix<double, 2, 3>> nnls(A, 2);
+  const Vector3d &x = nnls.solve(b);
+
+  VERIFY_IS_EQUAL(nnls.info(), ComputationInfo::Success);
+  VERIFY_IS_EQUAL(nnls.iterations(), 2);
+  verify_nnls_optimality(A, b, x, nnls.tolerance());
+}
+
+void test_nnls_does_not_report_false_success_at_row_capacity() {
+  Matrix<double, 2, 4> A;
+  A << 9000, 9000, -3000, 1e-11, 9000, 9000, -3000, -1e-11;
+  Vector2d b;
+  b << -2, -3;
+
+  NNLS<Matrix<double, 2, 4>> nnls(A);
+  nnls.solve(b);
+
+  // The passive QR basis becomes numerically dependent. Its feasible iterate is
+  // not optimal, so reaching the row capacity must not be reported as success.
+  VERIFY_IS_EQUAL(nnls.info(), ComputationInfo::NumericalIssue);
+  VERIFY_IS_EQUAL(nnls.iterations(), 2);
+}
+
+void test_nnls_reports_nonfinite_inactive_solution() {
+  const Matrix<double, 3, 2> A = Matrix<double, 3, 2>::Zero();
+  Vector3d b;
+  b << 1, 0, 0;
+
+  NNLS<Matrix<double, 3, 2>> nnls(A, -1, 0.0);
+  nnls.solve(b);
+
+  VERIFY_IS_EQUAL(nnls.info(), ComputationInfo::NumericalIssue);
 }
 
 // 4x2 problem, unconstrained solution positive
@@ -316,7 +375,8 @@ void test_nnls_with_half_precision() {
   const VecX x = nnls.solve(b);
 
   VERIFY_IS_EQUAL(nnls.info(), ComputationInfo::Success);
-  verify_nnls_optimality(A, b, x, half(1e-1));
+  // The half-precision QR and the half(1e-2) solver tolerance leak a few tens of eps of gradient.
+  verify_nnls_optimality(A, b, x, half(64) * NumTraits<half>::epsilon());
 }
 
 void test_nnls_special_case_solves_in_zero_iterations() {
@@ -444,6 +504,10 @@ EIGEN_DECLARE_TEST(NNLS) {
   CALL_SUBTEST_1(test_nnls_small_reference_problems());
   CALL_SUBTEST_1(test_nnls_handles_Mx0_matrix());
   CALL_SUBTEST_1(test_nnls_handles_0x0_matrix());
+  CALL_SUBTEST_1(test_nnls_handles_0xN_matrix());
+  CALL_SUBTEST_6(test_nnls_wide_matrix_at_row_capacity());
+  CALL_SUBTEST_6(test_nnls_does_not_report_false_success_at_row_capacity());
+  CALL_SUBTEST_6(test_nnls_reports_nonfinite_inactive_solution());
 
   for (int i = 0; i < g_repeat; i++) {
     // Essential NNLS properties, across different types.

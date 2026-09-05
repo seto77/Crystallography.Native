@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SOLVETRIANGULAR_H
 #define EIGEN_SOLVETRIANGULAR_H
@@ -50,12 +51,12 @@ struct triangular_solver_selector;
 
 template <typename Lhs, typename Rhs, int Side, int Mode>
 struct triangular_solver_selector<Lhs, Rhs, Side, Mode, NoUnrolling, 1> {
-  typedef typename Lhs::Scalar LhsScalar;
-  typedef typename Rhs::Scalar RhsScalar;
-  typedef blas_traits<Lhs> LhsProductTraits;
-  typedef typename LhsProductTraits::DirectLinearAccessType ActualLhsType;
-  typedef remove_all_t<ActualLhsType> ActualLhsTypeCleaned;
-  typedef Map<Matrix<RhsScalar, Dynamic, 1>, Aligned> MappedRhs;
+  using LhsScalar = typename Lhs::Scalar;
+  using RhsScalar = typename Rhs::Scalar;
+  using LhsProductTraits = blas_traits<Lhs>;
+  using ActualLhsType = typename LhsProductTraits::DirectLinearAccessType;
+  using ActualLhsTypeCleaned = remove_all_t<ActualLhsType>;
+  using MappedRhs = Map<Matrix<RhsScalar, Dynamic, 1>, Aligned>;
   static EIGEN_DEVICE_FUNC void run(const Lhs& lhs, Rhs& rhs) {
     add_const_on_value_type_t<ActualLhsType> actualLhs = LhsProductTraits::extract(lhs);
 
@@ -81,9 +82,9 @@ struct triangular_solver_selector<Lhs, Rhs, Side, Mode, NoUnrolling, 1> {
 // the rhs is a matrix
 template <typename Lhs, typename Rhs, int Side, int Mode>
 struct triangular_solver_selector<Lhs, Rhs, Side, Mode, NoUnrolling, Dynamic> {
-  typedef typename Rhs::Scalar Scalar;
-  typedef blas_traits<Lhs> LhsProductTraits;
-  typedef typename LhsProductTraits::DirectLinearAccessType ActualLhsType;
+  using Scalar = typename Rhs::Scalar;
+  using LhsProductTraits = blas_traits<Lhs>;
+  using ActualLhsType = typename LhsProductTraits::DirectLinearAccessType;
 
   static EIGEN_DEVICE_FUNC void run(const Lhs& lhs, Rhs& rhs) {
     add_const_on_value_type_t<ActualLhsType> actualLhs = LhsProductTraits::extract(lhs);
@@ -91,10 +92,9 @@ struct triangular_solver_selector<Lhs, Rhs, Side, Mode, NoUnrolling, Dynamic> {
     const Index size = lhs.rows();
     const Index othersize = Side == OnTheLeft ? rhs.cols() : rhs.rows();
 
-    typedef internal::gemm_blocking_space<(Rhs::Flags & RowMajorBit) ? RowMajor : ColMajor, Scalar, Scalar,
-                                          Rhs::MaxRowsAtCompileTime, Rhs::MaxColsAtCompileTime,
-                                          Lhs::MaxRowsAtCompileTime, 4>
-        BlockingType;
+    using BlockingType = internal::gemm_blocking_space<(Rhs::Flags & RowMajorBit) ? RowMajor : ColMajor, Scalar, Scalar,
+                                                       Rhs::MaxRowsAtCompileTime, Rhs::MaxColsAtCompileTime,
+                                                       Lhs::MaxRowsAtCompileTime, 4>;
 
     // Nothing to solve.
     if (actualLhs.size() == 0 || rhs.size() == 0) {
@@ -134,7 +134,7 @@ struct triangular_solver_unroller<Lhs, Rhs, Mode, LoopIndex, Size, false> {
                                      .cwiseProduct(rhs.template segment<LoopIndex>(StartIndex))
                                      .sum();
 
-    if (!(Mode & UnitDiag)) rhs.coeffRef(DiagIndex) /= lhs.coeff(DiagIndex, DiagIndex);
+    EIGEN_IF_CONSTEXPR (!(Mode & UnitDiag)) rhs.coeffRef(DiagIndex) /= lhs.coeff(DiagIndex, DiagIndex);
 
     triangular_solver_unroller<Lhs, Rhs, Mode, LoopIndex + 1, Size>::run(lhs, rhs);
   }
@@ -188,10 +188,10 @@ EIGEN_DEVICE_FUNC void TriangularViewImpl<MatrixType, Mode, Dense>::solveInPlace
         (OtherFlags & RowMajorBit) && OtherDerived::IsVectorAtCompileTime && OtherDerived::SizeAtCompileTime != 1,
     copy = IsRowMajorVector || ((OtherFlags & DirectAccessBit) == 0)
   };
-  typedef std::conditional_t<IsRowMajorVector, typename internal::plain_matrix_type_column_major<OtherDerived>::type,
-                             typename internal::plain_matrix_type<OtherDerived>::type>
-      OtherPlainObject;
-  typedef std::conditional_t<copy, OtherPlainObject, OtherDerived&> OtherCopy;
+  using OtherPlainObject =
+      std::conditional_t<IsRowMajorVector, typename internal::plain_matrix_type_column_major<OtherDerived>::type,
+                         typename internal::plain_matrix_type<OtherDerived>::type>;
+  using OtherCopy = std::conditional_t<copy, OtherPlainObject, OtherDerived&>;
   OtherCopy otherCopy(other);
 
   internal::triangular_solver_selector<MatrixType, std::remove_reference_t<OtherCopy>, Side, Mode>::run(
@@ -212,13 +212,12 @@ namespace internal {
 
 template <int Side, typename TriangularType, typename Rhs>
 struct traits<triangular_solve_retval<Side, TriangularType, Rhs> > {
-  typedef typename internal::plain_matrix_type_column_major<Rhs>::type ReturnType;
+  using ReturnType = typename internal::plain_matrix_type_column_major<Rhs>::type;
 };
 
 template <int Side, typename TriangularType, typename Rhs>
 struct triangular_solve_retval : public ReturnByValue<triangular_solve_retval<Side, TriangularType, Rhs> > {
-  typedef remove_all_t<typename Rhs::Nested> RhsNestedCleaned;
-  typedef ReturnByValue<triangular_solve_retval> Base;
+  using Base = ReturnByValue<triangular_solve_retval>;
 
   triangular_solve_retval(const TriangularType& tri, const Rhs& rhs) : m_triangularMatrix(tri), m_rhs(rhs) {}
 

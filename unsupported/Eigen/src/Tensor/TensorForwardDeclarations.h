@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_FORWARD_DECLARATIONS_H
-#define EIGEN_CXX11_TENSOR_TENSOR_FORWARD_DECLARATIONS_H
+#ifndef EIGEN_TENSOR_TENSOR_FORWARD_DECLARATIONS_H
+#define EIGEN_TENSOR_TENSOR_FORWARD_DECLARATIONS_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -17,7 +18,7 @@ namespace Eigen {
 
 // MakePointer class is used as a container of the address space of the pointer
 // on the host and on the device. From the host side it generates the T* pointer
-// and when EIGEN_USE_SYCL is used it construct a buffer with a map_allocator to
+// and when EIGEN_USE_SYCL is used it constructs a buffer with a map_allocator to
 // T* m_data on the host. It is always called on the device.
 // Specialisation of MakePointer class for creating the sycl buffer with
 // map_allocator.
@@ -212,4 +213,4 @@ class TensorAsyncExecutor;
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_FORWARD_DECLARATIONS_H
+#endif  // EIGEN_TENSOR_TENSOR_FORWARD_DECLARATIONS_H

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_CONDITIONESTIMATOR_H
 #define EIGEN_CONDITIONESTIMATOR_H
@@ -56,11 +57,11 @@ struct rcond_compute_sign<Vector, Vector, false> {
  */
 template <typename Decomposition>
 typename Decomposition::RealScalar rcond_invmatrix_L1_norm_estimate(const Decomposition& dec) {
-  typedef typename Decomposition::MatrixType MatrixType;
-  typedef typename Decomposition::Scalar Scalar;
-  typedef typename Decomposition::RealScalar RealScalar;
-  typedef typename internal::plain_col_type<MatrixType>::type Vector;
-  typedef typename internal::plain_col_type<MatrixType, RealScalar>::type RealVector;
+  using MatrixType = typename Decomposition::MatrixType;
+  using Scalar = typename Decomposition::Scalar;
+  using RealScalar = typename Decomposition::RealScalar;
+  using Vector = typename internal::plain_col_type<MatrixType>::type;
+  using RealVector = typename internal::plain_col_type<MatrixType, RealScalar>::type;
   const bool is_complex = (NumTraits<Scalar>::IsComplex != 0);
 
   eigen_assert(dec.rows() == dec.cols());
@@ -147,7 +148,7 @@ typename Decomposition::RealScalar rcond_invmatrix_L1_norm_estimate(const Decomp
 template <typename Decomposition>
 typename Decomposition::RealScalar rcond_estimate_helper(typename Decomposition::RealScalar matrix_norm,
                                                          const Decomposition& dec) {
-  typedef typename Decomposition::RealScalar RealScalar;
+  using RealScalar = typename Decomposition::RealScalar;
   eigen_assert(dec.rows() == dec.cols());
   if (dec.rows() == 0) return NumTraits<RealScalar>::infinity();
   if (numext::is_exactly_zero(matrix_norm)) return RealScalar(0);

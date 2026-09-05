@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_LU_H
 #define EIGEN_LU_H
@@ -18,9 +19,9 @@ namespace Eigen {
 namespace internal {
 template <typename MatrixType_, typename PermutationIndex_>
 struct traits<FullPivLU<MatrixType_, PermutationIndex_> > : traits<MatrixType_> {
-  typedef MatrixXpr XprKind;
-  typedef SolverStorage StorageKind;
-  typedef PermutationIndex_ StorageIndex;
+  using XprKind = MatrixXpr;
+  using StorageKind = SolverStorage;
+  using StorageIndex = PermutationIndex_;
   enum { Flags = 0 };
 };
 
@@ -63,9 +64,9 @@ template <typename MatrixType_, typename PermutationIndex_>
 class FullPivLU : public SolverBase<FullPivLU<MatrixType_, PermutationIndex_> >,
                   public RankRevealingBase<FullPivLU<MatrixType_, PermutationIndex_> > {
  public:
-  typedef MatrixType_ MatrixType;
-  typedef SolverBase<FullPivLU> Base;
-  typedef RankRevealingBase<FullPivLU> RankRevealingBase_;
+  using MatrixType = MatrixType_;
+  using Base = SolverBase<FullPivLU>;
+  using RankRevealingBase_ = RankRevealingBase<FullPivLU>;
   friend class SolverBase<FullPivLU>;
   friend class RankRevealingBase<FullPivLU>;
   using RankRevealingBase_::dimensionOfKernel;
@@ -84,11 +85,11 @@ class FullPivLU : public SolverBase<FullPivLU<MatrixType_, PermutationIndex_> >,
     MaxColsAtCompileTime = MatrixType::MaxColsAtCompileTime
   };
   using PermutationIndex = PermutationIndex_;
-  typedef typename internal::plain_row_type<MatrixType, PermutationIndex>::type IntRowVectorType;
-  typedef typename internal::plain_col_type<MatrixType, PermutationIndex>::type IntColVectorType;
-  typedef PermutationMatrix<ColsAtCompileTime, MaxColsAtCompileTime, PermutationIndex> PermutationQType;
-  typedef PermutationMatrix<RowsAtCompileTime, MaxRowsAtCompileTime, PermutationIndex> PermutationPType;
-  typedef typename MatrixType::PlainObject PlainObject;
+  using IntRowVectorType = typename internal::plain_row_type<MatrixType, PermutationIndex>::type;
+  using IntColVectorType = typename internal::plain_col_type<MatrixType, PermutationIndex>::type;
+  using PermutationQType = PermutationMatrix<ColsAtCompileTime, MaxColsAtCompileTime, PermutationIndex>;
+  using PermutationPType = PermutationMatrix<RowsAtCompileTime, MaxRowsAtCompileTime, PermutationIndex>;
+  using PlainObject = typename MatrixType::PlainObject;
 
   /** \brief Reports whether the LU factorization was successful.
    *
@@ -268,10 +269,65 @@ class FullPivLU : public SolverBase<FullPivLU<MatrixType_, PermutationIndex_> >,
    *
    * \warning a determinant can be very big or small, so for matrices
    * of large enough dimension, there is a risk of overflow/underflow.
+   * One way to work around that is to use logAbsDeterminant() and signDeterminant() instead.
+   * Also, do not rely on the determinant being exactly zero for testing
+   * singularity or rank-deficiency.
    *
-   * \sa MatrixBase::determinant()
+   * \sa absDeterminant(), logAbsDeterminant(), signDeterminant(), MatrixBase::determinant()
    */
   typename internal::traits<MatrixType>::Scalar determinant() const;
+
+  /** \returns the absolute value of the determinant of the matrix of which
+   * *this is the LU decomposition. It has only linear complexity
+   * (that is, O(n) where n is the dimension of the square matrix)
+   * as the LU decomposition has already been computed.
+   *
+   * \note This is only for square matrices.
+   *
+   * \warning a determinant can be very big or small, so for matrices
+   * of large enough dimension, there is a risk of overflow/underflow.
+   * One way to work around that is to use logAbsDeterminant() instead.
+   *
+   * \note Returns exactly zero when rank() finds the decomposition rank-deficient, as the
+   * rank-revealing QR decompositions do. determinant() is not gated that way: it returns the
+   * product of the pivots whatever the rank.
+   *
+   * \sa determinant(), logAbsDeterminant(), signDeterminant(), MatrixBase::determinant()
+   */
+  RealScalar absDeterminant() const;
+
+  /** \returns the natural log of the absolute value of the determinant of the matrix of which
+   * *this is the LU decomposition. It has only linear complexity
+   * (that is, O(n) where n is the dimension of the square matrix)
+   * as the LU decomposition has already been computed.
+   *
+   * \note This is only for square matrices.
+   *
+   * \note This method is useful to work around the risk of overflow/underflow that's inherent
+   * to determinant computation.
+   *
+   * \note Returns \c -infinity when rank() finds the decomposition rank-deficient.
+   *
+   * \sa determinant(), absDeterminant(), signDeterminant(), MatrixBase::determinant()
+   */
+  RealScalar logAbsDeterminant() const;
+
+  /** \returns the sign of the determinant of the matrix of which
+   * *this is the LU decomposition. It has only linear complexity
+   * (that is, O(n) where n is the dimension of the square matrix)
+   * as the LU decomposition has already been computed.
+   *
+   * \note This is only for square matrices.
+   *
+   * \note This method is useful to work around the risk of overflow/underflow that's inherent
+   * to determinant computation.
+   *
+   * \note Returns zero when rank() finds the decomposition rank-deficient, matching the documented
+   * sign of a singular matrix.
+   *
+   * \sa determinant(), absDeterminant(), logAbsDeterminant(), MatrixBase::determinant()
+   */
+  Scalar signDeterminant() const;
 
   /** \returns the absolute value of the i-th pivot coefficient (for RankRevealingBase). */
   RealScalar pivotCoeff(Index i) const {
@@ -361,7 +417,10 @@ void FullPivLU<MatrixType, PermutationIndex>::computeInPlace() {
   eigen_assert(m_lu.rows() <= NumTraits<PermutationIndex>::highest() &&
                m_lu.cols() <= NumTraits<PermutationIndex>::highest());
 
-  m_l1_norm = m_lu.cwiseAbs().colwise().sum().maxCoeff();
+  if (m_lu.cols() > 0)
+    m_l1_norm = m_lu.cwiseAbs().colwise().sum().maxCoeff();
+  else
+    m_l1_norm = RealScalar(0);
 
   const Index size = m_lu.diagonalSize();
   const Index rows = m_lu.rows();
@@ -381,8 +440,8 @@ void FullPivLU<MatrixType, PermutationIndex>::computeInPlace() {
 
     // biggest coefficient in the remaining bottom-right corner (starting at row k, col k)
     Index row_of_biggest_in_corner, col_of_biggest_in_corner;
-    typedef internal::scalar_score_coeff_op<Scalar> Scoring;
-    typedef typename Scoring::result_type Score;
+    using Scoring = internal::scalar_score_coeff_op<Scalar>;
+    using Score = typename Scoring::result_type;
     Score biggest_in_corner;
     biggest_in_corner = m_lu.bottomRightCorner(rows - k, cols - k)
                             .unaryExpr(Scoring())
@@ -447,6 +506,30 @@ typename internal::traits<MatrixType>::Scalar FullPivLU<MatrixType, PermutationI
   eigen_assert(m_isInitialized && "LU is not initialized.");
   eigen_assert(m_lu.rows() == m_lu.cols() && "You can't take the determinant of a non-square matrix!");
   return Scalar(m_det_pq) * Scalar(m_lu.diagonal().prod());
+}
+
+template <typename MatrixType, typename PermutationIndex>
+typename FullPivLU<MatrixType, PermutationIndex>::RealScalar FullPivLU<MatrixType, PermutationIndex>::absDeterminant()
+    const {
+  eigen_assert(m_isInitialized && "LU is not initialized.");
+  eigen_assert(m_lu.rows() == m_lu.cols() && "You can't take the determinant of a non-square matrix!");
+  return isInjective() ? numext::abs(m_lu.diagonal().prod()) : RealScalar(0);
+}
+
+template <typename MatrixType, typename PermutationIndex>
+typename FullPivLU<MatrixType, PermutationIndex>::RealScalar
+FullPivLU<MatrixType, PermutationIndex>::logAbsDeterminant() const {
+  eigen_assert(m_isInitialized && "LU is not initialized.");
+  eigen_assert(m_lu.rows() == m_lu.cols() && "You can't take the determinant of a non-square matrix!");
+  return isInjective() ? m_lu.diagonal().cwiseAbs().array().log().sum() : -NumTraits<RealScalar>::infinity();
+}
+
+template <typename MatrixType, typename PermutationIndex>
+typename FullPivLU<MatrixType, PermutationIndex>::Scalar FullPivLU<MatrixType, PermutationIndex>::signDeterminant()
+    const {
+  eigen_assert(m_isInitialized && "LU is not initialized.");
+  eigen_assert(m_lu.rows() == m_lu.cols() && "You can't take the determinant of a non-square matrix!");
+  return isInjective() ? Scalar(m_det_pq) * m_lu.diagonal().array().sign().prod() : Scalar(0);
 }
 
 /** \returns the matrix represented by the decomposition,
@@ -530,7 +613,6 @@ struct kernel_retval<FullPivLU<MatrixType_, PermutationIndex_> >
       if (i) m.row(i).head(i).setZero();
       m.row(i).tail(cols - i) = dec().matrixLU().row(pivots.coeff(i)).tail(cols - i);
     }
-    m.block(0, 0, rank(), rank());
     m.block(0, 0, rank(), rank()).template triangularView<StrictlyLower>().setZero();
     for (Index i = 0; i < rank(); ++i) m.col(i).swap(m.col(pivots.coeff(i)));
 
@@ -684,8 +766,8 @@ struct Assignment<
     DstXprType, Inverse<FullPivLU<MatrixType, PermutationIndex> >,
     internal::assign_op<typename DstXprType::Scalar, typename FullPivLU<MatrixType, PermutationIndex>::Scalar>,
     Dense2Dense> {
-  typedef FullPivLU<MatrixType, PermutationIndex> LuType;
-  typedef Inverse<LuType> SrcXprType;
+  using LuType = FullPivLU<MatrixType, PermutationIndex>;
+  using SrcXprType = Inverse<LuType>;
   static void run(DstXprType& dst, const SrcXprType& src,
                   const internal::assign_op<typename DstXprType::Scalar, typename MatrixType::Scalar>&) {
     dst = src.nestedExpression().solve(MatrixType::Identity(src.rows(), src.cols()));

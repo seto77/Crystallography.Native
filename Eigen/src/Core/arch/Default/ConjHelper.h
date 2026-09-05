@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 
 // This file is part of Eigen, a lightweight C++ template library
 // for linear algebra.
@@ -75,7 +76,7 @@ struct conj_if<false> {
 // specialized below.
 template <typename LhsType, typename RhsType, bool ConjLhs, bool ConjRhs>
 struct conj_helper {
-  typedef typename ScalarBinaryOpTraits<LhsType, RhsType>::ReturnType ResultType;
+  using ResultType = typename ScalarBinaryOpTraits<LhsType, RhsType>::ReturnType;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType pmadd(const LhsType& x, const RhsType& y,
                                                          const ResultType& c) const {
@@ -94,14 +95,14 @@ struct conj_helper {
 
 template <typename LhsScalar, typename RhsScalar>
 struct conj_helper<LhsScalar, RhsScalar, true, true> {
-  typedef typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType ResultType;
+  using ResultType = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType pmadd(const LhsScalar& x, const RhsScalar& y,
                                                          const ResultType& c) const {
     return this->pmul(x, y) + c;
   }
 
-  // We save a conjuation by using the identity conj(a)*conj(b) = conj(a*b).
+  // We save a conjugation by using the identity conj(a)*conj(b) = conj(a*b).
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ResultType pmul(const LhsScalar& x, const RhsScalar& y) const {
     return numext::conj(x * y);
   }
@@ -110,7 +111,7 @@ struct conj_helper<LhsScalar, RhsScalar, true, true> {
 // Implementation with equal type, use packet operations.
 template <typename Packet, bool ConjLhs, bool ConjRhs>
 struct conj_helper<Packet, Packet, ConjLhs, ConjRhs> {
-  typedef Packet ResultType;
+  using ResultType = Packet;
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pmadd(const Packet& x, const Packet& y, const Packet& c) const {
     return Eigen::internal::pmadd(conj_if<ConjLhs>().pconj(x), conj_if<ConjRhs>().pconj(y), c);
   }
@@ -126,7 +127,7 @@ struct conj_helper<Packet, Packet, ConjLhs, ConjRhs> {
 
 template <typename Packet>
 struct conj_helper<Packet, Packet, true, true> {
-  typedef Packet ResultType;
+  using ResultType = Packet;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pmadd(const Packet& x, const Packet& y, const Packet& c) const {
     return Eigen::internal::pmadd(pconj(x), pconj(y), c);
@@ -134,7 +135,7 @@ struct conj_helper<Packet, Packet, true, true> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pmsub(const Packet& x, const Packet& y, const Packet& c) const {
     return Eigen::internal::pmsub(pconj(x), pconj(y), c);
   }
-  // We save a conjuation by using the identity conj(a)*conj(b) = conj(a*b).
+  // We save a conjugation by using the identity conj(a)*conj(b) = conj(a*b).
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet pmul(const Packet& x, const Packet& y) const {
     return pconj(Eigen::internal::pmul(x, y));
   }

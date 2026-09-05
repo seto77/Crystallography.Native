@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_CONJUGATE_GRADIENT_H
 #define EIGEN_CONJUGATE_GRADIENT_H
@@ -29,9 +30,12 @@ namespace internal {
 template <typename MatrixType, typename Rhs, typename Dest, typename Preconditioner>
 EIGEN_DONT_INLINE void conjugate_gradient(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& precond,
                                           Index& iters, typename Dest::RealScalar& tol_error) {
-  typedef typename Dest::RealScalar RealScalar;
-  typedef typename Dest::Scalar Scalar;
-  typedef Matrix<Scalar, Dynamic, 1> VectorType;
+  using RealScalar = typename Dest::RealScalar;
+  using Scalar = typename Dest::Scalar;
+  // Use Dest's plain (owning) type as VectorType. For CPU Matrix/Map this
+  // resolves to Matrix<Scalar,Dynamic,1>. For GPU DeviceMatrix, PlainObject
+  // is DeviceMatrix itself (already owning).
+  using VectorType = typename Dest::PlainObject;
 
   RealScalar tol = tol_error;
   Index maxIters = iters;
@@ -40,21 +44,26 @@ EIGEN_DONT_INLINE void conjugate_gradient(const MatrixType& mat, const Rhs& rhs,
 
   VectorType residual = rhs - mat * x;  // initial residual
 
-  RealScalar rhsNorm2 = rhs.squaredNorm();
-  if (rhsNorm2 == 0) {
+  RealScalar rhsNorm = rhs.stableNorm();
+  if (rhsNorm == 0) {
     x.setZero();
     iters = 0;
     tol_error = 0;
     return;
   }
   const RealScalar considerAsZero = (std::numeric_limits<RealScalar>::min)();
-  RealScalar threshold = numext::maxi(RealScalar(tol * tol * rhsNorm2), considerAsZero);
-  RealScalar residualNorm2 = residual.squaredNorm();
-  if (residualNorm2 < threshold) {
+  RealScalar threshold = numext::maxi(RealScalar(tol * rhsNorm), considerAsZero);
+  RealScalar residualNorm = residual.stableNorm();
+  if (residualNorm < threshold) {
     iters = 0;
-    tol_error = numext::sqrt(residualNorm2 / rhsNorm2);
+    tol_error = residualNorm / rhsNorm;
     return;
   }
+
+  // Keep the quadratic recurrence terms representable for very small or large residuals.
+  const RealScalar residualScale = internal::iterative_solver_scaling_factor(residualNorm);
+  residual /= residualScale;
+  threshold /= residualScale;
 
   VectorType p(n);
   p = precond.solve(residual);  // initial search direction
@@ -66,11 +75,11 @@ EIGEN_DONT_INLINE void conjugate_gradient(const MatrixType& mat, const Rhs& rhs,
     tmp.noalias() = mat * p;  // the bottleneck of the algorithm
 
     Scalar alpha = absNew / p.dot(tmp);  // the amount we travel on dir
-    x += alpha * p;                      // update solution
+    x += (residualScale * alpha) * p;    // update solution
     residual -= alpha * tmp;             // update residual
 
-    residualNorm2 = residual.squaredNorm();
-    if (residualNorm2 < threshold) break;
+    residualNorm = residual.stableNorm();
+    if (residualNorm < threshold) break;
 
     z = precond.solve(residual);  // approximately solve for "A z = residual"
 
@@ -80,7 +89,7 @@ EIGEN_DONT_INLINE void conjugate_gradient(const MatrixType& mat, const Rhs& rhs,
     p = z + beta * p;                        // update search direction
     i++;
   }
-  tol_error = numext::sqrt(residualNorm2 / rhsNorm2);
+  tol_error = residualNorm / (rhsNorm / residualScale);
   iters = i;
 }
 
@@ -94,8 +103,8 @@ namespace internal {
 
 template <typename MatrixType_, int UpLo_, typename Preconditioner_>
 struct traits<ConjugateGradient<MatrixType_, UpLo_, Preconditioner_> > {
-  typedef MatrixType_ MatrixType;
-  typedef Preconditioner_ Preconditioner;
+  using MatrixType = MatrixType_;
+  using Preconditioner = Preconditioner_;
 };
 
 }  // namespace internal
@@ -115,8 +124,8 @@ struct traits<ConjugateGradient<MatrixType_, UpLo_, Preconditioner_> > {
   * \implsparsesolverconcept
   *
   * The maximal number of iterations and tolerance value can be controlled via the setMaxIterations()
-  * and setTolerance() methods. The defaults are the size of the problem for the maximal number of iterations
-  * and NumTraits<Scalar>::epsilon() for the tolerance.
+  * and setTolerance() methods. The defaults are twice the number of columns of the matrix for the maximal
+  * number of iterations and NumTraits<Scalar>::epsilon() for the tolerance.
   *
   * The tolerance corresponds to the relative residual error: |Ax-b|/|b|
   *
@@ -151,7 +160,7 @@ struct traits<ConjugateGradient<MatrixType_, UpLo_, Preconditioner_> > {
 template <typename MatrixType_, int UpLo_, typename Preconditioner_>
 class ConjugateGradient : public IterativeSolverBase<ConjugateGradient<MatrixType_, UpLo_, Preconditioner_> > {
  protected:
-  typedef IterativeSolverBase<ConjugateGradient> Base;
+  using Base = IterativeSolverBase<ConjugateGradient>;
   using Base::m_error;
   using Base::m_info;
   using Base::m_isInitialized;
@@ -159,10 +168,10 @@ class ConjugateGradient : public IterativeSolverBase<ConjugateGradient<MatrixTyp
   using Base::matrix;
 
  public:
-  typedef MatrixType_ MatrixType;
-  typedef typename MatrixType::Scalar Scalar;
-  typedef typename MatrixType::RealScalar RealScalar;
-  typedef Preconditioner_ Preconditioner;
+  using MatrixType = MatrixType_;
+  using Scalar = typename MatrixType::Scalar;
+  using RealScalar = typename MatrixType::RealScalar;
+  using Preconditioner = Preconditioner_;
 
   enum { UpLo = UpLo_ };
 
@@ -183,24 +192,22 @@ class ConjugateGradient : public IterativeSolverBase<ConjugateGradient<MatrixTyp
   template <typename MatrixDerived>
   explicit ConjugateGradient(const EigenBase<MatrixDerived>& A) : Base(A.derived()) {}
 
-  ~ConjugateGradient() {}
-
   /** \internal */
   template <typename Rhs, typename Dest>
   void _solve_vector_with_guess_impl(const Rhs& b, Dest& x) const {
-    typedef typename Base::MatrixWrapper MatrixWrapper;
-    typedef typename Base::ActualMatrixType ActualMatrixType;
+    using MatrixWrapper = typename Base::MatrixWrapper;
+    using ActualMatrixType = typename Base::ActualMatrixType;
     enum {
       TransposeInput = (!MatrixWrapper::MatrixFree) && (UpLo == (Lower | Upper)) && (!MatrixType::IsRowMajor) &&
                        (!NumTraits<Scalar>::IsComplex)
     };
-    typedef std::conditional_t<TransposeInput, Transpose<const ActualMatrixType>, ActualMatrixType const&>
-        RowMajorWrapper;
+    using RowMajorWrapper =
+        std::conditional_t<TransposeInput, Transpose<const ActualMatrixType>, ActualMatrixType const&>;
     EIGEN_STATIC_ASSERT(internal::check_implication(MatrixWrapper::MatrixFree, UpLo == (Lower | Upper)),
                         MATRIX_FREE_CONJUGATE_GRADIENT_IS_COMPATIBLE_WITH_UPPER_UNION_LOWER_MODE_ONLY);
-    typedef std::conditional_t<UpLo == (Lower | Upper), RowMajorWrapper,
-                               typename MatrixWrapper::template ConstSelfAdjointViewReturnType<UpLo>::Type>
-        SelfAdjointWrapper;
+    using SelfAdjointWrapper =
+        std::conditional_t<UpLo == (Lower | Upper), RowMajorWrapper,
+                           typename MatrixWrapper::template ConstSelfAdjointViewReturnType<UpLo>::Type>;
 
     m_iterations = Base::maxIterations();
     m_error = Base::m_tolerance;
@@ -209,8 +216,6 @@ class ConjugateGradient : public IterativeSolverBase<ConjugateGradient<MatrixTyp
     internal::conjugate_gradient(SelfAdjointWrapper(row_mat), b, x, Base::m_preconditioner, m_iterations, m_error);
     m_info = m_error <= Base::m_tolerance ? Success : NoConvergence;
   }
-
- protected:
 };
 
 }  // end namespace Eigen

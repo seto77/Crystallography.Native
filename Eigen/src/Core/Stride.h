@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_STRIDE_H
 #define EIGEN_STRIDE_H
@@ -45,7 +46,7 @@ namespace Eigen {
  * because of the ambiguity with Dynamic which is defined to -1 (historically, negative strides were
  * not allowed).
  *
- * Note that for compile-time vectors (ColsAtCompileTime==1 or RowsAtCompile==1),
+ * Note that for compile-time vectors (ColsAtCompileTime==1 or RowsAtCompileTime==1),
  * the inner stride is the pointer increment between two consecutive elements,
  * regardless of storage layout.
  *
@@ -54,13 +55,11 @@ namespace Eigen {
 template <int OuterStrideAtCompileTime_, int InnerStrideAtCompileTime_>
 class Stride {
  public:
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
   enum { InnerStrideAtCompileTime = InnerStrideAtCompileTime_, OuterStrideAtCompileTime = OuterStrideAtCompileTime_ };
 
   /** Default constructor, for use when strides are fixed at compile time */
   EIGEN_DEVICE_FUNC constexpr Stride() : m_outer(OuterStrideAtCompileTime), m_inner(InnerStrideAtCompileTime) {
-    // FIXME: for Eigen 4 we should use DynamicIndex instead of Dynamic.
-    // FIXME: for Eigen 4 we should also unify this API with fix<>
     eigen_assert(InnerStrideAtCompileTime != Dynamic && OuterStrideAtCompileTime != Dynamic);
   }
 
@@ -69,7 +68,7 @@ class Stride {
       : m_outer(outerStride), m_inner(innerStride) {}
 
   /** Copy constructor */
-  EIGEN_DEVICE_FUNC constexpr Stride(const Stride& other) : m_outer(other.outer()), m_inner(other.inner()) {}
+  EIGEN_DEVICE_FUNC constexpr Stride(const Stride& other) = default;
 
   /** Copy assignment operator */
   EIGEN_DEVICE_FUNC constexpr Stride& operator=(const Stride& other) {
@@ -92,10 +91,10 @@ class Stride {
  * See class Map for some examples */
 template <int Value>
 class InnerStride : public Stride<0, Value> {
-  typedef Stride<0, Value> Base;
+  using Base = Stride<0, Value>;
 
  public:
-  EIGEN_DEVICE_FUNC constexpr InnerStride() : Base() {}
+  EIGEN_DEVICE_FUNC constexpr InnerStride() = default;
   EIGEN_DEVICE_FUNC constexpr InnerStride(Index v) : Base(0, v) {}  // FIXME making this explicit could break valid code
 };
 
@@ -103,10 +102,10 @@ class InnerStride : public Stride<0, Value> {
  * See class Map for some examples */
 template <int Value>
 class OuterStride : public Stride<Value, 0> {
-  typedef Stride<Value, 0> Base;
+  using Base = Stride<Value, 0>;
 
  public:
-  EIGEN_DEVICE_FUNC constexpr OuterStride() : Base() {}
+  EIGEN_DEVICE_FUNC constexpr OuterStride() = default;
   EIGEN_DEVICE_FUNC constexpr OuterStride(Index v) : Base(v, 0) {}  // FIXME making this explicit could break valid code
 };
 

@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COMPLEX_EIGEN_SOLVER_H
 #define EIGEN_COMPLEX_EIGEN_SOLVER_H
@@ -39,7 +40,7 @@ namespace Eigen {
  * \f$. This is called the eigendecomposition.
  *
  * The main function in this class is compute(), which computes the
- * eigenvalues and eigenvectors of a given function. The
+ * eigenvalues and eigenvectors of a given matrix. The
  * documentation for that function contains an example showing the
  * main features of the class.
  *
@@ -49,7 +50,7 @@ template <typename MatrixType_>
 class ComplexEigenSolver {
  public:
   /** \brief Synonym for the template parameter \p MatrixType_. */
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
 
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
@@ -60,9 +61,9 @@ class ComplexEigenSolver {
   };
 
   /** \brief Scalar type for matrices of type #MatrixType. */
-  typedef typename MatrixType::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
+  using Scalar = typename MatrixType::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
 
   /** \brief Complex scalar type for #MatrixType.
    *
@@ -70,23 +71,22 @@ class ComplexEigenSolver {
    * \c float or \c double) and just \c Scalar if #Scalar is
    * complex.
    */
-  typedef internal::make_complex_t<Scalar> ComplexScalar;
+  using ComplexScalar = internal::make_complex_t<Scalar>;
 
   /** \brief Type for vector of eigenvalues as returned by eigenvalues().
    *
    * This is a column vector with entries of type #ComplexScalar.
    * The length of the vector is the size of #MatrixType.
    */
-  typedef Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & (~RowMajor), MaxColsAtCompileTime, 1> EigenvalueType;
+  using EigenvalueType = Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & (~RowMajor), MaxColsAtCompileTime, 1>;
 
   /** \brief Type for matrix of eigenvectors as returned by eigenvectors().
    *
    * This is a square matrix with entries of type #ComplexScalar.
    * The size is the same as the size of #MatrixType.
    */
-  typedef Matrix<ComplexScalar, RowsAtCompileTime, ColsAtCompileTime, Options, MaxRowsAtCompileTime,
-                 MaxColsAtCompileTime>
-      EigenvectorType;
+  using EigenvectorType =
+      Matrix<ComplexScalar, RowsAtCompileTime, ColsAtCompileTime, Options, MaxRowsAtCompileTime, MaxColsAtCompileTime>;
 
   /** \brief Default constructor.
    *

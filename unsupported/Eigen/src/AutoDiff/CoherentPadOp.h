@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COHERENT_PAD_OP_H
 #define EIGEN_COHERENT_PAD_OP_H
@@ -22,9 +23,9 @@ struct CoherentPadOp;
 
 template <typename XprType, int SizeAtCompileTime_>
 struct traits<CoherentPadOp<XprType, SizeAtCompileTime_>> : public traits<XprType> {
-  typedef typename internal::remove_all<XprType>::type PlainXprType;
+  typedef internal::remove_all_t<XprType> PlainXprType;
   typedef typename internal::ref_selector<XprType>::type XprNested;
-  typedef typename std::remove_reference_t<XprNested> XprNested_;
+  typedef std::remove_reference_t<XprNested> XprNested_;
   enum : int {
     IsRowMajor = traits<PlainXprType>::Flags & RowMajorBit,
     SizeAtCompileTime = SizeAtCompileTime_,
@@ -76,7 +77,7 @@ template <typename ArgType, int SizeAtCompileTime>
 struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
     : evaluator_base<CoherentPadOp<ArgType, SizeAtCompileTime>> {
   typedef CoherentPadOp<ArgType, SizeAtCompileTime> XprType;
-  typedef typename internal::remove_all_t<typename XprType::CoeffReturnType> CoeffReturnType;
+  typedef internal::remove_all_t<typename XprType::CoeffReturnType> CoeffReturnType;
   typedef typename internal::nested_eval<ArgType, 1>::type ArgTypeNested;
   typedef internal::remove_all_t<ArgTypeNested> ArgTypeNestedCleaned;
 
@@ -91,12 +92,11 @@ struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
       : m_arg(pad.nestedExpression()), m_argImpl(m_arg), m_size(pad.nestedExpression().size()) {}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType coeff(Index row, Index col) const {
-    EIGEN_IF_CONSTEXPR(XprType::IsRowMajor) {
+    EIGEN_IF_CONSTEXPR (XprType::IsRowMajor) {
       if (col < m_size.value()) {
         return m_argImpl.coeff(1, col);
       }
-    }
-    else {
+    } else {
       if (row < m_size.value()) {
         return m_argImpl.coeff(row, 1);
       }
@@ -115,7 +115,9 @@ struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
   EIGEN_STRONG_INLINE PacketType packet(Index row, Index col) const {
     // AutoDiff scalar's derivative must be a vector, which is enforced by static assert.
     // Defer to linear access for simplicity.
-    EIGEN_IF_CONSTEXPR(XprType::IsRowMajor) { return packet(col); }
+    EIGEN_IF_CONSTEXPR (XprType::IsRowMajor) {
+      return packet(col);
+    }
     return packet(row);
   }
 
@@ -126,7 +128,8 @@ struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
       return m_argImpl.template packet<LoadMode, PacketType>(index);
     } else if (index < m_size.value()) {
       // Partial packet.
-      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[kPacketSize];
+      EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<PacketType>::alignment)
+      std::remove_const_t<CoeffReturnType> values[kPacketSize];
       const int partial = m_size.value() - index;
       for (int i = 0; i < partial && i < kPacketSize; ++i) {
         values[i] = m_argImpl.coeff(index + i);
@@ -140,7 +143,7 @@ struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
   }
 
  protected:
-  const ArgTypeNested m_arg;
+  ArgTypeNested m_arg;
   evaluator<ArgTypeNestedCleaned> m_argImpl;
   const variable_if_dynamic<Index, ArgTypeNestedCleaned::SizeAtCompileTime> m_size;
 };
@@ -149,4 +152,4 @@ struct unary_evaluator<CoherentPadOp<ArgType, SizeAtCompileTime>>
 
 }  // namespace Eigen
 
-#endif  // EIGEN_CWISE_BINARY_OP_H
+#endif  // EIGEN_COHERENT_PAD_OP_H

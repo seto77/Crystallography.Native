@@ -6,18 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include "main.h"
 #include <unsupported/Eigen/MatrixFunctions>
-
-// Variant of VERIFY_IS_APPROX which uses absolute error instead of
-// relative error.
-#define VERIFY_IS_APPROX_ABS(a, b) VERIFY(test_isApprox_abs(a, b))
-
-template <typename Type1, typename Type2>
-inline bool test_isApprox_abs(const Type1& a, const Type2& b) {
-  return ((a - b).array().abs() < test_precision<typename Type1::RealScalar>()).all();
-}
 
 // Returns a matrix with eigenvalues clustered around 0, 1 and 2.
 template <typename MatrixType>
@@ -107,15 +99,20 @@ void testMatrixLogarithm(const MatrixType& A) {
   // identity X.exp().log() = X only holds if Im(lambda) < pi for all eigenvalues of X
   MatrixType expA = scaledA.exp();
   MatrixType logExpA = expA.log();
-  VERIFY_IS_APPROX(logExpA, scaledA);
+  // The round trip loses accuracy proportional to the magnitude of the intermediate exp(A), which is unbounded
+  // relative to A itself once A is close to zero.
+  VERIFY_IS_APPROX_SCALED(logExpA, scaledA, max_abs_coeff(expA));
 }
 
 template <typename MatrixType>
 void testHyperbolicFunctions(const MatrixType& A) {
-  // Need to use absolute error because of possible cancellation when
-  // adding/subtracting expA and expmA.
-  VERIFY_IS_APPROX_ABS(A.sinh(), (A.exp() - (-A).exp()) / 2);
-  VERIFY_IS_APPROX_ABS(A.cosh(), (A.exp() + (-A).exp()) / 2);
+  // exp(A) and exp(-A) can cancel, so compare against the magnitude of the terms rather than of the result.
+  const MatrixType expA = A.exp();
+  const MatrixType expmA = (-A).exp();
+  const typename NumTraits<typename MatrixType::Scalar>::Real scale =
+      numext::maxi(max_abs_coeff(expA), max_abs_coeff(expmA));
+  VERIFY_IS_APPROX_SCALED(A.sinh(), (expA - expmA) / 2, scale);
+  VERIFY_IS_APPROX_SCALED(A.cosh(), (expA + expmA) / 2, scale);
 }
 
 template <typename MatrixType>
@@ -134,11 +131,14 @@ void testGonioFunctions(const MatrixType& A) {
   ComplexMatrix exp_iA = (imagUnit * Ac).exp();
   ComplexMatrix exp_miA = (-imagUnit * Ac).exp();
 
+  // As in testHyperbolicFunctions, the two exponentials can cancel.
+  const RealScalar scale = numext::maxi(max_abs_coeff(exp_iA), max_abs_coeff(exp_miA));
+
   ComplexMatrix sinAc = A.sin().template cast<ComplexScalar>();
-  VERIFY_IS_APPROX_ABS(sinAc, (exp_iA - exp_miA) / (two * imagUnit));
+  VERIFY_IS_APPROX_SCALED(sinAc, (exp_iA - exp_miA) / (two * imagUnit), scale);
 
   ComplexMatrix cosAc = A.cos().template cast<ComplexScalar>();
-  VERIFY_IS_APPROX_ABS(cosAc, (exp_iA + exp_miA) / 2);
+  VERIFY_IS_APPROX_SCALED(cosAc, (exp_iA + exp_miA) / 2, scale);
 }
 
 template <typename MatrixType>
@@ -194,6 +194,15 @@ void testMapRef(const MatrixType& A) {
   Y = X.sinh() + Rc.sinh() + Mc.sinh();
 }
 
+template <typename MatrixType>
+void testMatrixLogarithmSingular() {
+  // Regression test for bug #1613: log() of a singular matrix used to
+  // hang because sqrt(0) = 0 is a fixed point of the inverse-scaling loop
+  // in matrix_log_compute_big(). The implementation now returns NaN.
+  MatrixType A = MatrixType::Zero(5, 5);
+  VERIFY(A.log().array().isNaN().all());
+}
+
 EIGEN_DECLARE_TEST(matrix_function) {
   CALL_SUBTEST_1(testMatrixType(Matrix<float, 1, 1>()));
   CALL_SUBTEST_2(testMatrixType(Matrix3cf()));
@@ -207,4 +216,7 @@ EIGEN_DECLARE_TEST(matrix_function) {
   CALL_SUBTEST_2(testMapRef(Matrix3cf()));
   CALL_SUBTEST_3(testMapRef(MatrixXf(8, 8)));
   CALL_SUBTEST_7(testMapRef(MatrixXd(13, 13)));
+
+  CALL_SUBTEST_3(testMatrixLogarithmSingular<MatrixXf>());
+  CALL_SUBTEST_7(testMatrixLogarithmSingular<MatrixXd>());
 }

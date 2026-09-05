@@ -7,9 +7,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_RANDOM_H
-#define EIGEN_CXX11_TENSOR_TENSOR_RANDOM_H
+#ifndef EIGEN_TENSOR_TENSOR_RANDOM_H
+#define EIGEN_TENSOR_TENSOR_RANDOM_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -160,7 +161,7 @@ class UniformRandomGenerator {
   template <typename Packet, typename Index>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(Index i) const {
     const int packetSize = internal::unpacket_traits<Packet>::size;
-    EIGEN_ALIGN_MAX T values[packetSize];
+    EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet>::alignment) T values[packetSize];
 #ifdef EIGEN_USE_SYCL
     if (!m_exec_once) {
       // This is the second stage of adding thread Id to the CPU clock seed and build unique seed per thread
@@ -187,7 +188,8 @@ struct functor_traits<UniformRandomGenerator<Scalar> > {
   enum {
     // Rough estimate for floating point, multiplied by ceil(sizeof(T) / sizeof(float)).
     Cost = 12 * NumTraits<Scalar>::AddCost * ((sizeof(Scalar) + sizeof(float) - 1) / sizeof(float)),
-    PacketAccess = UniformRandomGenerator<Scalar>::PacketAccess
+    PacketAccess = UniformRandomGenerator<Scalar>::PacketAccess,
+    IsRepeatable = false
   };
 };
 
@@ -206,6 +208,21 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T RandomToTypeNormal(uint64_t* state, uint
   } while (q > T(0.27597) && (q > T(0.27846) || v * v > T(-4) * numext::log(u) * u * u));
 
   return v / u;
+}
+
+// For 16-bit types, compute the deviate in float and round once. Running the
+// rejection algorithm above directly in 16-bit arithmetic truncates the tails
+// (|v/u| is limited by the coarse uniform grid) and emits NaN/Inf: the 16-bit
+// uniform draw is exactly 0 with probability 2^-10 (half) / 2^-7 (bfloat16),
+// so log(u) = -inf poisons the acceptance test and v/u returns +/-inf.
+template <>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::half RandomToTypeNormal<Eigen::half>(uint64_t* state, uint64_t stream) {
+  return Eigen::half(RandomToTypeNormal<float>(state, stream));
+}
+template <>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Eigen::bfloat16 RandomToTypeNormal<Eigen::bfloat16>(uint64_t* state,
+                                                                                          uint64_t stream) {
+  return Eigen::bfloat16(RandomToTypeNormal<float>(state, stream));
 }
 
 template <>
@@ -258,7 +275,7 @@ class NormalRandomGenerator {
   template <typename Packet, typename Index>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(Index i) const {
     const int packetSize = internal::unpacket_traits<Packet>::size;
-    EIGEN_ALIGN_MAX T values[packetSize];
+    EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet>::alignment) T values[packetSize];
 #ifdef EIGEN_USE_SYCL
     if (!m_exec_once) {
       // This is the second stage of adding thread Id to the CPU clock seed and build unique seed per thread
@@ -287,11 +304,12 @@ struct functor_traits<NormalRandomGenerator<Scalar> > {
     // 15 mul, 8 add, 1.5 logs
     Cost = 3 * functor_traits<UniformRandomGenerator<Scalar> >::Cost + 15 * NumTraits<Scalar>::AddCost +
            8 * NumTraits<Scalar>::AddCost + 3 * functor_traits<scalar_log_op<Scalar> >::Cost / 2,
-    PacketAccess = NormalRandomGenerator<Scalar>::PacketAccess
+    PacketAccess = NormalRandomGenerator<Scalar>::PacketAccess,
+    IsRepeatable = false
   };
 };
 
 }  // end namespace internal
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_RANDOM_H
+#endif  // EIGEN_TENSOR_TENSOR_RANDOM_H

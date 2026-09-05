@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_GENERATOR_H
-#define EIGEN_CXX11_TENSOR_TENSOR_GENERATOR_H
+#ifndef EIGEN_TENSOR_TENSOR_GENERATOR_H
+#define EIGEN_TENSOR_TENSOR_GENERATOR_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,8 +23,6 @@ struct traits<TensorGeneratorOp<Generator, XprType> > : public traits<XprType> {
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = XprTraits::NumDimensions;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -34,15 +33,10 @@ struct eval<TensorGeneratorOp<Generator, XprType>, Eigen::Dense> {
   typedef const TensorGeneratorOp<Generator, XprType>& type;
 };
 
-template <typename Generator, typename XprType>
-struct nested<TensorGeneratorOp<Generator, XprType>, 1, typename eval<TensorGeneratorOp<Generator, XprType> >::type> {
-  typedef TensorGeneratorOp<Generator, XprType> type;
-};
-
 }  // end namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor generator class.
  */
@@ -52,7 +46,7 @@ class TensorGeneratorOp : public TensorBase<TensorGeneratorOp<Generator, XprType
   typedef typename Eigen::internal::traits<TensorGeneratorOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorGeneratorOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorGeneratorOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorGeneratorOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorGeneratorOp>::Index Index;
 
@@ -104,7 +98,7 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
     TensorEvaluator<ArgType, Device> argImpl(op.expression(), device);
     m_dimensions = argImpl.dimensions();
 
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_strides[0] = 1;
       EIGEN_UNROLL_LOOP
       for (int i = 1; i < NumDims; ++i) {
@@ -137,7 +131,8 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
     const int packetSize = PacketType<CoeffReturnType, Device>::size;
     eigen_assert(index + packetSize - 1 < dimensions().TotalSize());
 
-    EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[packetSize];
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+    std::remove_const_t<CoeffReturnType> values[packetSize];
     for (int i = 0; i < packetSize; ++i) {
       values[i] = coeff(index + i);
     }
@@ -170,7 +165,7 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
     // Offset in the output block buffer.
     Index offset = 0;
 
-    // Initialize output block iterator state. Dimension in this array are
+    // Initialize output block iterator state. Dimensions in this array are
     // always in inner_most -> outer_most order (col major layout).
     array<BlockIteratorState, NumDims> it;
     for (int i = 0; i < NumDims; ++i) {
@@ -212,7 +207,7 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
       coords[inner_dim] = initial_coords[inner_dim];
 
       // For the 1d tensor we need to generate only one inner-most dimension.
-      if (NumDims == 1) break;
+      EIGEN_IF_CONSTEXPR (NumDims == 1) break;
 
       // Update offset.
       for (i = 1; i < NumDims; ++i) {
@@ -236,11 +231,11 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
     return TensorOpCost(0, 0, TensorOpCost::AddCost<Scalar>() + TensorOpCost::MulCost<Scalar>());
   }
 
-  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return NULL; }
+  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return nullptr; }
 
  protected:
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void extract_coordinates(Index index, array<Index, NumDims>& coords) const {
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       for (int i = NumDims - 1; i > 0; --i) {
         const Index idx = index / m_fast_strides[i];
         index -= idx * m_strides[i];
@@ -266,4 +261,4 @@ struct TensorEvaluator<const TensorGeneratorOp<Generator, ArgType>, Device> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_GENERATOR_H
+#endif  // EIGEN_TENSOR_TENSOR_GENERATOR_H

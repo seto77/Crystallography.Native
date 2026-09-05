@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_AUTODIFF_SCALAR_H
 #define EIGEN_AUTODIFF_SCALAR_H
@@ -27,7 +28,7 @@ struct maybe_coherent_pad_helper {
   using type = CoherentPadOp<DerivativeType, SizeAtCompileTime>;
   static type pad(const DerivativeType& x, const OtherDerivativeType& y) {
     // CoherentPadOp uses variable_if_dynamic<SizeAtCompileTime>.  In this case, `SizeAtCompileTime` might
-    // by Dynamic, so we need to take the runtime maximum of x, y.
+    // be Dynamic, so we need to take the runtime maximum of x, y.
     return CoherentPadOp<DerivativeType, SizeAtCompileTime>(x, numext::maxi(x.size(), y.size()));
   }
 };
@@ -73,14 +74,14 @@ inline AutoDiffScalar<NewDerType> MakeAutoDiffScalar(const typename NewDerType::
  *                 Typical choices include, e.g., \c Vector4f for 4 derivatives, or \c VectorXf
  *                 if the number of derivatives is not known at compile time, and/or, the number
  *                 of derivatives is large.
- *                 Note that DerivativeType can also be a reference (e.g., \c VectorXf&) to wrap a
+ *                 Note that DerivativeType can also be a reference (e.g., \c VectorXf&) to wrap an
  *                 existing vector into an AutoDiffScalar.
  *                 Finally, DerivativeType can also be any Eigen compatible expression.
  *
  * This class represents a scalar value while tracking its respective derivatives using Eigen's expression
  * template mechanism.
  *
- * It supports the following list of global math function:
+ * It supports the following list of global math functions:
  *  - std::abs, std::sqrt, std::pow, std::exp, std::log, std::sin, std::cos,
  *  - internal::abs, internal::sqrt, numext::pow, internal::exp, internal::log, internal::sin, internal::cos,
  *  - internal::conj, internal::real, internal::imag, numext::abs2.
@@ -94,13 +95,13 @@ inline AutoDiffScalar<NewDerType> MakeAutoDiffScalar(const typename NewDerType::
 template <typename DerivativeType>
 class AutoDiffScalar
     : public internal::auto_diff_special_op<
-          DerivativeType, !internal::is_same<typename internal::traits<internal::remove_all_t<DerivativeType>>::Scalar,
-                                             typename NumTraits<typename internal::traits<
-                                                 internal::remove_all_t<DerivativeType>>::Scalar>::Real>::value> {
+          DerivativeType, !std::is_same<typename internal::traits<internal::remove_all_t<DerivativeType>>::Scalar,
+                                        typename NumTraits<typename internal::traits<
+                                            internal::remove_all_t<DerivativeType>>::Scalar>::Real>::value> {
  public:
   typedef internal::auto_diff_special_op<
       DerivativeType,
-      !internal::is_same<
+      !std::is_same<
           typename internal::traits<internal::remove_all_t<DerivativeType>>::Scalar,
           typename NumTraits<typename internal::traits<internal::remove_all_t<DerivativeType>>::Scalar>::Real>::value>
       Base;
@@ -129,19 +130,30 @@ class AutoDiffScalar
   /** Constructs an active scalar from its \a value and derivatives \a der */
   AutoDiffScalar(const Scalar& value, const DerType& der) : m_value(value), m_derivatives(der) {}
 
-  template <typename OtherDerType>
-  AutoDiffScalar(
-      const AutoDiffScalar<OtherDerType>& other
 #ifndef EIGEN_PARSED_BY_DOXYGEN
-      ,
-      std::enable_if_t<
-          internal::is_same<Scalar, typename internal::traits<internal::remove_all_t<OtherDerType>>::Scalar>::value &&
-              internal::is_convertible<OtherDerType, DerType>::value,
-          void*> = 0
+  template <typename OtherDerType,
+            std::enable_if_t<
+                std::is_same<Scalar, typename internal::traits<internal::remove_all_t<OtherDerType>>::Scalar>::value &&
+                    std::is_convertible<OtherDerType, DerType>::value,
+                int> = 0>
+#else
+  template <typename OtherDerType>
 #endif
-      )
+  AutoDiffScalar(const AutoDiffScalar<OtherDerType>& other)
       : m_value(other.value()), m_derivatives(other.derivatives()) {
   }
+
+#ifndef EIGEN_PARSED_BY_DOXYGEN
+  template <typename OtherDerType>
+  EIGEN_DEPRECATED_WITH_REASON("Omit the implementation-only second argument.")
+  AutoDiffScalar(
+      const AutoDiffScalar<OtherDerType>& other,
+      std::enable_if_t<
+          std::is_same<Scalar, typename internal::traits<internal::remove_all_t<OtherDerType>>::Scalar>::value &&
+              std::is_convertible<OtherDerType, DerType>::value,
+          void*>)
+      : AutoDiffScalar(other) {}
+#endif
 
   friend std::ostream& operator<<(std::ostream& s, const AutoDiffScalar& a) { return s << a.value(); }
 
@@ -333,10 +345,7 @@ class AutoDiffScalar
 namespace internal {
 
 template <typename DerivativeType>
-struct auto_diff_special_op<DerivativeType, true>
-//   : auto_diff_scalar_op<DerivativeType, typename NumTraits<Scalar>::Real,
-//                            is_same<Scalar,typename NumTraits<Scalar>::Real>::value>
-{
+struct auto_diff_special_op<DerivativeType, true> {
   typedef remove_all_t<DerivativeType> DerType;
   typedef typename traits<DerType>::Scalar Scalar;
   typedef typename NumTraits<Scalar>::Real Real;
@@ -445,7 +454,8 @@ inline typename CleanedUpDerType<DerType>::type(max)(const T& x, const AutoDiffS
 template <typename DerType>
 inline
     typename CleanedUpDerType<DerType>::type(min)(const AutoDiffScalar<DerType>& x, const AutoDiffScalar<DerType>& y) {
-  return (x.value() < y.value() ? x : y);
+  // Match std::min / max(ADS, ADS): on tie, return the first argument.
+  return (x.value() <= y.value() ? x : y);
 }
 template <typename DerType>
 inline

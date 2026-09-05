@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_IMAGE_PATCH_H
-#define EIGEN_CXX11_TENSOR_TENSOR_IMAGE_PATCH_H
+#ifndef EIGEN_TENSOR_TENSOR_IMAGE_PATCH_H
+#define EIGEN_TENSOR_TENSOR_IMAGE_PATCH_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -18,13 +19,11 @@ namespace Eigen {
 namespace internal {
 
 template <DenseIndex Rows, DenseIndex Cols, typename XprType>
-struct traits<TensorImagePatchOp<Rows, Cols, XprType> > : public traits<XprType> {
+struct traits<TensorImagePatchOp<Rows, Cols, XprType>> : traits<XprType> {
   typedef std::remove_const_t<typename XprType::Scalar> Scalar;
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = XprTraits::NumDimensions + 1;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -35,80 +34,18 @@ struct eval<TensorImagePatchOp<Rows, Cols, XprType>, Eigen::Dense> {
   typedef const TensorImagePatchOp<Rows, Cols, XprType>& type;
 };
 
-template <DenseIndex Rows, DenseIndex Cols, typename XprType>
-struct nested<TensorImagePatchOp<Rows, Cols, XprType>, 1,
-              typename eval<TensorImagePatchOp<Rows, Cols, XprType> >::type> {
-  typedef TensorImagePatchOp<Rows, Cols, XprType> type;
-};
-
-template <typename Self, bool Vectorizable>
-struct ImagePatchCopyOp {
-  typedef typename Self::Index Index;
-  typedef typename Self::Scalar Scalar;
-  typedef typename Self::Impl Impl;
-  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void Run(const Self& self, const Index num_coeff_to_copy,
-                                                        const Index dst_index, Scalar* dst_data,
-                                                        const Index src_index) {
-    const Impl& impl = self.impl();
-    for (Index i = 0; i < num_coeff_to_copy; ++i) {
-      dst_data[dst_index + i] = impl.coeff(src_index + i);
-    }
-  }
-};
-
-template <typename Self>
-struct ImagePatchCopyOp<Self, true> {
-  typedef typename Self::Index Index;
-  typedef typename Self::Scalar Scalar;
-  typedef typename Self::Impl Impl;
-  typedef typename packet_traits<Scalar>::type Packet;
-  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void Run(const Self& self, const Index num_coeff_to_copy,
-                                                        const Index dst_index, Scalar* dst_data,
-                                                        const Index src_index) {
-    const Impl& impl = self.impl();
-    const Index packet_size = internal::unpacket_traits<Packet>::size;
-    const Index vectorized_size = (num_coeff_to_copy / packet_size) * packet_size;
-    for (Index i = 0; i < vectorized_size; i += packet_size) {
-      Packet p = impl.template packet<Unaligned>(src_index + i);
-      internal::pstoret<Scalar, Packet, Unaligned>(dst_data + dst_index + i, p);
-    }
-    for (Index i = vectorized_size; i < num_coeff_to_copy; ++i) {
-      dst_data[dst_index + i] = impl.coeff(src_index + i);
-    }
-  }
-};
-
-template <typename Self>
-struct ImagePatchPaddingOp {
-  typedef typename Self::Index Index;
-  typedef typename Self::Scalar Scalar;
-  typedef typename packet_traits<Scalar>::type Packet;
-  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void Run(const Index num_coeff_to_pad, const Scalar padding_value,
-                                                        const Index dst_index, Scalar* dst_data) {
-    const Index packet_size = internal::unpacket_traits<Packet>::size;
-    const Packet padded_packet = internal::pset1<Packet>(padding_value);
-    const Index vectorized_size = (num_coeff_to_pad / packet_size) * packet_size;
-    for (Index i = 0; i < vectorized_size; i += packet_size) {
-      internal::pstoret<Scalar, Packet, Unaligned>(dst_data + dst_index + i, padded_packet);
-    }
-    for (Index i = vectorized_size; i < num_coeff_to_pad; ++i) {
-      dst_data[dst_index + i] = padding_value;
-    }
-  }
-};
-
 }  // end namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Patch extraction specialized for image processing.
- * This assumes that the input has a least 3 dimensions ordered as follow:
+ * This assumes that the input has at least 3 dimensions ordered as follows:
  *  1st dimension: channels (of size d)
  *  2nd dimension: rows (of size r)
  *  3rd dimension: columns (of size c)
  *  There can be additional dimensions such as time (for video) or batch (for
- * bulk processing after the first 3.
+ * bulk processing) after the first 3.
  * Calling the image patch code with patch_rows and patch_cols is equivalent
  * to calling the regular patch extraction code with parameters d, patch_rows,
  * patch_cols, and 1 for all the additional dimensions.
@@ -119,7 +56,7 @@ class TensorImagePatchOp : public TensorBase<TensorImagePatchOp<Rows, Cols, XprT
   typedef typename Eigen::internal::traits<TensorImagePatchOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorImagePatchOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorImagePatchOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorImagePatchOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorImagePatchOp>::Index Index;
 
@@ -229,14 +166,20 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
   enum {
     IsAligned = false,
     PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
-    BlockAccess = false,
+    // block() reads the argument one coefficient at a time through coeff() --
+    // the contract the scalar executors already rely on for every evaluator --
+    // so it requires no capability bit from the argument (same as
+    // TensorReverse).
+    BlockAccess = true,
     PreferBlockAccess = true,
     CoordAccess = false,
     RawAccess = false
   };
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  typedef internal::TensorBlockScratchAllocator<Device> TensorBlockScratch;
+  typedef typename internal::TensorMaterializedBlock<Scalar, NumDims, Layout, Index> TensorBlock;
   //===--------------------------------------------------------------------===//
 
   EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
@@ -248,7 +191,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
     const typename TensorEvaluator<ArgType, Device>::Dimensions& input_dims = m_impl.dimensions();
 
     // Caches a few variables.
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_inputDepth = input_dims[0];
       m_inputRows = input_dims[1];
       m_inputCols = input_dims[2];
@@ -268,7 +211,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
     m_col_inflate_strides = op.col_inflate_strides();
     // The "effective" input rows and input cols are the input rows and cols
     // after inflating them with zeros.
-    // For examples, a 2x3 matrix with row_inflate_strides and
+    // For example, a 2x3 matrix with row_inflate_strides and
     // col_inflate_strides of 2 comes from:
     //   A B C
     //   D E F
@@ -324,7 +267,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
     eigen_assert(m_outputCols > 0);
 
     // Dimensions for result of extraction.
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       // ColMajor
       // 0: depth
       // 1: patch_rows
@@ -355,7 +298,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
     }
 
     // Strides for moving the patch in various dimensions.
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_colStride = m_dimensions[1];
       m_patchStride = m_colStride * m_dimensions[2] * m_dimensions[0];
       m_otherStride = m_patchStride * m_dimensions[3];
@@ -380,7 +323,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
 
     // Number of patches in the width dimension.
     m_fastOutputRows = internal::TensorIntDivisor<Index>(m_outputRows);
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_fastOutputDepth = internal::TensorIntDivisor<Index>(m_dimensions[0]);
     } else {
       m_fastOutputDepth = internal::TensorIntDivisor<Index>(m_dimensions[NumDims - 1]);
@@ -390,7 +333,7 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType /*data*/) {
-    m_impl.evalSubExprsIfNeeded(NULL);
+    m_impl.evalSubExprsIfNeeded(nullptr);
     return true;
   }
 
@@ -404,14 +347,22 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
   EIGEN_STRONG_INLINE void cleanup() { m_impl.cleanup(); }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType coeff(Index index) const {
-    // Patch index corresponding to the passed in index.
-    const Index patchIndex = index / m_fastPatchStride;
-    // Find the offset of the element wrt the location of the first element.
-    const Index patchOffset = (index - patchIndex * m_patchStride) / m_fastOutputDepth;
-
     // Other ways to index this element.
-    const Index otherIndex = (NumDims == 4) ? 0 : index / m_fastOtherStride;
-    const Index patch2DIndex = (NumDims == 4) ? patchIndex : (index - otherIndex * m_otherStride) / m_fastPatchStride;
+    Index otherIndex, patch2DIndex;
+    EIGEN_IF_CONSTEXPR (NumDims == 4) {
+      otherIndex = 0;
+      patch2DIndex = index / m_fastPatchStride;
+    } else {
+      otherIndex = index / m_fastOtherStride;
+      patch2DIndex = (index - otherIndex * m_otherStride) / m_fastPatchStride;
+    }
+
+    // Compute the remainder within the patch once, then derive both
+    // patchOffset and depth from it without an extra division.
+    constexpr int depth_index = static_cast<int>(Layout) == static_cast<int>(ColMajor) ? 0 : NumDims - 1;
+    const Index patchRemainder = index - otherIndex * m_otherStride - patch2DIndex * m_patchStride;
+    const Index patchOffset = patchRemainder / m_fastOutputDepth;
+    const Index depth = patchRemainder - patchOffset * m_dimensions[depth_index];
 
     // Calculate col index in the input original tensor.
     const Index colIndex = patch2DIndex / m_fastOutputRows;
@@ -435,9 +386,6 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
       return Scalar(m_paddingValue);
     }
 
-    const int depth_index = static_cast<int>(Layout) == static_cast<int>(ColMajor) ? 0 : NumDims - 1;
-    const Index depth = index - (index / m_fastOutputDepth) * m_dimensions[depth_index];
-
     const Index inputIndex =
         depth + origInputRow * m_rowInputStride + origInputCol * m_colInputStride + otherIndex * m_patchInputStride;
     return m_impl.coeff(inputIndex);
@@ -447,63 +395,291 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packet(Index index) const {
     eigen_assert(index + PacketSize - 1 < dimensions().TotalSize());
 
+    constexpr int depth_index = static_cast<int>(Layout) == static_cast<int>(ColMajor) ? 0 : NumDims - 1;
+    const Index lastIdx = index + PacketSize - 1;
+
+    // Decompose index into (otherIndex, patch2DIndex, patchRemainder).
+    // Use multiply+compare instead of a second TensorIntDivisor division
+    // to check whether the last packet element is in the same region.
+    Index otherIndex, patch2DIndex, patchRemainder0, patchRemainder1;
+    EIGEN_IF_CONSTEXPR (NumDims == 4) {
+      otherIndex = 0;
+      patch2DIndex = index / m_fastPatchStride;
+      const Index patchBase = patch2DIndex * m_patchStride;
+      if (lastIdx >= patchBase + m_patchStride) {
+        return packetWithPossibleZero(index);
+      }
+      patchRemainder0 = index - patchBase;
+      patchRemainder1 = lastIdx - patchBase;
+    } else {
+      otherIndex = index / m_fastOtherStride;
+      const Index otherBase = otherIndex * m_otherStride;
+      if (lastIdx >= otherBase + m_otherStride) {
+        return packetWithPossibleZero(index);
+      }
+      const Index patchBase0 = index - otherBase;
+      patch2DIndex = patchBase0 / m_fastPatchStride;
+      const Index patchStart = patch2DIndex * m_patchStride;
+      if (lastIdx - otherBase >= patchStart + m_patchStride) {
+        return packetWithPossibleZero(index);
+      }
+      patchRemainder0 = patchBase0 - patchStart;
+      patchRemainder1 = lastIdx - otherBase - patchStart;
+    }
+
+    // Compute patchOffset for the first element. Defer the second
+    // division until we know we need it.
+    const Index patchOffset0 = patchRemainder0 / m_fastOutputDepth;
+    const Index colIndex = patch2DIndex / m_fastOutputRows;
+
+    // If all packet elements share the same (row, col) within the patch,
+    // the input data is contiguous regardless of dilation/inflation strides.
+    // Check using multiply+compare instead of dividing patchRemainder1.
+    const Index outputDepth = m_dimensions[depth_index];
+    if (patchRemainder1 < (patchOffset0 + 1) * outputDepth) {
+      const Index colOffset = patchOffset0 / m_fastColStride;
+      const Index rowIndex = patch2DIndex - colIndex * m_outputRows;
+      const Index rowOffset = patchOffset0 - colOffset * m_colStride;
+
+      const Index inputCol = colIndex * m_col_strides + colOffset * m_in_col_strides - m_colPaddingLeft;
+      const Index inputRow = rowIndex * m_row_strides + rowOffset * m_in_row_strides - m_rowPaddingTop;
+
+      // Check col bounds and inflate alignment.
+      if (inputCol < 0 || inputCol >= m_input_cols_eff) {
+        return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
+      }
+      if (m_col_inflate_strides != 1) {
+        const Index origCol = inputCol / m_fastInflateColStride;
+        if (inputCol != origCol * m_col_inflate_strides) {
+          return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
+        }
+      }
+
+      // Check row bounds and inflate alignment.
+      if (inputRow < 0 || inputRow >= m_input_rows_eff) {
+        return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
+      }
+      if (m_row_inflate_strides != 1) {
+        const Index origRow = inputRow / m_fastInflateRowStride;
+        if (inputRow != origRow * m_row_inflate_strides) {
+          return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
+        }
+      }
+
+      // Compute original input coordinates.
+      const Index origInputCol = (m_col_inflate_strides == 1) ? inputCol : inputCol / m_fastInflateColStride;
+      const Index origInputRow = (m_row_inflate_strides == 1) ? inputRow : inputRow / m_fastInflateRowStride;
+
+      const Index depth = patchRemainder0 - patchOffset0 * outputDepth;
+      const Index inputIndex =
+          depth + origInputRow * m_rowInputStride + origInputCol * m_colInputStride + otherIndex * m_patchInputStride;
+      return m_impl.template packet<Unaligned>(inputIndex);
+    }
+
+    // For non-unit strides spanning multiple rows, fall back to scalar.
     if (m_in_row_strides != 1 || m_in_col_strides != 1 || m_row_inflate_strides != 1 || m_col_inflate_strides != 1) {
       return packetWithPossibleZero(index);
     }
 
-    const Index indices[2] = {index, index + PacketSize - 1};
-    const Index patchIndex = indices[0] / m_fastPatchStride;
-    if (patchIndex != indices[1] / m_fastPatchStride) {
-      return packetWithPossibleZero(index);
-    }
-    const Index otherIndex = (NumDims == 4) ? 0 : indices[0] / m_fastOtherStride;
-    eigen_assert(otherIndex == indices[1] / m_fastOtherStride);
+    // Unit strides: try to serve the packet from contiguous input.
+    // Now we need the second patchOffset.
+    const Index patchOffset1 = patchRemainder1 / m_fastOutputDepth;
+    const Index colOffset0 = patchOffset0 / m_fastColStride;
 
-    // Find the offset of the element wrt the location of the first element.
-    const Index patchOffsets[2] = {(indices[0] - patchIndex * m_patchStride) / m_fastOutputDepth,
-                                   (indices[1] - patchIndex * m_patchStride) / m_fastOutputDepth};
-
-    const Index patch2DIndex =
-        (NumDims == 4) ? patchIndex : (indices[0] - otherIndex * m_otherStride) / m_fastPatchStride;
-    eigen_assert(patch2DIndex == (indices[1] - otherIndex * m_otherStride) / m_fastPatchStride);
-
-    const Index colIndex = patch2DIndex / m_fastOutputRows;
-    const Index colOffsets[2] = {patchOffsets[0] / m_fastColStride, patchOffsets[1] / m_fastColStride};
+    // Check if both ends of the packet are in the same column using
+    // multiply+compare instead of dividing patchOffset1.
+    const Index colBound = (colOffset0 + 1) * m_colStride;
+    const bool sameCol = (patchOffset1 < colBound);
 
     // Calculate col indices in the original input tensor.
-    const Index inputCols[2] = {colIndex * m_col_strides + colOffsets[0] - m_colPaddingLeft,
-                                colIndex * m_col_strides + colOffsets[1] - m_colPaddingLeft};
-    if (inputCols[1] < 0 || inputCols[0] >= m_inputCols) {
-      return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
-    }
-
-    if (inputCols[0] == inputCols[1]) {
-      const Index rowIndex = patch2DIndex - colIndex * m_outputRows;
-      const Index rowOffsets[2] = {patchOffsets[0] - colOffsets[0] * m_colStride,
-                                   patchOffsets[1] - colOffsets[1] * m_colStride};
-      eigen_assert(rowOffsets[0] <= rowOffsets[1]);
-      // Calculate row indices in the original input tensor.
-      const Index inputRows[2] = {rowIndex * m_row_strides + rowOffsets[0] - m_rowPaddingTop,
-                                  rowIndex * m_row_strides + rowOffsets[1] - m_rowPaddingTop};
-
-      if (inputRows[1] < 0 || inputRows[0] >= m_inputRows) {
+    const Index inputCol0 = colIndex * m_col_strides + colOffset0 - m_colPaddingLeft;
+    if (sameCol) {
+      if (inputCol0 < 0 || inputCol0 >= m_inputCols) {
         return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
       }
 
-      if (inputRows[0] >= 0 && inputRows[1] < m_inputRows) {
+      const Index rowIndex = patch2DIndex - colIndex * m_outputRows;
+      const Index rowOffset0 = patchOffset0 - colOffset0 * m_colStride;
+      const Index rowOffset1 = patchOffset1 - colOffset0 * m_colStride;
+      eigen_assert(rowOffset0 <= rowOffset1);
+      // Calculate row indices in the original input tensor.
+      const Index inputRow0 = rowIndex * m_row_strides + rowOffset0 - m_rowPaddingTop;
+      const Index inputRow1 = rowIndex * m_row_strides + rowOffset1 - m_rowPaddingTop;
+
+      if (inputRow1 < 0 || inputRow0 >= m_inputRows) {
+        return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
+      }
+
+      if (inputRow0 >= 0 && inputRow1 < m_inputRows) {
         // no padding
-        const int depth_index = static_cast<int>(Layout) == static_cast<int>(ColMajor) ? 0 : NumDims - 1;
-        const Index depth = index - (index / m_fastOutputDepth) * m_dimensions[depth_index];
+        const Index depth = patchRemainder0 - patchOffset0 * outputDepth;
         const Index inputIndex =
-            depth + inputRows[0] * m_rowInputStride + inputCols[0] * m_colInputStride + otherIndex * m_patchInputStride;
+            depth + inputRow0 * m_rowInputStride + inputCol0 * m_colInputStride + otherIndex * m_patchInputStride;
         return m_impl.template packet<Unaligned>(inputIndex);
+      }
+    } else {
+      // Packet spans two columns. Check if both columns are entirely
+      // outside the valid range (all-padding).
+      const Index colOffset1 = patchOffset1 / m_fastColStride;
+      const Index inputCol1 = colIndex * m_col_strides + colOffset1 - m_colPaddingLeft;
+      if (inputCol1 < 0 || inputCol0 >= m_inputCols) {
+        return internal::pset1<PacketReturnType>(Scalar(m_paddingValue));
       }
     }
 
     return packetWithPossibleZero(index);
   }
 
-  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return NULL; }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    const size_t target_size = m_device.firstLevelCacheSize();
+    // In-bounds output coefficients read the argument once and every output
+    // coefficient is stored once (padding runs make this a slight
+    // over-estimate). Pass the full cost explicitly rather than adding to
+    // skewed()'s default load+store seed, which would double-count the
+    // baseline byte traffic and halve the tile size.
+    const TensorOpCost cost_per_coeff = m_impl.costPerCoeff(/*vectorized=*/false) + TensorOpCost(0, sizeof(Scalar), 0);
+    return internal::TensorBlockResourceRequirements::withShapeAndSize<Scalar>(
+        internal::TensorBlockShapeType::kSkewedInnerDims, target_size, cost_per_coeff);
+  }
+
+  // Materializes the block by iterating patch/col/row coordinates and either
+  // copying the (always input-contiguous) depth run or filling it with the
+  // padding value. All per-coordinate index math and bounds checks are
+  // amortized over a whole depth run instead of paid per coefficient.
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool /*root_of_expr_ast*/ = false) const {
+    constexpr bool is_col_major = static_cast<int>(Layout) == static_cast<int>(ColMajor);
+
+    if (desc.size() == 0) {
+      return TensorBlock(internal::TensorBlockKind::kView, nullptr, desc.dimensions());
+    }
+
+    typename TensorBlock::Storage block_storage = TensorBlock::prepareStorage(desc, scratch);
+    Scalar* block_buffer = block_storage.data();
+
+    // Output coordinates of the block's corner.
+    const DSizes<Index, NumDims> output_strides = internal::strides<Layout>(m_dimensions);
+    array<Index, NumDims> coords;
+    Index remaining = desc.offset();
+    EIGEN_IF_CONSTEXPR (is_col_major) {
+      for (int i = NumDims - 1; i > 0; --i) {
+        coords[i] = remaining / output_strides[i];
+        remaining -= coords[i] * output_strides[i];
+      }
+      coords[0] = remaining;
+    } else {
+      for (int i = 0; i < NumDims - 1; ++i) {
+        coords[i] = remaining / output_strides[i];
+        remaining -= coords[i] * output_strides[i];
+      }
+      coords[NumDims - 1] = remaining;
+    }
+
+    // Output dimensions: depth, patch row/col offset, 2d patch index, rest.
+    const int dd = is_col_major ? 0 : NumDims - 1;
+    const int rd = is_col_major ? 1 : NumDims - 2;
+    const int cd = is_col_major ? 2 : NumDims - 3;
+    const int pd = is_col_major ? 3 : NumDims - 4;
+
+    const Index depth_start = coords[dd];
+    const Index depth_size = desc.dimension(dd);
+    const Index row_start = coords[rd];
+    const Index row_size = desc.dimension(rd);
+    const Index col_start = coords[cd];
+    const Index col_size = desc.dimension(cd);
+    const Index patch_start = coords[pd];
+    const Index patch_size = desc.dimension(pd);
+
+    // Odometer over the remaining (batch etc.) dimensions, tracking the input
+    // offset they contribute.
+    array<Index, NumDims> other_sizes;
+    array<Index, NumDims> other_src_stride;
+    array<Index, NumDims> other_count;
+    int num_other = 0;
+    Index src_other = 0;
+    {
+      Index in_stride = m_patchInputStride;
+      for (int k = 4; k < NumDims; ++k) {
+        const int d = is_col_major ? k : NumDims - 1 - k;
+        other_sizes[num_other] = desc.dimension(d);
+        other_src_stride[num_other] = in_stride;
+        other_count[num_other] = 0;
+        src_other += coords[d] * in_stride;
+        in_stride *= m_dimensions[d];
+        ++num_other;
+      }
+    }
+
+    typedef internal::StridedLinearBufferCopy<Scalar, Index> LinCopy;
+
+    // The loop nest below visits the block in exactly its memory order (the
+    // storage returned by prepareStorage() is dense with the block's own
+    // layout-order strides), so the destination is one running cursor.
+    Index dst = 0;
+    for (;;) {
+      for (Index p = 0; p < patch_size; ++p) {
+        const Index patch2DIndex = patch_start + p;
+        const Index colIndex = patch2DIndex / m_fastOutputRows;
+        const Index rowIndex = patch2DIndex - colIndex * m_outputRows;
+
+        for (Index c = 0; c < col_size; ++c) {
+          const Index colOffset = col_start + c;
+          const Index inputCol = colIndex * m_col_strides + colOffset * m_in_col_strides - m_colPaddingLeft;
+          Index origInputCol = inputCol;
+          bool col_valid = inputCol >= 0 && inputCol < m_input_cols_eff;
+          if (col_valid && m_col_inflate_strides != 1) {
+            origInputCol = inputCol / m_fastInflateColStride;
+            col_valid = (inputCol == origInputCol * m_col_inflate_strides);
+          }
+
+          for (Index r = 0; r < row_size; ++r) {
+            const Index rowOffset = row_start + r;
+            bool valid = col_valid;
+            Index origInputRow = 0;
+            if (valid) {
+              const Index inputRow = rowIndex * m_row_strides + rowOffset * m_in_row_strides - m_rowPaddingTop;
+              valid = inputRow >= 0 && inputRow < m_input_rows_eff;
+              if (valid) {
+                origInputRow = inputRow;
+                if (m_row_inflate_strides != 1) {
+                  origInputRow = inputRow / m_fastInflateRowStride;
+                  valid = (inputRow == origInputRow * m_row_inflate_strides);
+                }
+              }
+            }
+            if (valid) {
+              const Index src =
+                  depth_start + origInputRow * m_rowInputStride + origInputCol * m_colInputStride + src_other;
+              for (Index d = 0; d < depth_size; ++d) {
+                block_buffer[dst + d] = m_impl.coeff(src + d);
+              }
+            } else {
+              LinCopy::template Run<LinCopy::Kind::FillLinear>(typename LinCopy::Dst(dst, 1, block_buffer),
+                                                               typename LinCopy::Src(0, 0, &m_paddingValue),
+                                                               depth_size);
+            }
+            dst += depth_size;
+          }
+        }
+      }
+
+      int k = 0;
+      for (; k < num_other; ++k) {
+        if (++other_count[k] < other_sizes[k]) {
+          src_other += other_src_stride[k];
+          break;
+        }
+        other_count[k] = 0;
+        src_other -= other_src_stride[k] * (other_sizes[k] - 1);
+      }
+      if (k == num_other) break;
+    }
+    eigen_assert(dst == desc.size());
+
+    return block_storage.AsTensorMaterializedBlock();
+  }
+
+  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return nullptr; }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const TensorEvaluator<ArgType, Device>& impl() const { return m_impl; }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index rowPaddingTop() const { return m_rowPaddingTop; }
@@ -518,17 +694,18 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index colInflateStride() const { return m_col_inflate_strides; }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
-    // We conservatively estimate the cost for the code path where the computed
-    // index is inside the original image and
-    // TensorEvaluator<ArgType, Device>::CoordAccess is false.
+    // Estimate for the non-padding code path with CoordAccess=false:
+    // 5 TensorIntDivisor divs (otherStride, patchStride, outputDepth, outputRows, colStride),
+    // 12 muls (index arithmetic), 8 adds/subs (offsets, padding checks).
     const double compute_cost =
-        3 * TensorOpCost::DivCost<Index>() + 6 * TensorOpCost::MulCost<Index>() + 8 * TensorOpCost::MulCost<Index>();
+        5 * TensorOpCost::DivCost<Index>() + 12 * TensorOpCost::MulCost<Index>() + 8 * TensorOpCost::AddCost<Index>();
     return m_impl.costPerCoeff(vectorized) + TensorOpCost(0, 0, compute_cost, vectorized, PacketSize);
   }
 
  protected:
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packetWithPossibleZero(Index index) const {
-    EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+    std::remove_const_t<CoeffReturnType> values[PacketSize];
     EIGEN_UNROLL_LOOP
     for (int i = 0; i < PacketSize; ++i) {
       values[i] = coeff(index + i);
@@ -587,4 +764,4 @@ struct TensorEvaluator<const TensorImagePatchOp<Rows, Cols, ArgType>, Device> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_IMAGE_PATCH_H
+#endif  // EIGEN_TENSOR_TENSOR_IMAGE_PATCH_H

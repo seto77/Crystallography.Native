@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BESSELFUNCTIONS_ARRAYAPI_H
 #define EIGEN_BESSELFUNCTIONS_ARRAYAPI_H
@@ -232,7 +233,7 @@ EIGEN_STRONG_INLINE const
 /** \returns an expression of the coefficient-wise j1(\a x) to the given
  * arrays.
  *
- * It returns the modified Bessel function of the first kind of order one.
+ * It returns the Bessel function of the first kind of order one.
  *
  * \param x is the argument
  *

@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_CUSTOM_OP_H
-#define EIGEN_CXX11_TENSOR_TENSOR_CUSTOM_OP_H
+#ifndef EIGEN_TENSOR_TENSOR_CUSTOM_OP_H
+#define EIGEN_TENSOR_TENSOR_CUSTOM_OP_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -21,11 +22,20 @@ struct traits<TensorCustomUnaryOp<CustomUnaryFunc, XprType> > {
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::StorageKind StorageKind;
   typedef typename XprType::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
-  static constexpr int NumDimensions = traits<XprType>::NumDimensions;
+  // The functor's dimensions() determines the output shape, so the rank of the
+  // result may differ from the rank of the input. The argument is spelled
+  // exactly as in the evaluator's call so both resolve to the same overload.
+  using CustomDimensions = remove_all_t<decltype(std::declval<const CustomUnaryFunc&>().dimensions(
+      std::declval<const remove_all_t<typename XprType::Nested>&>()))>;
+  static constexpr ptrdiff_t CustomRank = array_size<CustomDimensions>::value;
+  static_assert(CustomRank >= 0,
+                "The dimensions() method of a custom tensor functor must return a fixed-rank "
+                "array-like type such as DSizes<Index, Rank>.");
+  // Clamped so a failed assertion doesn't cascade into DSizes<Index, -1> errors.
+  static constexpr int NumDimensions = CustomRank < 0 ? 1 : static_cast<int>(CustomRank);
   static constexpr int Layout = traits<XprType>::Layout;
   typedef typename traits<XprType>::PointerType PointerType;
+  enum { Flags = 0 };
 };
 
 template <typename CustomUnaryFunc, typename XprType>
@@ -33,15 +43,10 @@ struct eval<TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Eigen::Dense> {
   typedef const TensorCustomUnaryOp<CustomUnaryFunc, XprType> EIGEN_DEVICE_REF type;
 };
 
-template <typename CustomUnaryFunc, typename XprType>
-struct nested<TensorCustomUnaryOp<CustomUnaryFunc, XprType> > {
-  typedef TensorCustomUnaryOp<CustomUnaryFunc, XprType> type;
-};
-
 }  // end namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor custom class.
  */
@@ -51,7 +56,7 @@ class TensorCustomUnaryOp : public TensorBase<TensorCustomUnaryOp<CustomUnaryFun
   typedef typename internal::traits<TensorCustomUnaryOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename internal::nested<TensorCustomUnaryOp>::type Nested;
+  typedef typename internal::ref_selector<TensorCustomUnaryOp>::non_const_type Nested;
   typedef typename internal::traits<TensorCustomUnaryOp>::StorageKind StorageKind;
   typedef typename internal::traits<TensorCustomUnaryOp>::Index Index;
 
@@ -86,20 +91,27 @@ struct TensorEvaluator<const TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Devi
   enum {
     IsAligned = false,
     PacketAccess = (PacketType<CoeffReturnType, Device>::size > 1),
-    BlockAccess = false,
+    // The custom op is eagerly evaluated into a dense buffer (m_result), so
+    // blocks and raw storage can be served straight from it, exactly like
+    // TensorForcedEvalOp. Without these flags a custom op disables tiled
+    // evaluation for any expression containing it and hides its buffer from
+    // consumers with data()-based fast paths.
+    BlockAccess = internal::is_arithmetic<CoeffReturnType>::value,
     PreferBlockAccess = false,
     CoordAccess = false,  // to be implemented
-    RawAccess = false
+    RawAccess = true
   };
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  typedef internal::TensorBlockScratchAllocator<Device> TensorBlockScratch;
+
+  typedef typename internal::TensorMaterializedBlock<CoeffReturnType, NumDims, Layout, Index> TensorBlock;
   //===--------------------------------------------------------------------===//
 
+  // The functor's dimensions() may return an index type that promotes to Index.
   EIGEN_STRONG_INLINE TensorEvaluator(const ArgType& op, const Device& device)
-      : m_op(op), m_device(device), m_result(NULL) {
-    m_dimensions = op.func().dimensions(op.expression());
-  }
+      : m_dimensions(op.func().dimensions(op.expression())), m_op(op), m_device(device), m_result(nullptr) {}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
@@ -109,7 +121,7 @@ struct TensorEvaluator<const TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Devi
       return false;
     } else {
       m_result = static_cast<EvaluatorPointerType>(
-          m_device.get((CoeffReturnType*)m_device.allocate_temp(dimensions().TotalSize() * sizeof(Scalar))));
+          m_device.get((CoeffReturnType*)m_device.allocate_temp(dimensions().TotalSize() * sizeof(CoeffReturnType))));
       evalTo(m_result);
       return true;
     }
@@ -118,7 +130,7 @@ struct TensorEvaluator<const TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Devi
   EIGEN_STRONG_INLINE void cleanup() {
     if (m_result) {
       m_device.deallocate_temp(m_result);
-      m_result = NULL;
+      m_result = nullptr;
     }
   }
 
@@ -132,6 +144,16 @@ struct TensorEvaluator<const TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Devi
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
     // TODO(rmlarsen): Extend CustomOp API to return its cost estimate.
     return TensorOpCost(sizeof(CoeffReturnType), 0, 0, vectorized, PacketSize);
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    return internal::TensorBlockResourceRequirements::any();
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool /*root_of_expr_ast*/ = false) const {
+    eigen_assert(m_result != nullptr);
+    return TensorBlock::materialize(m_result, m_dimensions, desc, scratch);
   }
 
   EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return m_result; }
@@ -149,7 +171,7 @@ struct TensorEvaluator<const TensorCustomUnaryOp<CustomUnaryFunc, XprType>, Devi
 };
 
 /** \class TensorCustomBinaryOp
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor custom class.
  *
@@ -165,25 +187,28 @@ struct traits<TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, RhsXprType> > {
                                         typename traits<RhsXprType>::StorageKind>::ret StorageKind;
   typedef
       typename promote_index_type<typename traits<LhsXprType>::Index, typename traits<RhsXprType>::Index>::type Index;
-  typedef typename LhsXprType::Nested LhsNested;
-  typedef typename RhsXprType::Nested RhsNested;
-  typedef std::remove_reference_t<LhsNested> LhsNested_;
-  typedef std::remove_reference_t<RhsNested> RhsNested_;
-  static constexpr int NumDimensions = traits<LhsXprType>::NumDimensions;
+  // The functor's dimensions() determines the output shape, so the rank of the
+  // result may differ from the ranks of the inputs. The arguments are spelled
+  // exactly as in the evaluator's call so both resolve to the same overload.
+  using CustomDimensions = remove_all_t<decltype(std::declval<const CustomBinaryFunc&>().dimensions(
+      std::declval<const remove_all_t<typename LhsXprType::Nested>&>(),
+      std::declval<const remove_all_t<typename RhsXprType::Nested>&>()))>;
+  static constexpr ptrdiff_t CustomRank = array_size<CustomDimensions>::value;
+  static_assert(CustomRank >= 0,
+                "The dimensions() method of a custom tensor functor must return a fixed-rank "
+                "array-like type such as DSizes<Index, Rank>.");
+  // Clamped so a failed assertion doesn't cascade into DSizes<Index, -1> errors.
+  static constexpr int NumDimensions = CustomRank < 0 ? 1 : static_cast<int>(CustomRank);
   static constexpr int Layout = traits<LhsXprType>::Layout;
   typedef std::conditional_t<Pointer_type_promotion<typename LhsXprType::Scalar, Scalar>::val,
                              typename traits<LhsXprType>::PointerType, typename traits<RhsXprType>::PointerType>
       PointerType;
+  enum { Flags = 0 };
 };
 
 template <typename CustomBinaryFunc, typename LhsXprType, typename RhsXprType>
 struct eval<TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, RhsXprType>, Eigen::Dense> {
   typedef const TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, RhsXprType>& type;
-};
-
-template <typename CustomBinaryFunc, typename LhsXprType, typename RhsXprType>
-struct nested<TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, RhsXprType> > {
-  typedef TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, RhsXprType> type;
 };
 
 }  // end namespace internal
@@ -195,7 +220,7 @@ class TensorCustomBinaryOp
   typedef typename internal::traits<TensorCustomBinaryOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename internal::traits<TensorCustomBinaryOp>::CoeffReturnType CoeffReturnType;
-  typedef typename internal::nested<TensorCustomBinaryOp>::type Nested;
+  typedef typename internal::ref_selector<TensorCustomBinaryOp>::non_const_type Nested;
   typedef typename internal::traits<TensorCustomBinaryOp>::StorageKind StorageKind;
   typedef typename internal::traits<TensorCustomBinaryOp>::Index Index;
 
@@ -240,20 +265,27 @@ struct TensorEvaluator<const TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, 
   enum {
     IsAligned = false,
     PacketAccess = (PacketType<CoeffReturnType, Device>::size > 1),
-    BlockAccess = false,
+    // See the unary evaluator above: serve blocks and raw storage from the
+    // eagerly materialized buffer, like TensorForcedEvalOp.
+    BlockAccess = internal::is_arithmetic<CoeffReturnType>::value,
     PreferBlockAccess = false,
     CoordAccess = false,  // to be implemented
-    RawAccess = false
+    RawAccess = true
   };
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  typedef internal::TensorBlockScratchAllocator<Device> TensorBlockScratch;
+
+  typedef typename internal::TensorMaterializedBlock<CoeffReturnType, NumDims, Layout, Index> TensorBlock;
   //===--------------------------------------------------------------------===//
 
+  // The functor's dimensions() may return an index type that promotes to Index.
   EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
-      : m_op(op), m_device(device), m_result(NULL) {
-    m_dimensions = op.func().dimensions(op.lhsExpression(), op.rhsExpression());
-  }
+      : m_dimensions(op.func().dimensions(op.lhsExpression(), op.rhsExpression())),
+        m_op(op),
+        m_device(device),
+        m_result(nullptr) {}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
@@ -270,9 +302,9 @@ struct TensorEvaluator<const TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, 
   }
 
   EIGEN_STRONG_INLINE void cleanup() {
-    if (m_result != NULL) {
+    if (m_result != nullptr) {
       m_device.deallocate_temp(m_result);
-      m_result = NULL;
+      m_result = nullptr;
     }
   }
 
@@ -288,11 +320,28 @@ struct TensorEvaluator<const TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, 
     return TensorOpCost(sizeof(CoeffReturnType), 0, 0, vectorized, PacketSize);
   }
 
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    return internal::TensorBlockResourceRequirements::any();
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool /*root_of_expr_ast*/ = false) const {
+    eigen_assert(m_result != nullptr);
+    return TensorBlock::materialize(m_result, m_dimensions, desc, scratch);
+  }
+
   EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return m_result; }
 
  protected:
   void evalTo(EvaluatorPointerType data) {
-    TensorMap<Tensor<CoeffReturnType, NumDims, Layout> > result(m_device.get(data), m_dimensions);
+    // The Output type handed to eval() is a compatibility surface: functors are
+    // compiled against a DenseIndex-typed map, so widen its index type only
+    // when the expressions' promoted Index is strictly wider than DenseIndex.
+    // DenseIndex must stay the first argument: promote_index_type keeps that
+    // one on a tie, which preserves the map type for equal-width distinct
+    // index types such as long long versus long.
+    using MapIndex = typename internal::promote_index_type<DenseIndex, Index>::type;
+    TensorMap<Tensor<CoeffReturnType, NumDims, Layout, MapIndex> > result(m_device.get(data), m_dimensions);
     m_op.func().eval(m_op.lhsExpression(), m_op.rhsExpression(), result, m_device);
   }
 
@@ -304,4 +353,4 @@ struct TensorEvaluator<const TensorCustomBinaryOp<CustomBinaryFunc, LhsXprType, 
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_CUSTOM_OP_H
+#endif  // EIGEN_TENSOR_TENSOR_CUSTOM_OP_H

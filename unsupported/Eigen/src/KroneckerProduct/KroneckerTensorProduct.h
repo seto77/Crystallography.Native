@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef KRONECKER_TENSOR_PRODUCT_H
 #define KRONECKER_TENSOR_PRODUCT_H
@@ -55,7 +56,7 @@ class KroneckerProductBase : public ReturnByValue<Derived> {
    */
   Scalar coeff(Index i) const {
     EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived);
-    return m_A.coeff(i / m_A.size()) * m_B.coeff(i % m_A.size());
+    return m_A.coeff(i / m_B.size()) * m_B.coeff(i % m_B.size());
   }
 
  protected:
@@ -73,7 +74,7 @@ class KroneckerProductBase : public ReturnByValue<Derived> {
  * directly to avoid specifying template parameters.
  *
  * \tparam Lhs  Type of the left-hand side, a matrix expression.
- * \tparam Rhs  Type of the rignt-hand side, a matrix expression.
+ * \tparam Rhs  Type of the right-hand side, a matrix expression.
  */
 template <typename Lhs, typename Rhs>
 class KroneckerProduct : public KroneckerProductBase<KroneckerProduct<Lhs, Rhs> > {
@@ -104,7 +105,7 @@ class KroneckerProduct : public KroneckerProductBase<KroneckerProduct<Lhs, Rhs> 
  * directly to avoid specifying template parameters.
  *
  * \tparam Lhs  Type of the left-hand side, a matrix expression.
- * \tparam Rhs  Type of the rignt-hand side, a matrix expression.
+ * \tparam Rhs  Type of the right-hand side, a matrix expression.
  */
 template <typename Lhs, typename Rhs>
 class KroneckerProductSparse : public KroneckerProductBase<KroneckerProductSparse<Lhs, Rhs> > {
@@ -163,7 +164,7 @@ void KroneckerProductSparse<Lhs, Rhs>::evalTo(Dest& dst) const {
       for (RhsInnerIterator itB(rhs1, kB); itB; ++itB) nnzB(Dest::IsRowMajor ? itB.row() : itB.col())++;
 
     Matrix<int, Dynamic, Dynamic, ColMajor> nnzAB = nnzB * nnzA.transpose();
-    dst.reserve(VectorXi::Map(nnzAB.data(), nnzAB.size()));
+    dst.reserve(nnzAB.reshaped());
   }
 
   for (Index kA = 0; kA < m_A.outerSize(); ++kA) {

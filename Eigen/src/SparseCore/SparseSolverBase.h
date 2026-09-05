@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPARSESOLVERBASE_H
 #define EIGEN_SPARSESOLVERBASE_H
@@ -25,7 +26,7 @@ template <typename Decomposition, typename Rhs, typename Dest>
 std::enable_if_t<Rhs::ColsAtCompileTime != 1 && Dest::ColsAtCompileTime != 1> solve_sparse_through_dense_panels(
     const Decomposition& dec, const Rhs& rhs, Dest& dest) {
   EIGEN_STATIC_ASSERT((Dest::Flags & RowMajorBit) == 0, THIS_METHOD_IS_ONLY_FOR_COLUMN_MAJOR_MATRICES);
-  typedef typename Dest::Scalar DestScalar;
+  using DestScalar = typename Dest::Scalar;
   // we process the sparse rhs per block of NbColsAtOnce columns temporarily stored into a dense matrix.
   static const Index NbColsAtOnce = 4;
   Index rhsCols = rhs.cols();
@@ -46,7 +47,7 @@ std::enable_if_t<Rhs::ColsAtCompileTime != 1 && Dest::ColsAtCompileTime != 1> so
 template <typename Decomposition, typename Rhs, typename Dest>
 std::enable_if_t<Rhs::ColsAtCompileTime == 1 || Dest::ColsAtCompileTime == 1> solve_sparse_through_dense_panels(
     const Decomposition& dec, const Rhs& rhs, Dest& dest) {
-  typedef typename Dest::Scalar DestScalar;
+  using DestScalar = typename Dest::Scalar;
   Index size = rhs.rows();
   Eigen::Matrix<DestScalar, Dynamic, 1> rhs_dense(rhs);
   Eigen::Matrix<DestScalar, Dynamic, 1> dest_dense(size);
@@ -64,14 +65,17 @@ std::enable_if_t<Rhs::ColsAtCompileTime == 1 || Dest::ColsAtCompileTime == 1> so
  *
  */
 template <typename Derived>
-class SparseSolverBase : internal::noncopyable {
+class SparseSolverBase {
  public:
   /** Default constructor */
-  SparseSolverBase() : m_isInitialized(false) {}
+  SparseSolverBase() = default;
 
-  SparseSolverBase(SparseSolverBase&& other) : internal::noncopyable{}, m_isInitialized{other.m_isInitialized} {}
+  SparseSolverBase(const SparseSolverBase&) = delete;
+  SparseSolverBase& operator=(const SparseSolverBase&) = delete;
 
-  ~SparseSolverBase() {}
+  SparseSolverBase(SparseSolverBase&& other) : m_isInitialized{other.m_isInitialized} {}
+
+  ~SparseSolverBase() = default;
 
   Derived& derived() { return *static_cast<Derived*>(this); }
   const Derived& derived() const { return *static_cast<const Derived*>(this); }
@@ -107,7 +111,7 @@ class SparseSolverBase : internal::noncopyable {
 #endif  // EIGEN_PARSED_BY_DOXYGEN
 
  protected:
-  mutable bool m_isInitialized;
+  mutable bool m_isInitialized = false;
 };
 
 }  // end namespace Eigen

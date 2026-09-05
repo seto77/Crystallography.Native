@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPARSEINVERSE_H
 #define EIGEN_SPARSEINVERSE_H
@@ -83,7 +84,7 @@ typename Derived::Scalar accurateDot(const SparseMatrixBase<Derived>& A, const S
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(OtherDerived)
   EIGEN_STATIC_ASSERT_SAME_VECTOR_SIZE(Derived, OtherDerived)
-  static_assert(internal::is_same<Scalar, typename OtherDerived::Scalar>::value, "mismatched types");
+  static_assert(std::is_same<Scalar, typename OtherDerived::Scalar>::value, "mismatched types");
 
   internal::evaluator<Derived> thisEval(A.derived());
   typename Derived::ReverseInnerIterator i(thisEval, 0);
@@ -111,7 +112,7 @@ typename Derived::Scalar accurateDot(const SparseMatrixBase<Derived>& A, const S
  * This class returns a sparse subset of the inverse of the input matrix.
  * The nonzeros correspond to the nonzeros of the input, plus any additional
  * elements required due to fill-in of the internal LU factorization. This is
- * is minimized via a applying a fill-reducing permutation as part of the LU
+ * minimized by applying a fill-reducing permutation as part of the LU
  * factorization.
  *
  * If there are specific entries of the input matrix which you need inverse
@@ -121,7 +122,7 @@ typename Derived::Scalar accurateDot(const SparseMatrixBase<Derived>& A, const S
  * Due to the sensitive nature of matrix inversion, particularly on large
  * matrices which are made possible via sparsity, high accuracy dot products
  * based on Kahan summation are used to reduce numerical error. If you still
- * encounter numerical errors you may with to equilibrate your matrix before
+ * encounter numerical errors you may wish to equilibrate your matrix before
  * calculating the inverse, as well as making sure it is actually full rank.
  */
 template <typename Scalar>
@@ -171,7 +172,7 @@ class SparseInverse {
     {
       RowMatrixType DU = slu.matrixU().toSparse();
       invD = DU.diagonal().cwiseInverse();
-      Upper = (invD.asDiagonal() * DU).template triangularView<StrictlyUpper>();
+      Upper = invD.asDiagonal() * DU.template triangularView<StrictlyUpper>();
     }
     MatrixType Lower = slu.matrixL().toSparse().template triangularView<StrictlyLower>();
 

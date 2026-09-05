@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SYMBOLIC_INDEX_H
 #define EIGEN_SYMBOLIC_INDEX_H
@@ -42,8 +43,6 @@ namespace Eigen {
  */
 namespace symbolic {
 
-template <typename Tag>
-class Symbol;
 template <typename Tag, typename Type>
 class SymbolValue;
 template <typename Arg0>
@@ -175,12 +174,10 @@ class BaseExpr {
   }
 };
 
+// BaseExpr has no conversion ctor, so we only have to check whether T can be statically cast to its base class
+// BaseExpr<T>.
 template <typename T>
-struct is_symbolic {
-  // BaseExpr has no conversion ctor, so we only have to check whether T can be statically cast to its base class
-  // BaseExpr<T>.
-  enum { value = internal::is_convertible<T, BaseExpr<T>>::value };
-};
+struct is_symbolic : std::is_convertible<T, BaseExpr<T>> {};
 
 // A simple wrapper around an integral value to provide the eval method.
 // We could also use a free-function symbolic_eval...
@@ -320,7 +317,7 @@ template <typename tag>
 class SymbolExpr : public BaseExpr<SymbolExpr<tag>> {
  public:
   /** Alias to the template parameter \c tag */
-  typedef tag Tag;
+  using Tag = tag;
 
   constexpr SymbolExpr() = default;
 

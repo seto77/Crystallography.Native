@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SCALING_H
 #define EIGEN_SCALING_H
@@ -23,7 +24,7 @@ namespace Eigen {
  *
  * \tparam Scalar_ the scalar type, i.e., the type of the coefficients.
  *
- * This class represent a uniform scaling transformation. It is the return
+ * This class represents a uniform scaling transformation. It is the return
  * type of Scaling(Scalar), and most of the time this is the only way it
  * is used. In particular, this class is not aimed to be used to store a scaling transformation,
  * but rather to make easier the constructions and updates of Transform objects.
@@ -39,7 +40,7 @@ namespace internal {
 template <typename Scalar, int Dim, int Mode>
 struct uniformscaling_times_affine_returntype {
   enum { NewMode = int(Mode) == int(Isometry) ? Affine : Mode };
-  typedef Transform<Scalar, Dim, NewMode> type;
+  using type = Transform<Scalar, Dim, NewMode>;
 };
 }  // namespace internal
 
@@ -47,7 +48,7 @@ template <typename Scalar_>
 class UniformScaling {
  public:
   /** the scalar type of the coefficients */
-  typedef Scalar_ Scalar;
+  using Scalar = Scalar_;
 
  protected:
   Scalar m_factor;
@@ -129,7 +130,7 @@ class UniformScaling {
 // NOTE this operator is defined in MatrixBase and not as a friend function
 // of UniformScaling to fix an internal crash of Intel's ICC
 template <typename Derived, typename Scalar>
-EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(Derived, Scalar, product)
+EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(Derived, Scalar, internal::scalar_product_op)
 operator*(const MatrixBase<Derived>& matrix, const UniformScaling<Scalar>& s) {
   return matrix.derived() * s.factor();
 }
@@ -170,13 +171,13 @@ inline typename DiagonalWrapper<const Derived>::PlainObject Scaling(MatrixBase<D
 }
 
 /** \deprecated */
-typedef DiagonalMatrix<float, 2> AlignedScaling2f;
+using AlignedScaling2f = DiagonalMatrix<float, 2>;
 /** \deprecated */
-typedef DiagonalMatrix<double, 2> AlignedScaling2d;
+using AlignedScaling2d = DiagonalMatrix<double, 2>;
 /** \deprecated */
-typedef DiagonalMatrix<float, 3> AlignedScaling3f;
+using AlignedScaling3f = DiagonalMatrix<float, 3>;
 /** \deprecated */
-typedef DiagonalMatrix<double, 3> AlignedScaling3d;
+using AlignedScaling3d = DiagonalMatrix<double, 3>;
 //@}
 
 template <typename Scalar>

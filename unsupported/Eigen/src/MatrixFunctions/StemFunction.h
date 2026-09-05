@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_STEM_FUNCTION
 #define EIGEN_STEM_FUNCTION
@@ -27,22 +28,20 @@ Scalar stem_function_exp(Scalar x, int) {
 /** \brief Cosine (and its derivatives). */
 template <typename Scalar>
 Scalar stem_function_cos(Scalar x, int n) {
-  using std::cos;
-  using std::sin;
   Scalar res;
 
   switch (n % 4) {
     case 0:
-      res = std::cos(x);
+      res = numext::cos(x);
       break;
     case 1:
-      res = -std::sin(x);
+      res = -numext::sin(x);
       break;
     case 2:
-      res = -std::cos(x);
+      res = -numext::cos(x);
       break;
     case 3:
-      res = std::sin(x);
+      res = numext::sin(x);
       break;
   }
   return res;
@@ -51,22 +50,20 @@ Scalar stem_function_cos(Scalar x, int n) {
 /** \brief Sine (and its derivatives). */
 template <typename Scalar>
 Scalar stem_function_sin(Scalar x, int n) {
-  using std::cos;
-  using std::sin;
   Scalar res;
 
   switch (n % 4) {
     case 0:
-      res = std::sin(x);
+      res = numext::sin(x);
       break;
     case 1:
-      res = std::cos(x);
+      res = numext::cos(x);
       break;
     case 2:
-      res = -std::sin(x);
+      res = -numext::sin(x);
       break;
     case 3:
-      res = -std::cos(x);
+      res = -numext::cos(x);
       break;
   }
   return res;
@@ -75,16 +72,14 @@ Scalar stem_function_sin(Scalar x, int n) {
 /** \brief Hyperbolic cosine (and its derivatives). */
 template <typename Scalar>
 Scalar stem_function_cosh(Scalar x, int n) {
-  using std::cosh;
-  using std::sinh;
   Scalar res;
 
   switch (n % 2) {
     case 0:
-      res = std::cosh(x);
+      res = numext::cosh(x);
       break;
     case 1:
-      res = std::sinh(x);
+      res = numext::sinh(x);
       break;
   }
   return res;
@@ -93,16 +88,14 @@ Scalar stem_function_cosh(Scalar x, int n) {
 /** \brief Hyperbolic sine (and its derivatives). */
 template <typename Scalar>
 Scalar stem_function_sinh(Scalar x, int n) {
-  using std::cosh;
-  using std::sinh;
   Scalar res;
 
   switch (n % 2) {
     case 0:
-      res = std::sinh(x);
+      res = numext::sinh(x);
       break;
     case 1:
-      res = std::cosh(x);
+      res = numext::cosh(x);
       break;
   }
   return res;

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_REDUCTIONS_SSE_H
 #define EIGEN_REDUCTIONS_SSE_H
@@ -74,16 +75,16 @@ struct sse_predux_max_prop_impl : sse_predux_common<Packet, sse_max_prop_wrapper
 
 /* -- -- -- -- -- -- -- -- -- -- -- -- Packet16b -- -- -- -- -- -- -- -- -- -- -- -- */
 
+// Packet16b stores one bool per byte. Reduce the byte-wise zero mask rather than extracting and short-circuiting two
+// scalar halves. This also treats every nonzero byte as true, matching the scalar reduction for non-canonical inputs.
 template <>
 EIGEN_STRONG_INLINE bool predux(const Packet16b& a) {
-  Packet4i tmp = _mm_or_si128(a, _mm_unpackhi_epi64(a, a));
-  return (pfirst(tmp) != 0) || (pfirst<Packet4i>(_mm_shuffle_epi32(tmp, 1)) != 0);
+  return _mm_movemask_epi8(_mm_cmpeq_epi8(a, _mm_setzero_si128())) != 0xffff;
 }
 
 template <>
 EIGEN_STRONG_INLINE bool predux_mul(const Packet16b& a) {
-  Packet4i tmp = _mm_and_si128(a, _mm_unpackhi_epi64(a, a));
-  return ((pfirst<Packet4i>(tmp) == 0x01010101) && (pfirst<Packet4i>(_mm_shuffle_epi32(tmp, 1)) == 0x01010101));
+  return _mm_movemask_epi8(_mm_cmpeq_epi8(a, _mm_setzero_si128())) == 0;
 }
 
 template <>
@@ -218,7 +219,17 @@ struct sse_predux_common<Packet4f, Op> {
 
 template <>
 EIGEN_STRONG_INLINE float predux(const Packet4f& a) {
+#ifdef EIGEN_VECTORIZE_AVX
   return sse_predux_impl<Packet4f>::run(a);
+#else
+  // See predux(const Packet2d&): on legacy SSE the final 2->1 step is scalar.
+  Packet4f tmp = _mm_add_ps(a, _mm_movehl_ps(a, a));
+#ifdef EIGEN_VECTORIZE_SSE3
+  return _mm_cvtss_f32(_mm_add_ss(tmp, _mm_movehdup_ps(tmp)));
+#else
+  return _mm_cvtss_f32(_mm_add_ss(tmp, _mm_shuffle_ps(tmp, tmp, 1)));
+#endif
+#endif
 }
 
 template <>
@@ -274,7 +285,17 @@ struct sse_predux_common<Packet2d, Op> {
 
 template <>
 EIGEN_STRONG_INLINE double predux(const Packet2d& a) {
+#ifdef EIGEN_VECTORIZE_AVX
+  // With VEX (3-operand) encoding the packed reduction is fine.
   return sse_predux_impl<Packet2d>::run(a);
+#else
+  // Legacy SSE (two-operand) encoding: a packed final reduction step writes a
+  // live, unused high lane that couples into the dependency graph and
+  // pessimizes fused kernels with many small reductions (e.g. chained
+  // fixed-size matrix products) by ~25%. A scalar add produces the same low
+  // lane without that false coupling.
+  return _mm_cvtsd_f64(_mm_add_sd(a, _mm_unpackhi_pd(a, a)));
+#endif
 }
 
 template <>

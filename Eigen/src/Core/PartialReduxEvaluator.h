@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_PARTIALREDUX_H
 #define EIGEN_PARTIALREDUX_H
@@ -35,7 +36,7 @@ namespace internal {
  * on the inner unrolling.
  *
  * For the unrolling, we can reuse "internal::redux_vec_unroller" from Redux.h,
- * but be need to be careful to specify correct increment.
+ * but we need to be careful to specify correct increment.
  *
  ***************************************************************************/
 
@@ -130,8 +131,18 @@ struct packetwise_segment_redux_impl {
                                           Index count) {
     if (size == 0) return packetwise_redux_empty_value<PacketType>(func);
 
+    const Index size4 = 1 + numext::round_down(size - 1, 4);
     PacketType p = eval.template packetSegmentByOuterInner<Unaligned, PacketType>(0, 0, begin, count);
-    for (Index i = 1; i < size; ++i)
+    // Grouping exposes independent packet ops and shortens the dependency chain.
+    for (Index i = 1; i < size4; i += 4)
+      p = func.packetOp(
+          p,
+          func.packetOp(
+              func.packetOp(eval.template packetSegmentByOuterInner<Unaligned, PacketType>(i + 0, 0, begin, count),
+                            eval.template packetSegmentByOuterInner<Unaligned, PacketType>(i + 1, 0, begin, count)),
+              func.packetOp(eval.template packetSegmentByOuterInner<Unaligned, PacketType>(i + 2, 0, begin, count),
+                            eval.template packetSegmentByOuterInner<Unaligned, PacketType>(i + 3, 0, begin, count))));
+    for (Index i = size4; i < size; ++i)
       p = func.packetOp(p, eval.template packetSegmentByOuterInner<Unaligned, PacketType>(i, 0, begin, count));
     return p;
   }
@@ -199,11 +210,10 @@ struct evaluator<PartialReduxExpr<ArgType, MemberOp, Direction> >
     using BinaryOp = typename MemberOp::BinaryOp;
     using Impl = internal::packetwise_redux_impl<BinaryOp, PanelEvaluator>;
 
-    // FIXME
-    // See bug 1612, currently if PacketSize==1 (i.e. complex<double> with 128bits registers) then the storage-order of
-    // panel get reversed and methods like packetByOuterInner do not make sense anymore in this context. So let's just
-    // by pass "vectorization" in this case:
-    EIGEN_IF_CONSTEXPR(PacketSize == 1) return internal::pset1<PacketType>(coeff(idx));
+    // Workaround for issue 1612 (closed): when PacketSize==1 (i.e. complex<double> with 128bits registers) the
+    // storage-order of panel gets reversed and methods like packetByOuterInner do not make sense in this context, so
+    // bypass "vectorization":
+    EIGEN_IF_CONSTEXPR (PacketSize == 1) return internal::pset1<PacketType>(coeff(idx));
 
     Index startRow = Direction == Vertical ? 0 : idx;
     Index startCol = Direction == Vertical ? idx : 0;

@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_EIGENBASE_H
 #define EIGEN_EIGENBASE_H
@@ -40,10 +41,10 @@ struct EigenBase {
    * Deprecation is not marked with a doxygen comment because there are too many existing usages to add the deprecation
    * attribute.
    */
-  typedef Eigen::Index Index;
+  using Index = Eigen::Index;
 
   // FIXME is it needed?
-  typedef typename internal::traits<Derived>::StorageKind StorageKind;
+  using StorageKind = typename internal::traits<Derived>::StorageKind;
 
   /** \returns a reference to the derived object */
   EIGEN_DEVICE_FUNC constexpr Derived& derived() { return *static_cast<Derived*>(this); }

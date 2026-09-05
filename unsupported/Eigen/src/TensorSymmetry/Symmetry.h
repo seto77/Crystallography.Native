@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSORSYMMETRY_SYMMETRY_H
-#define EIGEN_CXX11_TENSORSYMMETRY_SYMMETRY_H
+#ifndef EIGEN_TENSORSYMMETRY_SYMMETRY_H
+#define EIGEN_TENSORSYMMETRY_SYMMETRY_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -138,8 +139,8 @@ class SGroup : public internal::tensor_symmetry_pre_analysis<internal::tensor_sy
   typedef typename internal::tensor_symmetry_pre_analysis<NumIndices, Gen...>::root_type Base;
 
   // make standard constructors + assignment operators public
-  inline SGroup() : Base() {}
-  inline SGroup(const SGroup<Gen...>& other) : Base(other) {}
+  inline SGroup() = default;
+  inline SGroup(const SGroup<Gen...>& other) = default;
   inline SGroup(SGroup<Gen...>&& other) : Base(other) {}
   inline SGroup<Gen...>& operator=(const SGroup<Gen...>& other) {
     Base::operator=(other);
@@ -167,7 +168,6 @@ struct tensor_symmetry_num_indices<Symmetry<One_, Two_>, Sym...> {
   constexpr static std::size_t Two = static_cast<std::size_t>(Two_);
   constexpr static std::size_t Three = tensor_symmetry_num_indices<Sym...>::value;
 
-  // don't use std::max, since it's not constexpr until C++14...
   constexpr static std::size_t maxOneTwoPlusOne = ((One > Two) ? One : Two) + 1;
 
  public:
@@ -213,7 +213,7 @@ struct tensor_symmetry_num_indices<AntiHermiticity<One_, Two_>, Sym...>
  *     still compiles with reasonable resources.</dd>
  * </dl>
  *
- * Note: Example compile time performance with g++-4.6 on an Intenl Core i5-3470
+ * Note: Example compile time performance with g++-4.6 on an Intel Core i5-3470
  *       with 16 GiB RAM (all generators non-redundant and the subgroups don't
  *       factorize):
  *
@@ -328,7 +328,7 @@ class tensor_symmetry_value_setter {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSORSYMMETRY_SYMMETRY_H
+#endif  // EIGEN_TENSORSYMMETRY_SYMMETRY_H
 
 /*
  * kate: space-indent on; indent-width 2; mixedindent off; indent-mode cstyle;

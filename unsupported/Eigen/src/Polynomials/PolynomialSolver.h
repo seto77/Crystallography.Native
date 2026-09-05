@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_POLYNOMIAL_SOLVER_H
 #define EIGEN_POLYNOMIAL_SOLVER_H
@@ -180,7 +181,7 @@ class PolynomialSolverBase {
   /**
    * \returns a real root with greatest absolute magnitude.
    * A real root is defined as the real part of a complex root with absolute imaginary
-   * part smallest than absImaginaryThreshold.
+   * part smaller than absImaginaryThreshold.
    * absImaginaryThreshold takes the dummy_precision associated
    * with the Scalar_ template parameter of the PolynomialSolver class as the default value.
    * If no real root is found the boolean hasArealRoot is set to false and the real part of
@@ -200,7 +201,7 @@ class PolynomialSolverBase {
   /**
    * \returns a real root with smallest absolute magnitude.
    * A real root is defined as the real part of a complex root with absolute imaginary
-   * part smallest than absImaginaryThreshold.
+   * part smaller than absImaginaryThreshold.
    * absImaginaryThreshold takes the dummy_precision associated
    * with the Scalar_ template parameter of the PolynomialSolver class as the default value.
    * If no real root is found the boolean hasArealRoot is set to false and the real part of
@@ -220,7 +221,7 @@ class PolynomialSolverBase {
   /**
    * \returns the real root with greatest value.
    * A real root is defined as the real part of a complex root with absolute imaginary
-   * part smallest than absImaginaryThreshold.
+   * part smaller than absImaginaryThreshold.
    * absImaginaryThreshold takes the dummy_precision associated
    * with the Scalar_ template parameter of the PolynomialSolver class as the default value.
    * If no real root is found the boolean hasArealRoot is set to false and the real part of
@@ -240,7 +241,7 @@ class PolynomialSolverBase {
   /**
    * \returns the real root with smallest value.
    * A real root is defined as the real part of a complex root with absolute imaginary
-   * part smallest than absImaginaryThreshold.
+   * part smaller than absImaginaryThreshold.
    * absImaginaryThreshold takes the dummy_precision associated
    * with the Scalar_ template parameter of the PolynomialSolver class as the default value.
    * If no real root is found the boolean hasArealRoot is set to false and the real part of
@@ -324,7 +325,7 @@ class PolynomialSolver : public PolynomialSolverBase<Scalar_, Deg_> {
       m_roots = m_eigenSolver.eigenvalues();
       // cleanup noise in imaginary part of real roots:
       // if the imaginary part is rather small compared to the real part
-      // and that cancelling the imaginary part yield a smaller evaluation,
+      // and that cancelling the imaginary part yields a smaller evaluation,
       // then it's safe to keep the real part only.
       RealScalar coarse_prec = RealScalar(std::pow(4, poly.size() + 1)) * NumTraits<RealScalar>::epsilon();
       for (Index i = 0; i < m_roots.size(); ++i) {

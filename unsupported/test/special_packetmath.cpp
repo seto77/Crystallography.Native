@@ -7,10 +7,13 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include <limits>
 #include "packetmath_test_shared.h"
 #include "../Eigen/SpecialFunctions"
+
+using internal::unpacket_traits;
 
 #if EIGEN_ARCH_ARM
 // Note: 32-bit arm always flushes subnormals to zero.
@@ -33,11 +36,10 @@ void packetmath_real() {
   const int PacketSize = internal::unpacket_traits<Packet>::size;
 
   const int size = PacketSize * 4;
-  EIGEN_ALIGN_MAX Scalar data1[PacketSize * 4] = {};
-  EIGEN_ALIGN_MAX Scalar data2[PacketSize * 4] = {};
-  EIGEN_ALIGN_MAX Scalar ref[PacketSize * 4] = {};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet>::alignment) Scalar data1[PacketSize * 4] = {};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet>::alignment) Scalar data2[PacketSize * 4] = {};
+  EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<Packet>::alignment) Scalar ref[PacketSize * 4] = {};
 
-#if EIGEN_HAS_C99_MATH
   {
     data1[0] = std::numeric_limits<Scalar>::quiet_NaN();
     test::packet_helper<internal::packet_traits<Scalar>::HasLGamma, Packet> h;
@@ -46,15 +48,65 @@ void packetmath_real() {
   }
   if (internal::packet_traits<Scalar>::HasErf) {
     data1[0] = std::numeric_limits<Scalar>::quiet_NaN();
+    data1[1] = std::numeric_limits<Scalar>::infinity();
+    data1[2] = -std::numeric_limits<Scalar>::infinity();
+    data1[3] = (std::numeric_limits<Scalar>::max)();
+    if (size >= 8) {
+      data1[4] = -(std::numeric_limits<Scalar>::max)();
+      if (sizeof(Scalar) >= 8) {
+        data1[5] = Scalar(1e200);
+        data1[6] = Scalar(-1e200);
+      } else {
+        data1[5] = Scalar(1e30f);
+        data1[6] = Scalar(-1e30f);
+      }
+      data1[7] = std::numeric_limits<Scalar>::denorm_min();
+    }
     test::packet_helper<internal::packet_traits<Scalar>::HasErf, Packet> h;
-    h.store(data2, internal::perf(h.load(data1)));
+    for (int i = 0; i < size; i += PacketSize) {
+      h.store(data2 + i, internal::perf(h.load(data1 + i)));
+    }
     VERIFY((numext::isnan)(data2[0]));
+    VERIFY_IS_EQUAL(data2[1], Scalar(1));
+    VERIFY_IS_EQUAL(data2[2], Scalar(-1));
+    VERIFY_IS_EQUAL(data2[3], Scalar(1));
+    if (size >= 8) {
+      VERIFY_IS_EQUAL(data2[4], Scalar(-1));
+      VERIFY_IS_EQUAL(data2[5], Scalar(1));
+      VERIFY_IS_EQUAL(data2[6], Scalar(-1));
+      if (data1[7] > Scalar(0)) {
+        VERIFY((data2[7] > Scalar(0)));
+      }
+    }
   }
-  {
+  if (internal::packet_traits<Scalar>::HasErfc) {
     data1[0] = std::numeric_limits<Scalar>::quiet_NaN();
+    data1[1] = std::numeric_limits<Scalar>::infinity();
+    data1[2] = -std::numeric_limits<Scalar>::infinity();
+    data1[3] = (std::numeric_limits<Scalar>::max)();
+    if (size >= 8) {
+      data1[4] = -(std::numeric_limits<Scalar>::max)();
+      if (sizeof(Scalar) >= 8) {
+        data1[5] = Scalar(1e200);
+        data1[6] = Scalar(-1e200);
+      } else {
+        data1[5] = Scalar(1e30f);
+        data1[6] = Scalar(-1e30f);
+      }
+    }
     test::packet_helper<internal::packet_traits<Scalar>::HasErfc, Packet> h;
-    h.store(data2, internal::perfc(h.load(data1)));
+    for (int i = 0; i < size; i += PacketSize) {
+      h.store(data2 + i, internal::perfc(h.load(data1 + i)));
+    }
     VERIFY((numext::isnan)(data2[0]));
+    VERIFY_IS_EQUAL(data2[1], Scalar(0));
+    VERIFY_IS_EQUAL(data2[2], Scalar(2));
+    VERIFY_IS_EQUAL(data2[3], Scalar(0));
+    if (size >= 8) {
+      VERIFY_IS_EQUAL(data2[4], Scalar(2));
+      VERIFY_IS_EQUAL(data2[5], Scalar(0));
+      VERIFY_IS_EQUAL(data2[6], Scalar(2));
+    }
   }
   {
     for (int i = 0; i < size; ++i) {
@@ -62,7 +114,6 @@ void packetmath_real() {
     }
     CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasNdtri, numext::ndtri, internal::pndtri);
   }
-#endif  // EIGEN_HAS_C99_MATH
 
   // For bessel_i*e and bessel_j*, the valid range is negative reals.
   {
@@ -91,6 +142,21 @@ void packetmath_real() {
   }
   CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i0, internal::pbessel_i0);
   CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i1, internal::pbessel_i1);
+
+  // Boundary values for which a naive i0(x) = exp(|x|) * i0e(x) overflows even though the result is
+  // finite.  CHECK_CWISE1_IF cannot detect that on its own: its reference is the scalar path through
+  // the same generic_i0, so both sides would be +inf and compare equal.  Check finiteness explicitly.
+  if (PacketTraits::HasBessel &&
+      (internal::is_same<Scalar, float>::value || internal::is_same<Scalar, double>::value)) {
+    Scalar boundary = internal::is_same<Scalar, float>::value ? Scalar(90) : Scalar(713);
+    for (int i = 0; i < size; ++i) {
+      data1[i] = (i % 2 == 0) ? boundary : -boundary;
+    }
+    CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i0, internal::pbessel_i0);
+    for (int i = 0; i < PacketSize; ++i) VERIFY((numext::isfinite)(data2[i]));
+    CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i1, internal::pbessel_i1);
+    for (int i = 0; i < PacketSize; ++i) VERIFY((numext::isfinite)(data2[i]));
+  }
 
   // y_i, and k_i are valid for x > 0.
   {
@@ -128,13 +194,11 @@ void packetmath_real() {
                Scalar(std::pow(Scalar(10), internal::random<Scalar>(Scalar(-1), Scalar(2))));
   }
 
-#if EIGEN_HAS_C99_MATH
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasLGamma, std::lgamma, internal::plgamma);
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasErf, std::erf, internal::perf);
   // FIXME(rmlarsen): This test occasionally fails due to difference in tiny subnormal results
   // near the underflow boundary. I am not sure which version is correct.
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasErfc, MAYBE_FLUSH(std::erfc), internal::perfc);
-#endif
 }
 
 namespace Eigen {

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_ARCH_GENERIC_PACKET_MATH_DOUBLE_WORD_H
 #define EIGEN_ARCH_GENERIC_PACKET_MATH_DOUBLE_WORD_H
@@ -24,7 +25,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void absolute_split(const Packet& x, Packe
   r = psub(x, n);
 }
 
-// This function computes the sum {s, r}, such that x + y = s_hi + s_lo
+// This function computes the sum {s_hi, s_lo}, such that x + y = s_hi + s_lo
 // holds exactly, and s_hi = fl(x+y), if |x| >= |y|.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void fast_twosum(const Packet& x, const Packet& y, Packet& s_hi, Packet& s_lo) {
@@ -55,12 +56,12 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet twoprod_low(const Packet& x, const 
 
 // This function implements the Veltkamp splitting. Given a floating point
 // number x it returns the pair {x_hi, x_lo} such that x_hi + x_lo = x holds
-// exactly and that half of the significant of x fits in x_hi.
+// exactly and that half of the significand of x fits in x_hi.
 // This is Algorithm 3 from Jean-Michel Muller, "Elementary Functions",
 // 3rd edition, Birkh\"auser, 2016.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void veltkamp_splitting(const Packet& x, Packet& x_hi, Packet& x_lo) {
-  typedef typename unpacket_traits<Packet>::type Scalar;
+  using Scalar = typename unpacket_traits<Packet>::type;
   constexpr int shift = (NumTraits<Scalar>::digits() + 1) / 2;
   const Scalar shift_scale = Scalar(uint64_t(1) << shift);  // Scalar constructor not necessarily constexpr.
   const Packet gamma = pmul(pset1<Packet>(shift_scale + Scalar(1)), x);
@@ -152,8 +153,8 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void fast_twosum(const Packet& x, const Pa
 // This function implements the multiplication of a double word
 // number represented by {x_hi, x_lo} by a floating point number y.
 // It returns the result as a pair {p_hi, p_lo} such that
-// (x_hi + x_lo) * y = p_hi + p_lo hold with a relative error
-// of less than 2*2^{-2p}, where p is the number of significand bit
+// (x_hi + x_lo) * y = p_hi + p_lo holds with a relative error
+// of less than 2*2^{-2p}, where p is the number of significand bits
 // in the floating point type.
 // This is Algorithm 7 from Jean-Michel Muller, "Elementary Functions",
 // 3rd edition, Birkh\"auser, 2016.
@@ -173,7 +174,7 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x_hi, const Pac
 // numbers represented by {x_hi, x_lo} and {y_hi, y_lo}.
 // It returns the result as a pair {p_hi, p_lo} such that
 // (x_hi + x_lo) * (y_hi + y_lo) = p_hi + p_lo holds with a relative error
-// of less than 2*2^{-2p}, where p is the number of significand bit
+// of less than 2*2^{-2p}, where p is the number of significand bits
 // in the floating point type.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x_hi, const Packet& x_lo, const Packet& y_hi,

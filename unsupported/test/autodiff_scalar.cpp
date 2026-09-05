@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include "main.h"
 #include <unsupported/Eigen/AutoDiff>
@@ -81,9 +82,29 @@ void check_limits_specialization() {
   typedef std::numeric_limits<Scalar> B;
 
   // workaround "unused typedef" warning:
-  VERIFY(!bool(internal::is_same<B, A>::value));
+  VERIFY(!bool(std::is_same<B, A>::value));
 
   VERIFY(bool(std::is_base_of<B, A>::value));
+}
+
+// Regression for issue #1870: min(ADS, ADS) and max(ADS, ADS) must agree on
+// which argument wins on a tie.  Previously min returned the second argument
+// while max returned the first, so the two could yield different derivatives
+// for inputs with equal values but different derivative vectors.
+template <typename Scalar>
+void check_min_max_equal_values() {
+  typedef Eigen::Matrix<Scalar, 2, 1> Deriv2;
+  typedef Eigen::AutoDiffScalar<Deriv2> AD;
+
+  AD a(Scalar(1), Deriv2(Scalar(1), Scalar(0)));
+  AD b(Scalar(1), Deriv2(Scalar(0), Scalar(1)));
+
+  // Parenthesized form avoids the min/max macros installed by test/main.h
+  // and lets ADL pick up the AutoDiffScalar overloads.
+  VERIFY_IS_EQUAL((min)(a, b).derivatives(), a.derivatives());
+  VERIFY_IS_EQUAL((max)(a, b).derivatives(), a.derivatives());
+  VERIFY_IS_EQUAL((min)(b, a).derivatives(), b.derivatives());
+  VERIFY_IS_EQUAL((max)(b, a).derivatives(), b.derivatives());
 }
 
 EIGEN_DECLARE_TEST(autodiff_scalar) {
@@ -93,5 +114,7 @@ EIGEN_DECLARE_TEST(autodiff_scalar) {
     CALL_SUBTEST_3(check_hyperbolic_functions<float>());
     CALL_SUBTEST_4(check_hyperbolic_functions<double>());
     CALL_SUBTEST_5(check_limits_specialization<double>());
+    CALL_SUBTEST_6(check_min_max_equal_values<float>());
+    CALL_SUBTEST_7(check_min_max_equal_values<double>());
   }
 }

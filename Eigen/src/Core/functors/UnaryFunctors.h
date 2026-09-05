@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_UNARY_FUNCTORS_H
 #define EIGEN_UNARY_FUNCTORS_H
@@ -42,7 +43,7 @@ struct functor_traits<scalar_opposite_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_abs_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
     return numext::abs(a);
   }
@@ -63,7 +64,7 @@ struct functor_traits<scalar_abs_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_score_coeff_op : scalar_abs_op<Scalar> {
-  typedef void Score_is_abs;
+  using Score_is_abs = void;
 };
 template <typename Scalar>
 struct functor_traits<scalar_score_coeff_op<Scalar>> : functor_traits<scalar_abs_op<Scalar>> {};
@@ -71,7 +72,7 @@ struct functor_traits<scalar_score_coeff_op<Scalar>> : functor_traits<scalar_abs
 /* Avoid recomputing abs when we know the score and they are the same. Not a true Eigen functor.  */
 template <typename Scalar, typename = void>
 struct abs_knowing_score {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   template <typename Score>
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a, const Score&) const {
     return numext::abs(a);
@@ -79,7 +80,7 @@ struct abs_knowing_score {
 };
 template <typename Scalar>
 struct abs_knowing_score<Scalar, typename scalar_score_coeff_op<Scalar>::Score_is_abs> {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   template <typename Scal>
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scal&, const result_type& a) const {
     return a;
@@ -93,7 +94,7 @@ struct abs_knowing_score<Scalar, typename scalar_score_coeff_op<Scalar>::Score_i
  */
 template <typename Scalar>
 struct scalar_abs2_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
     return numext::abs2(a);
   }
@@ -146,7 +147,7 @@ struct functor_traits<scalar_conjugate_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_arg_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
     return numext::arg(a);
   }
@@ -182,7 +183,11 @@ struct scalar_carg_op {
 template <typename Scalar>
 struct functor_traits<scalar_carg_op<Scalar>> {
   using RealScalar = typename NumTraits<Scalar>::Real;
-  enum { Cost = functor_traits<scalar_atan2_op<RealScalar>>::Cost, PacketAccess = packet_traits<RealScalar>::HasATan };
+  enum {
+    Cost = functor_traits<scalar_atan2_op<RealScalar>>::Cost,
+    // The generic pcarg lowers to patan2, whose quotient-based reduction needs pdiv.
+    PacketAccess = packet_traits<RealScalar>::HasATan && packet_traits<RealScalar>::HasDiv
+  };
 };
 
 /** \internal
@@ -192,7 +197,7 @@ struct functor_traits<scalar_carg_op<Scalar>> {
  */
 template <typename Scalar, typename NewType>
 struct scalar_cast_op {
-  typedef NewType result_type;
+  using result_type = NewType;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE NewType operator()(const Scalar& a) const {
     return cast<Scalar, NewType>(a);
   }
@@ -200,7 +205,7 @@ struct scalar_cast_op {
 
 template <typename Scalar, typename NewType>
 struct functor_traits<scalar_cast_op<Scalar, NewType>> {
-  enum { Cost = is_same<Scalar, NewType>::value ? 0 : NumTraits<NewType>::AddCost, PacketAccess = false };
+  enum { Cost = std::is_same<Scalar, NewType>::value ? 0 : NumTraits<NewType>::AddCost, PacketAccess = false };
 };
 
 /** \internal
@@ -216,7 +221,7 @@ template <typename SrcType, typename DstType>
 struct functor_traits<core_cast_op<SrcType, DstType>> {
   using CastingTraits = type_casting_traits<SrcType, DstType>;
   enum {
-    Cost = is_same<SrcType, DstType>::value ? 0 : NumTraits<DstType>::AddCost,
+    Cost = std::is_same<SrcType, DstType>::value ? 0 : NumTraits<DstType>::AddCost,
     PacketAccess = CastingTraits::VectorizedCast && (CastingTraits::SrcCoeffRatio <= 8)
   };
 };
@@ -224,12 +229,12 @@ struct functor_traits<core_cast_op<SrcType, DstType>> {
 /** \internal
  * \brief Template functor to arithmetically shift a scalar right by a number of bits
  *
- * \sa class CwiseUnaryOp, MatrixBase::shift_right()
+ * \sa class CwiseUnaryOp, ArrayBase::arithmeticShiftRight()
  */
 template <typename Scalar, int N>
-struct scalar_shift_right_op {
+struct scalar_arithmetic_shift_right_op {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-    return numext::arithmetic_shift_right(a);
+    return numext::arithmetic_shift_right(a, N);
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
@@ -237,19 +242,39 @@ struct scalar_shift_right_op {
   }
 };
 template <typename Scalar, int N>
-struct functor_traits<scalar_shift_right_op<Scalar, N>> {
+struct functor_traits<scalar_arithmetic_shift_right_op<Scalar, N>> {
+  enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift };
+};
+
+/** \internal
+ * \brief Template functor to logically shift a scalar right by a number of bits
+ *
+ * \sa class CwiseUnaryOp, ArrayBase::logicalShiftRight()
+ */
+template <typename Scalar, int N>
+struct scalar_logical_shift_right_op {
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
+    return numext::logical_shift_right(a, N);
+  }
+  template <typename Packet>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
+    return internal::plogical_shift_right<N>(a);
+  }
+};
+template <typename Scalar, int N>
+struct functor_traits<scalar_logical_shift_right_op<Scalar, N>> {
   enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift };
 };
 
 /** \internal
  * \brief Template functor to logically shift a scalar left by a number of bits
  *
- * \sa class CwiseUnaryOp, MatrixBase::shift_left()
+ * \sa class CwiseUnaryOp, ArrayBase::logicalShiftLeft()
  */
 template <typename Scalar, int N>
-struct scalar_shift_left_op {
+struct scalar_logical_shift_left_op {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-    return numext::logical_shift_left(a);
+    return numext::logical_shift_left(a, N);
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
@@ -257,7 +282,7 @@ struct scalar_shift_left_op {
   }
 };
 template <typename Scalar, int N>
-struct functor_traits<scalar_shift_left_op<Scalar, N>> {
+struct functor_traits<scalar_logical_shift_left_op<Scalar, N>> {
   enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift };
 };
 
@@ -268,7 +293,7 @@ struct functor_traits<scalar_shift_left_op<Scalar, N>> {
  */
 template <typename Scalar>
 struct scalar_real_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
     return numext::real(a);
   }
@@ -285,7 +310,7 @@ struct functor_traits<scalar_real_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_imag_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
     return numext::imag(a);
   }
@@ -302,7 +327,7 @@ struct functor_traits<scalar_imag_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_real_ref_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const result_type& operator()(const Scalar& a) const {
     return numext::real_ref(a);
   }
@@ -322,7 +347,12 @@ struct functor_traits<scalar_real_ref_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_imag_ref_op {
-  typedef typename NumTraits<Scalar>::Real result_type;
+  // For a real Scalar, numext::imag_ref returns the temporary RealScalar(0) by value; binding it to the
+  // reference return types below would dangle (issue #3096). Real-valued objects get a read-only zero
+  // expression from imag() instead (see NonConstImagReturnType in CommonCwiseUnaryOps.inc).
+  static_assert(NumTraits<Scalar>::IsComplex,
+                "THE IMAGINARY PART OF A REAL-VALUED OBJECT IS NOT AN LVALUE. USE THE READ-ONLY imag() OVERLOAD.");
+  using result_type = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type& operator()(Scalar& a) const {
     return numext::imag_ref(a);
   }
@@ -386,6 +416,38 @@ struct functor_traits<scalar_exp2_op<Scalar>> {
   enum {
     PacketAccess = packet_traits<Scalar>::HasExp,
     Cost = functor_traits<scalar_exp_op<Scalar>>::Cost  // TODO: measure cost of exp2
+  };
+};
+
+/** \internal
+ *
+ * \brief Multiplies a scalar by 2 raised to a fixed integer exponent.
+ *
+ * \sa class CwiseUnaryOp, ArrayBase::ldexp()
+ */
+template <typename Scalar>
+struct scalar_ldexp_op {
+  static_assert(!NumTraits<Scalar>::IsComplex && !NumTraits<Scalar>::IsInteger,
+                "ldexp is only defined for real floating-point scalar types");
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit scalar_ldexp_op(int exponent) : m_exponent(exponent) {}
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
+    return numext::ldexp(a, m_exponent);
+  }
+  template <typename Packet>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
+    // pldexp clamps exponents, so a saturating conversion to Scalar is safe.
+    return internal::pldexp(a, pset1<Packet>(static_cast<Scalar>(m_exponent)));
+  }
+
+ private:
+  const int m_exponent;
+};
+template <typename Scalar>
+struct functor_traits<scalar_ldexp_op<Scalar>> {
+  enum {
+    // HasExp packets already require a tested pldexp implementation.
+    PacketAccess = packet_traits<Scalar>::HasExp,
+    Cost = 4 * NumTraits<Scalar>::MulCost
   };
 };
 
@@ -705,7 +767,7 @@ template <typename Scalar>
 struct functor_traits<scalar_tanh_op<Scalar>> {
   enum {
     PacketAccess = packet_traits<Scalar>::HasTanh,
-    Cost = ((EIGEN_FAST_MATH && is_same<Scalar, float>::value)
+    Cost = ((EIGEN_FAST_MATH && std::is_same<Scalar, float>::value)
 // The following numbers are based on the AVX implementation,
 #ifdef EIGEN_VECTORIZE_FMA
                 // Haswell can issue 2 add/mul/madd per cycle.
@@ -1092,8 +1154,7 @@ struct scalar_isfinite_op<Scalar, true> {
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& a) const {
-    constexpr Scalar inf = NumTraits<Scalar>::infinity();
-    return pcmp_lt(pabs(a), pset1<Packet>(inf));
+    return pisfinite(a);
   }
 };
 template <typename Scalar, bool UseTypedPredicate>
@@ -1156,7 +1217,7 @@ template <typename Scalar>
 struct scalar_bitwise_not_op {
   EIGEN_STATIC_ASSERT(!NumTraits<Scalar>::RequireInitialization,
                       BITWISE OPERATIONS MAY ONLY BE PERFORMED ON PLAIN DATA TYPES)
-  EIGEN_STATIC_ASSERT((!internal::is_same<Scalar, bool>::value), DONT USE BITWISE OPS ON BOOLEAN TYPES)
+  EIGEN_STATIC_ASSERT((!std::is_same<Scalar, bool>::value), DONT USE BITWISE OPS ON BOOLEAN TYPES)
   using result_type = Scalar;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
     return bitwise_unary_impl<Scalar>::run_not(a);
@@ -1209,7 +1270,7 @@ struct scalar_logistic_op_impl {
   }
 };
 
-// Complex-valud implementation.
+// Complex-valued implementation.
 template <typename T>
 struct scalar_logistic_op_impl<T, std::enable_if_t<NumTraits<T>::IsComplex>> {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE T operator()(const T& x) const {
@@ -1236,7 +1297,7 @@ struct scalar_logistic_op : scalar_logistic_op_impl<T> {};
  * pexp_float. See the individual steps described in the code below.
  * Note that compared to pexp, we use an additional outer multiplicative
  * range reduction step using the identity exp(x) = exp(x/2)^2.
- * This prevert us from having to call ldexp on values that could produce
+ * This prevents us from having to call ldexp on values that could produce
  * a denormal result, which allows us to call the faster implementation in
  * pldexp_fast_impl<Packet>::run(p, m).
  * The final squaring, however, doubles the error bound on the final
@@ -1312,18 +1373,20 @@ struct scalar_logistic_op<float> {
     return pselect(zero_mask, cst_zero, pdiv(e, padd(cst_one, e)));
   }
 };
-#endif  // #ifndef EIGEN_GPU_COMPILE_PHASE
+#endif  // #ifndef EIGEN_GPUCC
 
 template <typename T>
 struct functor_traits<scalar_logistic_op<T>> {
   enum {
-    // The cost estimate for float here here is for the common(?) case where
+    // The cost estimate for float here is for the common(?) case where
     // all arguments are greater than -9.
     Cost = scalar_div_cost<T, packet_traits<T>::HasDiv>::value +
-           (internal::is_same<T, float>::value ? NumTraits<T>::AddCost * 15 + NumTraits<T>::MulCost * 11
-                                               : NumTraits<T>::AddCost * 2 + functor_traits<scalar_exp_op<T>>::Cost),
+           (std::is_same<T, float>::value ? NumTraits<T>::AddCost * 15 + NumTraits<T>::MulCost * 11
+                                          : NumTraits<T>::AddCost * 2 + functor_traits<scalar_exp_op<T>>::Cost),
+    // Both packet paths branch with pcmp_*/pselect.
     PacketAccess = !NumTraits<T>::IsComplex && packet_traits<T>::HasAdd && packet_traits<T>::HasDiv &&
-                   (internal::is_same<T, float>::value
+                   packet_traits<T>::HasCmp &&
+                   (std::is_same<T, float>::value
                         ? packet_traits<T>::HasMul && packet_traits<T>::HasMax && packet_traits<T>::HasMin
                         : packet_traits<T>::HasNegate && packet_traits<T>::HasExp)
   };
@@ -1334,11 +1397,10 @@ template <typename Scalar, typename ExponentScalar, bool IsBaseInteger = NumTrai
           bool IsBaseComplex = NumTraits<Scalar>::IsComplex,
           bool IsExponentComplex = NumTraits<ExponentScalar>::IsComplex>
 struct scalar_unary_pow_op {
-  typedef typename internal::promote_scalar_arg<
+  using PromotedExponent = typename internal::promote_scalar_arg<
       Scalar, ExponentScalar,
-      internal::has_ReturnType<ScalarBinaryOpTraits<Scalar, ExponentScalar, scalar_unary_pow_op>>::value>::type
-      PromotedExponent;
-  typedef typename ScalarBinaryOpTraits<Scalar, PromotedExponent, scalar_unary_pow_op>::ReturnType result_type;
+      internal::has_ReturnType<ScalarBinaryOpTraits<Scalar, ExponentScalar, scalar_unary_pow_op>>::value>::type;
+  using result_type = typename ScalarBinaryOpTraits<Scalar, PromotedExponent, scalar_unary_pow_op>::ReturnType;
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE scalar_unary_pow_op(const ExponentScalar& exponent)
       : m_exponent(exponent) {}
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE result_type operator()(const Scalar& a) const {
@@ -1426,4 +1488,4 @@ struct functor_traits<scalar_unary_pow_op<Scalar, ExponentScalar>> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_FUNCTORS_H
+#endif  // EIGEN_UNARY_FUNCTORS_H

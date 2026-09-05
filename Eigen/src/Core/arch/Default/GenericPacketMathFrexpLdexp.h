@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_ARCH_GENERIC_PACKET_MATH_FREXP_LDEXP_H
 #define EIGEN_ARCH_GENERIC_PACKET_MATH_FREXP_LDEXP_H
@@ -22,25 +23,25 @@ template <typename T>
 struct make_integer;
 template <>
 struct make_integer<float> {
-  typedef numext::int32_t type;
+  using type = numext::int32_t;
 };
 template <>
 struct make_integer<double> {
-  typedef numext::int64_t type;
+  using type = numext::int64_t;
 };
 template <>
 struct make_integer<half> {
-  typedef numext::int16_t type;
+  using type = numext::int16_t;
 };
 template <>
 struct make_integer<bfloat16> {
-  typedef numext::int16_t type;
+  using type = numext::int16_t;
 };
 
 template <typename Packet>
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pfrexp_generic_get_biased_exponent(const Packet& a) {
-  typedef typename unpacket_traits<Packet>::type Scalar;
-  typedef typename unpacket_traits<Packet>::integer_packet PacketI;
+  using Scalar = typename unpacket_traits<Packet>::type;
+  using PacketI = typename unpacket_traits<Packet>::integer_packet;
   static constexpr int mantissa_bits = numext::numeric_limits<Scalar>::digits - 1;
   return pcast<PacketI, Packet>(plogical_shift_right<mantissa_bits>(preinterpret<PacketI>(pabs(a))));
 }
@@ -49,8 +50,8 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pfrexp_generic_get_biased_exponent(
 // Assumes IEEE floating point format.
 template <typename Packet>
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pfrexp_generic(const Packet& a, Packet& exponent) {
-  typedef typename unpacket_traits<Packet>::type Scalar;
-  typedef typename make_unsigned<typename make_integer<Scalar>::type>::type ScalarUI;
+  using Scalar = typename unpacket_traits<Packet>::type;
+  using ScalarUI = std::make_unsigned_t<typename make_integer<Scalar>::type>;
   static constexpr int TotalBits = sizeof(Scalar) * CHAR_BIT, MantissaBits = numext::numeric_limits<Scalar>::digits - 1,
                        ExponentBits = TotalBits - MantissaBits - 1;
 
@@ -105,30 +106,35 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_generic(const Packet& a, con
   // Unfortunately, 2^(278) cannot be represented using either one or two
   // finite normal floats, so we must split the scale factor into at least
   // three parts. It turns out to be faster to split 'exponent' into four
-  // factors, since [exponent>>2] is much faster to compute that [exponent/3].
+  // factors, since [exponent>>2] is much faster to compute than [exponent/3].
   //
   // Set e = min(max(exponent, -278), 278);
   //     b = floor(e/4);
-  //   out = ((((a * 2^(b)) * 2^(b)) * 2^(b)) * 2^(e-3*b))
+  //     c1 = 2^b
+  //     c2 = 2^(e - 3b)
+  //   out = (((a * c1) * c1) * c1) * c2  (= a * 2^e)
   //
-  // This will avoid any intermediate overflows and correctly handle 0, inf,
-  // NaN cases.
-  typedef typename unpacket_traits<Packet>::integer_packet PacketI;
-  typedef typename unpacket_traits<Packet>::type Scalar;
-  typedef typename unpacket_traits<PacketI>::type ScalarI;
+  // Every partial product must contain 'a'. Reassociating scale factors can
+  // overflow (for example c1*c1 at e=256 for float), making pldexp(0, 256)
+  // NaN and finite denormal results infinite. Apply c1 before c2 because c2
+  // may exceed one for negative exponents (e.g. c2=4 for e=-1), overflowing
+  // values near max even when the final result is finite.
+  using PacketI = typename unpacket_traits<Packet>::integer_packet;
+  using Scalar = typename unpacket_traits<Packet>::type;
+  using ScalarI = typename unpacket_traits<PacketI>::type;
   static constexpr int TotalBits = sizeof(Scalar) * CHAR_BIT, MantissaBits = numext::numeric_limits<Scalar>::digits - 1,
                        ExponentBits = TotalBits - MantissaBits - 1;
 
-  const Packet max_exponent = pset1<Packet>(Scalar((ScalarI(1) << ExponentBits) + ScalarI(MantissaBits - 1)));  // 278
-  const PacketI bias = pset1<PacketI>((ScalarI(1) << (ExponentBits - 1)) - ScalarI(1));                         // 127
-  const PacketI e = pcast<Packet, PacketI>(pmin(pmax(exponent, pnegate(max_exponent)), max_exponent));
-  PacketI b = parithmetic_shift_right<2>(e);                                          // floor(e/4);
-  Packet c = preinterpret<Packet>(plogical_shift_left<MantissaBits>(padd(b, bias)));  // 2^b
-  Packet out = pmul(pmul(pmul(a, c), c), c);                                          // a * 2^(3b)
-  b = pnmadd(pset1<PacketI>(3), b, e);                                                // e - 3b
-  c = preinterpret<Packet>(plogical_shift_left<MantissaBits>(padd(b, bias)));         // 2^(e-3*b)
-  out = pmul(out, c);
-  return out;
+  constexpr ScalarI max_exp_value = (ScalarI(1) << ExponentBits) + ScalarI(MantissaBits - 1);  // 278
+  const Packet max_exponent = pset1<Packet>(Scalar(max_exp_value));
+  const Packet neg_max_exponent = pset1<Packet>(Scalar(-max_exp_value));
+  const PacketI bias = pset1<PacketI>((ScalarI(1) << (ExponentBits - 1)) - ScalarI(1));  // 127
+  const PacketI e = pcast<Packet, PacketI>(pmin(pmax(exponent, neg_max_exponent), max_exponent));
+  const PacketI b = parithmetic_shift_right<2>(e);                                                     // floor(e/4);
+  const PacketI b_remainder = pnmadd(pset1<PacketI>(3), b, e);                                         // e - 3b
+  const Packet c1 = preinterpret<Packet>(plogical_shift_left<MantissaBits>(padd(b, bias)));            // 2^b
+  const Packet c2 = preinterpret<Packet>(plogical_shift_left<MantissaBits>(padd(b_remainder, bias)));  // 2^(e-3*b)
+  return pmul(pmul(pmul(pmul(a, c1), c1), c1), c2);                                                    // a * 2^e
 }
 
 // Explicitly multiplies
@@ -142,9 +148,9 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_generic(const Packet& a, con
 // Assumes IEEE floating point format
 template <typename Packet>
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_fast(const Packet& a, const Packet& exponent) {
-  typedef typename unpacket_traits<Packet>::integer_packet PacketI;
-  typedef typename unpacket_traits<Packet>::type Scalar;
-  typedef typename unpacket_traits<PacketI>::type ScalarI;
+  using PacketI = typename unpacket_traits<Packet>::integer_packet;
+  using Scalar = typename unpacket_traits<Packet>::type;
+  using ScalarI = typename unpacket_traits<PacketI>::type;
   static constexpr int TotalBits = sizeof(Scalar) * CHAR_BIT, MantissaBits = numext::numeric_limits<Scalar>::digits - 1,
                        ExponentBits = TotalBits - MantissaBits - 1;
 

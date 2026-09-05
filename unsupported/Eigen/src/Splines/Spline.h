@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPLINE_H
 #define EIGEN_SPLINE_H
@@ -26,6 +27,12 @@ namespace Eigen {
  * \f{align*}
  *   C(u) & = \sum_{i=0}^{n}N_{i,p}(u)P_i
  * \f}
+ *
+ * The spline is parameterized over the domain \f$[u_p; u_{m-p}]\f$ of its knot
+ * vector \f$\{u_0,\hdots,u_m\}\f$, where \f$p\f$ is the degree. For the clamped
+ * knot vectors that SplineFitting produces this is \f$[u_0; u_m]\f$, which is
+ * the interval spanned by the interpolation parameters and therefore not
+ * necessarily \f$[0;1]\f$.
  *
  * \tparam Scalar_ The underlying data type (typically float or double)
  * \tparam Dim_ The curve dimension (e.g. 2 or 3)
@@ -105,7 +112,7 @@ class Spline {
    *   C(u) & = \sum_{i=0}^{n}N_{i,p}P_i
    * \f}
    *
-   * \param u Parameter \f$u \in [0;1]\f$ at which the spline is evaluated.
+   * \param u Parameter \f$u\f$ in the spline's knot domain at which the spline is evaluated.
    * \return The spline value at the given location \f$u\f$.
    **/
   PointType operator()(Scalar u) const;
@@ -119,14 +126,14 @@ class Spline {
    * \f}
    * for i ranging between 0 and order.
    *
-   * \param u Parameter \f$u \in [0;1]\f$ at which the spline derivative is evaluated.
+   * \param u Parameter \f$u\f$ in the spline's knot domain at which the spline derivative is evaluated.
    * \param order The order up to which the derivatives are computed.
    **/
   typename SplineTraits<Spline>::DerivativeType derivatives(Scalar u, DenseIndex order) const;
 
   /**
    * \copydoc Spline::derivatives
-   * Using the template version of this function is more efficieent since
+   * Using the template version of this function is more efficient since
    * temporary objects are allocated on the stack whenever this is possible.
    **/
   template <int DerivativeOrder>
@@ -146,8 +153,8 @@ class Spline {
    *   N_{i,p}(u), \hdots, N_{i+p+1,p}(u)
    * \f}
    *
-   * \param u Parameter \f$u \in [0;1]\f$ at which the non-zero basis functions
-   *          are computed.
+   * \param u Parameter \f$u\f$ in the spline's knot domain at which the non-zero
+   *          basis functions are computed.
    **/
   typename SplineTraits<Spline>::BasisVectorType basisFunctions(Scalar u) const;
 
@@ -160,15 +167,15 @@ class Spline {
    * \f}
    * with i ranging from 0 up to the specified order.
    *
-   * \param u Parameter \f$u \in [0;1]\f$ at which the non-zero basis function
-   *          derivatives are computed.
-   * \param order The order up to which the basis function derivatives are computes.
+   * \param u Parameter \f$u\f$ in the spline's knot domain at which the non-zero
+   *          basis function derivatives are computed.
+   * \param order The order up to which the basis function derivatives are computed.
    **/
   typename SplineTraits<Spline>::BasisDerivativeType basisFunctionDerivatives(Scalar u, DenseIndex order) const;
 
   /**
    * \copydoc Spline::basisFunctionDerivatives
-   * Using the template version of this function is more efficieent since
+   * Using the template version of this function is more efficient since
    * temporary objects are allocated on the stack whenever this is possible.
    **/
   template <int DerivativeOrder>
@@ -269,7 +276,7 @@ typename Spline<Scalar_, Dim_, Degree_>::BasisVectorType Spline<Scalar_, Dim_, D
 
 template <typename Scalar_, int Dim_, int Degree_>
 DenseIndex Spline<Scalar_, Dim_, Degree_>::degree() const {
-  if (Degree_ == Dynamic)
+  EIGEN_IF_CONSTEXPR (Degree_ == Dynamic)
     return m_knots.size() - m_ctrls.cols() - 1;
   else
     return Degree_;

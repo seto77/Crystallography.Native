@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_DETERMINANT_H
 #define EIGEN_DETERMINANT_H
@@ -25,10 +26,7 @@ EIGEN_DEVICE_FUNC inline const typename Derived::Scalar bruteforce_det3_helper(c
 
 template <typename Derived, int DeterminantType = Derived::RowsAtCompileTime>
 struct determinant_impl {
-  static inline typename traits<Derived>::Scalar run(const Derived& m) {
-    if (Derived::ColsAtCompileTime == Dynamic && m.rows() == 0) return typename traits<Derived>::Scalar(1);
-    return m.partialPivLu().determinant();
-  }
+  static inline typename traits<Derived>::Scalar run(const Derived& m) { return internal::partial_lu_determinant(m); }
 };
 
 template <typename Derived>
@@ -52,7 +50,7 @@ struct determinant_impl<Derived, 3> {
 
 template <typename Derived>
 struct determinant_impl<Derived, 4> {
-  typedef typename traits<Derived>::Scalar Scalar;
+  using Scalar = typename traits<Derived>::Scalar;
   static EIGEN_DEVICE_FUNC Scalar run(const Derived& m) {
     Scalar d2_01 = det2(m, 0, 1);
     Scalar d2_02 = det2(m, 0, 2);
@@ -89,7 +87,7 @@ struct determinant_impl<Derived, 4> {
 template <typename Derived>
 EIGEN_DEVICE_FUNC inline typename internal::traits<Derived>::Scalar MatrixBase<Derived>::determinant() const {
   eigen_assert(rows() == cols());
-  typedef typename internal::nested_eval<Derived, Base::RowsAtCompileTime>::type Nested;
+  using Nested = typename internal::nested_eval<Derived, Base::RowsAtCompileTime>::type;
   return internal::determinant_impl<internal::remove_all_t<Nested>>::run(derived());
 }
 

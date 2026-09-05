@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_RANDOMSETTER_H
 #define EIGEN_RANDOMSETTER_H
@@ -100,13 +101,13 @@ struct GoogleSparseHashMapTraits {
  * \tparam SparseMatrixType the type of the sparse matrix we are updating
  * \tparam MapTraits a traits class representing the map implementation used for the temporary sparse storage.
  *                  Its default value depends on the system.
- * \tparam OuterPacketBits defines the number of rows (or columns) manage by a single map object
+ * \tparam OuterPacketBits defines the number of rows (or columns) managed by a single map object
  *                        as a power of two exponent.
  *
  * This class temporarily represents a sparse matrix object using a generic map implementation allowing for
  * efficient random access. The conversion from the compressed representation to a hash_map object is performed
  * in the RandomSetter constructor, while the sparse matrix is updated back at destruction time. This strategy
- * suggest the use of nested blocks as in this example:
+ * suggests the use of nested blocks as in this example:
  *
  * \code
  * SparseMatrix<double> m(rows,cols);
@@ -134,8 +135,8 @@ struct GoogleSparseHashMapTraits {
  *  - \b GoogleSparseHashMapTraits: corresponds to google::sparse_hash_map (best memory consumption, relatively good
  * performance)
  *
- * The default map implementation depends on the availability, and the preferred order is:
- * GoogleSparseHashMapTraits, StdUnorderedMapTraits, and finally StdMapTraits.
+ * The default map implementation is GoogleDenseHashMapTraits if EIGEN_GOOGLEHASH_SUPPORT is defined, and
+ * StdUnorderedMapTraits otherwise; StdMapTraits is never selected by default.
  *
  * For performance and memory consumption reasons it is highly recommended to use one of
  * Google's hash_map implementations. To enable the support for them, you must define
@@ -158,8 +159,7 @@ class RandomSetter {
   typedef typename SparseMatrixType::StorageIndex StorageIndex;
 
   struct ScalarWrapper {
-    ScalarWrapper() : value(0) {}
-    Scalar value;
+    Scalar value = Scalar(0);
   };
   typedef typename MapTraits<ScalarWrapper>::KeyType KeyType;
   typedef typename MapTraits<ScalarWrapper>::Type HashMapType;
@@ -173,7 +173,7 @@ class RandomSetter {
  public:
   /** Constructs a random setter object from the sparse matrix \a target
    *
-   * Note that the initial value of \a target are imported. If you want to re-set
+   * Note that the initial values of \a target are imported. If you want to re-set
    * a sparse matrix from scratch, then you must set it to zero first using the
    * setZero() function.
    */
@@ -253,7 +253,7 @@ class RandomSetter {
           const Index outer = it->first & keyBitsMask;
           // sorted insertion
           // Note that we have to deal with at most 2^OuterPacketBits unsorted coefficients,
-          // moreover those 2^OuterPacketBits coeffs are likely to be sparse, an so only a
+          // moreover those 2^OuterPacketBits coeffs are likely to be sparse, and so only a
           // small fraction of them have to be sorted, whence the following simple procedure:
           Index posStart = m_target->outerIndexPtr()[outer];
           Index i = (positions[outer]++) - 1;

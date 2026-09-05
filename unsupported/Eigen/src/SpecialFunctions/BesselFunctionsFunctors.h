@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BESSELFUNCTIONS_FUNCTORS_H
 #define EIGEN_BESSELFUNCTIONS_FUNCTORS_H
@@ -94,7 +95,7 @@ struct functor_traits<scalar_bessel_i1_op<Scalar> > {
 
 /** \internal
  * \brief Template functor to compute the exponentially scaled modified Bessel
- * function of the first kind of order zero
+ * function of the first kind of order one
  * \sa class CwiseUnaryOp, Cwise::bessel_i1e()
  */
 template <typename Scalar>
@@ -117,7 +118,7 @@ struct functor_traits<scalar_bessel_i1e_op<Scalar> > {
 };
 
 /** \internal
- * \brief Template functor to compute the Bessel function of the second kind of
+ * \brief Template functor to compute the Bessel function of the first kind of
  * order zero
  * \sa class CwiseUnaryOp, Cwise::bessel_j0()
  */
@@ -194,7 +195,7 @@ struct functor_traits<scalar_bessel_j1_op<Scalar> > {
 /** \internal
  * \brief Template functor to compute the Bessel function of the second kind of
  * order one
- * \sa class CwiseUnaryOp, Cwise::bessel_j1e()
+ * \sa class CwiseUnaryOp, Cwise::bessel_y1()
  */
 template <typename Scalar>
 struct scalar_bessel_y1_op {

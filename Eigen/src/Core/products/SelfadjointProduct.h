@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SELFADJOINT_PRODUCT_H
 #define EIGEN_SELFADJOINT_PRODUCT_H
@@ -24,7 +25,7 @@ namespace Eigen {
 template <typename Scalar, typename Index, int UpLo, bool ConjLhs, bool ConjRhs>
 struct selfadjoint_rank1_update<Scalar, Index, ColMajor, UpLo, ConjLhs, ConjRhs> {
   static void run(Index size, Scalar* mat, Index stride, const Scalar* vecX, const Scalar* vecY, const Scalar& alpha) {
-    typedef typename internal::packet_traits<Scalar>::type Packet;
+    using Packet = typename internal::packet_traits<Scalar>::type;
     const Index PacketSize = internal::unpacket_traits<Packet>::size;
 
     internal::conj_if<ConjRhs> cjy;
@@ -39,7 +40,7 @@ struct selfadjoint_rank1_update<Scalar, Index, ColMajor, UpLo, ConjLhs, ConjRhs>
       Packet ps0 = internal::pset1<Packet>(s0);
       Packet ps1 = internal::pset1<Packet>(s1);
 
-      if (UpLo == Lower) {
+      EIGEN_IF_CONSTEXPR (UpLo == Lower) {
         Scalar* EIGEN_RESTRICT col0 = mat + stride * j + j;
         Scalar* EIGEN_RESTRICT col1 = mat + stride * (j + 1) + (j + 1);
 
@@ -140,10 +141,10 @@ struct selfadjoint_product_selector;
 template <typename MatrixType, typename OtherType, int UpLo>
 struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, true> {
   static void run(MatrixType& mat, const OtherType& other, const typename MatrixType::Scalar& alpha) {
-    typedef typename MatrixType::Scalar Scalar;
-    typedef internal::blas_traits<OtherType> OtherBlasTraits;
-    typedef typename OtherBlasTraits::DirectLinearAccessType ActualOtherType;
-    typedef internal::remove_all_t<ActualOtherType> ActualOtherType_;
+    using Scalar = typename MatrixType::Scalar;
+    using OtherBlasTraits = internal::blas_traits<OtherType>;
+    using ActualOtherType = typename OtherBlasTraits::DirectLinearAccessType;
+    using ActualOtherType_ = internal::remove_all_t<ActualOtherType>;
     internal::add_const_on_value_type_t<ActualOtherType> actualOther = OtherBlasTraits::extract(other.derived());
 
     Scalar actualAlpha = alpha * OtherBlasTraits::extractScalarFactor(other.derived());
@@ -160,8 +161,9 @@ struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, true> {
         Scalar, actualOtherPtr, other.size(),
         (UseOtherDirectly ? const_cast<Scalar*>(actualOther.data()) : static_other.data()));
 
-    if (!UseOtherDirectly)
+    EIGEN_IF_CONSTEXPR (!UseOtherDirectly) {
       Map<typename ActualOtherType_::PlainObject>(actualOtherPtr, actualOther.size()) = actualOther;
+    }
 
     selfadjoint_rank1_update<
         Scalar, Index, StorageOrder, UpLo, OtherBlasTraits::NeedToConjugate && NumTraits<Scalar>::IsComplex,
@@ -174,10 +176,10 @@ struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, true> {
 template <typename MatrixType, typename OtherType, int UpLo>
 struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, false> {
   static void run(MatrixType& mat, const OtherType& other, const typename MatrixType::Scalar& alpha) {
-    typedef typename MatrixType::Scalar Scalar;
-    typedef internal::blas_traits<OtherType> OtherBlasTraits;
-    typedef typename OtherBlasTraits::DirectLinearAccessType ActualOtherType;
-    typedef internal::remove_all_t<ActualOtherType> ActualOtherType_;
+    using Scalar = typename MatrixType::Scalar;
+    using OtherBlasTraits = internal::blas_traits<OtherType>;
+    using ActualOtherType = typename OtherBlasTraits::DirectLinearAccessType;
+    using ActualOtherType_ = internal::remove_all_t<ActualOtherType>;
     internal::add_const_on_value_type_t<ActualOtherType> actualOther = OtherBlasTraits::extract(other.derived());
 
     Scalar actualAlpha = alpha * OtherBlasTraits::extractScalarFactor(other.derived());
@@ -189,11 +191,13 @@ struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, false> {
 
     Index size = mat.cols();
     Index depth = actualOther.cols();
+    eigen_assert(actualOther.rows() == size);
+    if (size == 0 || depth == 0) return;
 
-    typedef internal::gemm_blocking_space<IsRowMajor ? RowMajor : ColMajor, Scalar, Scalar,
-                                          MatrixType::MaxColsAtCompileTime, MatrixType::MaxColsAtCompileTime,
-                                          ActualOtherType_::MaxColsAtCompileTime>
-        BlockingType;
+    using BlockingType =
+        internal::gemm_blocking_space<IsRowMajor ? RowMajor : ColMajor, Scalar, Scalar,
+                                      MatrixType::MaxColsAtCompileTime, MatrixType::MaxColsAtCompileTime,
+                                      ActualOtherType_::MaxColsAtCompileTime>;
 
     BlockingType blocking(size, size, depth, 1, false);
 
@@ -213,7 +217,7 @@ template <typename MatrixType, unsigned int UpLo>
 template <typename DerivedU>
 EIGEN_DEVICE_FUNC SelfAdjointView<MatrixType, UpLo>& SelfAdjointView<MatrixType, UpLo>::rankUpdate(
     const MatrixBase<DerivedU>& u, const Scalar& alpha) {
-  selfadjoint_product_selector<MatrixType, DerivedU, UpLo>::run(_expression().const_cast_derived(), u.derived(), alpha);
+  selfadjoint_product_selector<MatrixType, DerivedU, UpLo>::run(nestedExpression(), u.derived(), alpha);
 
   return *this;
 }

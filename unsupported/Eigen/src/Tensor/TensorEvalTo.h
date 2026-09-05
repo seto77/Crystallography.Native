@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_EVAL_TO_H
-#define EIGEN_CXX11_TENSOR_TENSOR_EVAL_TO_H
+#ifndef EIGEN_TENSOR_TENSOR_EVAL_TO_H
+#define EIGEN_TENSOR_TENSOR_EVAL_TO_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,8 +23,6 @@ struct traits<TensorEvalToOp<XprType, MakePointer_> > {
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = XprTraits::NumDimensions;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename MakePointer_<Scalar>::Type PointerType;
@@ -31,20 +30,13 @@ struct traits<TensorEvalToOp<XprType, MakePointer_> > {
   enum { Flags = 0 };
   template <class T>
   struct MakePointer {
-    // Intermediate typedef to workaround MSVC issue.
-    typedef MakePointer_<T> MakePointerT;
-    typedef typename MakePointerT::Type Type;
+    typedef typename MakePointer_<T>::Type Type;
   };
 };
 
 template <typename XprType, template <class> class MakePointer_>
 struct eval<TensorEvalToOp<XprType, MakePointer_>, Eigen::Dense> {
   typedef const TensorEvalToOp<XprType, MakePointer_>& type;
-};
-
-template <typename XprType, template <class> class MakePointer_>
-struct nested<TensorEvalToOp<XprType, MakePointer_>, 1, typename eval<TensorEvalToOp<XprType, MakePointer_> >::type> {
-  typedef TensorEvalToOp<XprType, MakePointer_> type;
 };
 
 }  // end namespace internal
@@ -56,7 +48,7 @@ class TensorEvalToOp : public TensorBase<TensorEvalToOp<XprType, MakePointer_>, 
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef std::remove_const_t<typename XprType::CoeffReturnType> CoeffReturnType;
   typedef typename MakePointer_<CoeffReturnType>::Type PointerType;
-  typedef typename Eigen::internal::nested<TensorEvalToOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorEvalToOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorEvalToOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorEvalToOp>::Index Index;
 
@@ -111,13 +103,11 @@ struct TensorEvaluator<const TensorEvalToOp<ArgType, MakePointer_>, Device> {
   EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
       : m_impl(op.expression(), device), m_buffer(device.get(op.buffer())), m_expression(op.expression()) {}
 
-  EIGEN_STRONG_INLINE ~TensorEvaluator() {}
-
   EIGEN_DEVICE_FUNC const Dimensions& dimensions() const { return m_impl.dimensions(); }
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType scalar) {
     EIGEN_UNUSED_VARIABLE(scalar);
-    eigen_assert(scalar == NULL);
+    eigen_assert(scalar == nullptr);
     return m_impl.evalSubExprsIfNeeded(m_buffer);
   }
 
@@ -125,7 +115,7 @@ struct TensorEvaluator<const TensorEvalToOp<ArgType, MakePointer_>, Device> {
   template <typename EvalSubExprsCallback>
   EIGEN_STRONG_INLINE void evalSubExprsIfNeededAsync(EvaluatorPointerType scalar, EvalSubExprsCallback done) {
     EIGEN_UNUSED_VARIABLE(scalar);
-    eigen_assert(scalar == NULL);
+    eigen_assert(scalar == nullptr);
     m_impl.evalSubExprsIfNeededAsync(m_buffer, std::move(done));
   }
 #endif
@@ -185,4 +175,4 @@ struct TensorEvaluator<const TensorEvalToOp<ArgType, MakePointer_>, Device> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_EVAL_TO_H
+#endif  // EIGEN_TENSOR_TENSOR_EVAL_TO_H

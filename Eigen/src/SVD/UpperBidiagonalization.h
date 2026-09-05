@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BIDIAGONALIZATION_H
 #define EIGEN_BIDIAGONALIZATION_H
@@ -23,26 +24,26 @@ namespace internal {
 template <typename MatrixType_>
 class UpperBidiagonalization {
  public:
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
     ColsAtCompileTime = MatrixType::ColsAtCompileTime,
-    ColsAtCompileTimeMinusOne = internal::decrement_size<ColsAtCompileTime>::ret
+    ColsAtCompileTimeMinusOne = internal::decrement_size<ColsAtCompileTime>::value
   };
-  typedef typename MatrixType::Scalar Scalar;
-  typedef typename MatrixType::RealScalar RealScalar;
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
-  typedef Matrix<Scalar, 1, ColsAtCompileTime> RowVectorType;
-  typedef Matrix<Scalar, RowsAtCompileTime, 1> ColVectorType;
-  typedef BandMatrix<RealScalar, ColsAtCompileTime, ColsAtCompileTime, 1, 0, RowMajor> BidiagonalType;
-  typedef Matrix<Scalar, ColsAtCompileTime, 1> DiagVectorType;
-  typedef Matrix<Scalar, ColsAtCompileTimeMinusOne, 1> SuperDiagVectorType;
-  typedef HouseholderSequence<
-      const MatrixType, const internal::remove_all_t<typename Diagonal<const MatrixType, 0>::ConjugateReturnType> >
-      HouseholderUSequenceType;
-  typedef HouseholderSequence<const internal::remove_all_t<typename MatrixType::ConjugateReturnType>,
-                              Diagonal<const MatrixType, 1>, OnTheRight>
-      HouseholderVSequenceType;
+  using Scalar = typename MatrixType::Scalar;
+  using RealScalar = typename MatrixType::RealScalar;
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
+  using RowVectorType = Matrix<Scalar, 1, ColsAtCompileTime>;
+  using ColVectorType = Matrix<Scalar, RowsAtCompileTime, 1>;
+  using BidiagonalType = BandMatrix<RealScalar, ColsAtCompileTime, ColsAtCompileTime, 1, 0, RowMajor>;
+  using DiagVectorType = Matrix<Scalar, ColsAtCompileTime, 1>;
+  using SuperDiagVectorType = Matrix<Scalar, ColsAtCompileTimeMinusOne, 1>;
+  using HouseholderUSequenceType =
+      HouseholderSequence<const MatrixType,
+                          const internal::remove_all_t<typename Diagonal<const MatrixType, 0>::ConjugateReturnType>>;
+  using HouseholderVSequenceType =
+      HouseholderSequence<const internal::remove_all_t<typename MatrixType::ConjugateReturnType>,
+                          Diagonal<const MatrixType, 1>, OnTheRight>;
 
   /**
    * \brief Default Constructor.
@@ -50,7 +51,8 @@ class UpperBidiagonalization {
    * The default constructor is useful in cases in which the user intends to
    * perform decompositions via Bidiagonalization::compute(const MatrixType&).
    */
-  UpperBidiagonalization() : m_householder(), m_bidiagonal(0, 0), m_isInitialized(false) {}
+  UpperBidiagonalization()
+      : m_householder(), m_bidiagonal(m_householder.cols(), m_householder.cols()), m_isInitialized(false) {}
 
   explicit UpperBidiagonalization(const MatrixType& matrix)
       : m_householder(matrix.rows(), matrix.cols()),
@@ -93,12 +95,12 @@ template <typename MatrixType>
 void upperbidiagonalization_inplace_unblocked(MatrixType& mat, typename MatrixType::RealScalar* diagonal,
                                               typename MatrixType::RealScalar* upper_diagonal,
                                               typename MatrixType::Scalar* tempData = 0) {
-  typedef typename MatrixType::Scalar Scalar;
+  using Scalar = typename MatrixType::Scalar;
 
   Index rows = mat.rows();
   Index cols = mat.cols();
 
-  typedef Matrix<Scalar, Dynamic, 1, ColMajor, MatrixType::MaxRowsAtCompileTime, 1> TempType;
+  using TempType = Matrix<Scalar, Dynamic, 1, ColMajor, MatrixType::MaxRowsAtCompileTime, 1>;
   TempType tempVector;
   if (tempData == 0) {
     tempVector.resize(rows);
@@ -147,15 +149,15 @@ void upperbidiagonalization_blocked_helper(
     MatrixType& A, typename MatrixType::RealScalar* diagonal, typename MatrixType::RealScalar* upper_diagonal, Index bs,
     Ref<Matrix<typename MatrixType::Scalar, Dynamic, Dynamic, traits<MatrixType>::Flags & RowMajorBit> > X,
     Ref<Matrix<typename MatrixType::Scalar, Dynamic, Dynamic, traits<MatrixType>::Flags & RowMajorBit> > Y) {
-  typedef typename MatrixType::Scalar Scalar;
-  typedef typename MatrixType::RealScalar RealScalar;
-  typedef typename NumTraits<RealScalar>::Literal Literal;
+  using Scalar = typename MatrixType::Scalar;
+  using RealScalar = typename MatrixType::RealScalar;
+  using Literal = typename NumTraits<RealScalar>::Literal;
   static constexpr int StorageOrder = (traits<MatrixType>::Flags & RowMajorBit) ? RowMajor : ColMajor;
-  typedef InnerStride<StorageOrder == ColMajor ? 1 : Dynamic> ColInnerStride;
-  typedef InnerStride<StorageOrder == ColMajor ? Dynamic : 1> RowInnerStride;
-  typedef Ref<Matrix<Scalar, Dynamic, 1>, 0, ColInnerStride> SubColumnType;
-  typedef Ref<Matrix<Scalar, 1, Dynamic>, 0, RowInnerStride> SubRowType;
-  typedef Ref<Matrix<Scalar, Dynamic, Dynamic, StorageOrder> > SubMatType;
+  using ColInnerStride = InnerStride<StorageOrder == ColMajor ? 1 : Dynamic>;
+  using RowInnerStride = InnerStride<StorageOrder == ColMajor ? Dynamic : 1>;
+  using SubColumnType = Ref<Matrix<Scalar, Dynamic, 1>, 0, ColInnerStride>;
+  using SubRowType = Ref<Matrix<Scalar, 1, Dynamic>, 0, RowInnerStride>;
+  using SubMatType = Ref<Matrix<Scalar, Dynamic, Dynamic, StorageOrder>>;
 
   Index brows = A.rows();
   Index bcols = A.cols();
@@ -171,8 +173,10 @@ void upperbidiagonalization_blocked_helper(
 
     // 1 - update the k-th column of A
     SubColumnType v_k = A.col(k).tail(remainingRows);
-    v_k -= V_k1 * Y.row(k).head(k).adjoint();
-    if (k) v_k.noalias() -= X_k1 * A.col(k).head(k);
+    if (k) {
+      v_k.noalias() -= V_k1 * Y.row(k).head(k).adjoint();
+      v_k.noalias() -= X_k1 * A.col(k).head(k);
+    }
 
     // 2 - construct left Householder transform in-place
     v_k.makeHouseholderInPlace(tau_v, diagonal[k]);
@@ -181,7 +185,7 @@ void upperbidiagonalization_blocked_helper(
       SubMatType Y_k(Y.block(k + 1, 0, remainingCols, k + 1));
       SubMatType U_k1(A.block(0, k + 1, k, remainingCols));
 
-      // this eases the application of Householder transforAions
+      // this eases the application of Householder transformations
       // A(k,k) will store tau_v later
       A(k, k) = Scalar(1);
 
@@ -204,7 +208,7 @@ void upperbidiagonalization_blocked_helper(
       u_k = u_k.conjugate();
       {
         u_k.noalias() -= Y_k * A.row(k).head(k + 1).adjoint();
-        if (k) u_k -= U_k1.adjoint() * X.row(k).head(k).adjoint();
+        if (k) u_k.noalias() -= U_k1.adjoint() * X.row(k).head(k).adjoint();
       }
 
       // 5 - construct right Householder transform in-place
@@ -263,10 +267,10 @@ void upperbidiagonalization_blocked_helper(
  * Bidiagonal Form. by Jaeyoung Choi, Jack J. Dongarra, David W. Walker. (1995) section 3.3
  */
 template <typename MatrixType, typename BidiagType>
-void upperbidiagonalization_inplace_blocked(MatrixType& A, BidiagType& bidiagonal, Index maxBlockSize = 32,
+void upperbidiagonalization_inplace_blocked(MatrixType& A, BidiagType& bidiagonal, Index maxBlockSize = 16,
                                             typename MatrixType::Scalar* /*tempData*/ = 0) {
-  typedef typename MatrixType::Scalar Scalar;
-  typedef Block<MatrixType, Dynamic, Dynamic> BlockType;
+  using Scalar = typename MatrixType::Scalar;
+  using BlockType = Block<MatrixType, Dynamic, Dynamic>;
 
   Index rows = A.rows();
   Index cols = A.cols();
@@ -311,7 +315,7 @@ void upperbidiagonalization_inplace_blocked(MatrixType& A, BidiagType& bidiagona
     typename MatrixType::RealScalar* upper_diagonal_ptr =
         upper_diagonal.size() > 0 ? &upper_diagonal.coeffRef(k) : nullptr;
 
-    if (k + bs == cols || bcols < 48)  // somewhat arbitrary threshold
+    if (k + bs == cols || bcols < 2 * blockSize)  // fall back to unblocked for small trailing submatrices
     {
       upperbidiagonalization_inplace_unblocked(B, &(bidiagonal.template diagonal<0>().coeffRef(k)), upper_diagonal_ptr,
                                                X.data());

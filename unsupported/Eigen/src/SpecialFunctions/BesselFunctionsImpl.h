@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BESSEL_FUNCTIONS_H
 #define EIGEN_BESSEL_FUNCTIONS_H
@@ -43,14 +44,9 @@ namespace internal {
  * Implementation of Bessel function, based on Cephes                       *
  ****************************************************************************/
 
-template <typename Scalar>
-struct bessel_i0e_retval {
-  typedef Scalar type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_i0e {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -181,15 +177,24 @@ struct bessel_i0e_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_i0e<T>::run(x); }
 };
 
-template <typename Scalar>
-struct bessel_i0_retval {
-  typedef Scalar type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_i0 {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) {
-    return pmul(pexp(pabs(x)), generic_i0e<T, ScalarType>::run(x));
+    // Evaluating i0(x) = exp(|x|) * i0e(x) can prematurely cause intermediate overflow for large |x|
+    // i.e.  88.7228 < |x| <= 91.9008 for float
+    //      709.7827 < |x| <= 713.9869 for double
+    // Instead, use i0(x) = exp(|x|/2) * (exp(|x|/2) * i0e(x)).  Cutting |x| in half keeps the intermediate result
+    // finite for all finite results.
+    const T ax = pabs(x);
+    const T i0e = generic_i0e<T, ScalarType>::run(x);
+    const T half_exp = pexp(pmul(pset1<T>(ScalarType(0.5)), ax));
+    T scaled = pmul(half_exp, i0e);
+#if defined(__FAST_MATH__) || defined(__ASSOCIATIVE_MATH__) || EIGEN_COMP_NVHPC
+    // Unfortunately fast-math reassociates (exp(|x|/2) * exp(|x|/2)) * i0e(x) which reintroduces the overflow,
+    // so we need to tell it not to.
+    EIGEN_OPTIMIZATION_BARRIER(scaled)
+#endif
+    return pmul(half_exp, scaled);
   }
 };
 
@@ -198,14 +203,9 @@ struct bessel_i0_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_i0<T>::run(x); }
 };
 
-template <typename Scalar>
-struct bessel_i1e_retval {
-  typedef Scalar type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_i1e {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -337,15 +337,23 @@ struct bessel_i1e_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_i1e<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_i1_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_i1 {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T& x) {
-    return pmul(pexp(pabs(x)), generic_i1e<T, ScalarType>::run(x));
+    // Evaluating i1(x) = exp(|x|) * i1e(x) can prematurely cause intermediate overflow for large |x|
+    // i.e.  88.7228 < |x| <= 91.9063 for float
+    //      709.7827 < |x| <= 713.9876 for double
+    // Instead, use i1(x) = exp(|x|/2) * (exp(|x|/2) * i1e(x)).  Cutting |x| in half keeps the intermediate result
+    // finite for all finite results.
+    const T ax = pabs(x);
+    const T i1e = generic_i1e<T, ScalarType>::run(x);
+    const T half_exp = pexp(pmul(pset1<T>(ScalarType(0.5)), ax));
+    T scaled = pmul(half_exp, i1e);
+#if defined(__FAST_MATH__) || defined(__ASSOCIATIVE_MATH__) || EIGEN_COMP_NVHPC
+    // Reassociating back to (exp(|x|/2) * exp(|x|/2)) * i1e(x) would reintroduce the overflow.
+    EIGEN_OPTIMIZATION_BARRIER(scaled)
+#endif
+    return pmul(half_exp, scaled);
   }
 };
 
@@ -354,14 +362,9 @@ struct bessel_i1_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_i1<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_k0e_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_k0e {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -479,14 +482,9 @@ struct bessel_k0e_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_k0e<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_k0_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_k0 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -613,14 +611,9 @@ struct bessel_k0_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_k0<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_k1e_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_k1e {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -743,14 +736,9 @@ struct bessel_k1e_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_k1e<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_k1_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_k1 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -880,14 +868,9 @@ struct bessel_k1_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_k1<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_j0_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_j0 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -1031,7 +1014,7 @@ struct generic_j0<T, double> {
     const T DR1 = pset1<T>(5.78318596294678452118E0);
     const T DR2 = pset1<T>(3.04712623436620863991E1);
     const T SQ2OPI = pset1<T>(7.9788456080286535587989E-1); /* sqrt(2 / pi) */
-    const T NEG_PIO4 = pset1<T>(-0.7853981633974483096);    /* pi / 4 */
+    const T NEG_PIO4 = pset1<T>(-0.7853981633974483096);    /* -pi / 4 */
 
     T y = pabs(x);
     T z = pmul(y, y);
@@ -1054,14 +1037,9 @@ struct bessel_j0_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_j0<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_y0_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_y0 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -1228,14 +1206,9 @@ struct bessel_y0_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_y0<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_j1_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_j1 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -1307,7 +1280,7 @@ struct generic_j1<T, float> {
     T yn = pmadd(q, internal::ppolevl<T, 7>::run(w, PH1), NEG_THPIO4F);
     T y_gt_two = pmul(p, pcos(padd(yn, y)));
     // j1 is an odd function. This implementation differs from cephes to
-    // take this fact in to account. Cephes returns -j1(x) for y > 2 range.
+    // take this fact into account. Cephes returns -j1(x) for y > 2 range.
     y_gt_two = pselect(pcmp_lt(x, pset1<T>(0.0f)), pnegate(y_gt_two), y_gt_two);
     return pselect(pcmp_le(y, pset1<T>(2.0f)), y_le_two, y_gt_two);
   }
@@ -1382,7 +1355,7 @@ struct generic_j1<T, double> {
     p = pmadd(p, pcos(yn), pmul(w, pmul(q, psin(yn))));
     T y_gt_five = pmul(p, pmul(SQ2OPI, prsqrt(y)));
     // j1 is an odd function. This implementation differs from cephes to
-    // take this fact in to account. Cephes returns -j1(x) for y > 5 range.
+    // take this fact into account. Cephes returns -j1(x) for y > 5 range.
     y_gt_five = pselect(pcmp_lt(x, pset1<T>(0.0)), pnegate(y_gt_five), y_gt_five);
     return pselect(pcmp_le(y, pset1<T>(5.0)), y_le_five, y_gt_five);
   }
@@ -1393,14 +1366,9 @@ struct bessel_j1_impl {
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T x) { return generic_j1<T>::run(x); }
 };
 
-template <typename T>
-struct bessel_y1_retval {
-  typedef T type;
-};
-
 template <typename T, typename ScalarType = typename unpacket_traits<T>::type>
 struct generic_y1 {
-  EIGEN_STATIC_ASSERT((internal::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
+  EIGEN_STATIC_ASSERT((std::is_same<T, T>::value == false), THIS_TYPE_IS_NOT_SUPPORTED)
 
   EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE T run(const T&) { return ScalarType(0); }
 };
@@ -1572,62 +1540,62 @@ struct bessel_y1_impl {
 namespace numext {
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_i0, Scalar) bessel_i0(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_i0(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_i0, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_i0, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_i0e, Scalar) bessel_i0e(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_i0e(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_i0e, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_i0e, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_i1, Scalar) bessel_i1(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_i1(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_i1, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_i1, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_i1e, Scalar) bessel_i1e(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_i1e(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_i1e, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_i1e, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_k0, Scalar) bessel_k0(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_k0(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_k0, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_k0, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_k0e, Scalar) bessel_k0e(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_k0e(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_k0e, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_k0e, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_k1, Scalar) bessel_k1(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_k1(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_k1, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_k1, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_k1e, Scalar) bessel_k1e(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_k1e(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_k1e, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_k1e, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_j0, Scalar) bessel_j0(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_j0(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_j0, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_j0, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_y0, Scalar) bessel_y0(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_y0(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_y0, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_y0, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_j1, Scalar) bessel_j1(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_j1(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_j1, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_j1, Scalar)::run(x);
 }
 
 template <typename Scalar>
-EIGEN_DEVICE_FUNC inline EIGEN_MATHFUNC_RETVAL(bessel_y1, Scalar) bessel_y1(const Scalar& x) {
+EIGEN_DEVICE_FUNC inline auto bessel_y1(const Scalar& x) -> decltype(EIGEN_MATHFUNC_IMPL(bessel_y1, Scalar)::run(x)) {
   return EIGEN_MATHFUNC_IMPL(bessel_y1, Scalar)::run(x);
 }
 

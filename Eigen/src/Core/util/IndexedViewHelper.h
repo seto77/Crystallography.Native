@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_INDEXED_VIEW_HELPER_H
 #define EIGEN_INDEXED_VIEW_HELPER_H
@@ -24,7 +25,7 @@ struct all_t {};
 
 namespace placeholders {
 
-typedef symbolic::SymbolExpr<internal::symbolic_last_tag> last_t;
+using last_t = symbolic::SymbolExpr<internal::symbolic_last_tag>;
 
 /** \var last
  * \ingroup Core_Module
@@ -47,10 +48,9 @@ typedef symbolic::SymbolExpr<internal::symbolic_last_tag> last_t;
  */
 static constexpr const last_t last;
 
-typedef symbolic::AddExpr<symbolic::SymbolExpr<internal::symbolic_last_tag>,
-                          symbolic::ValueExpr<Eigen::internal::FixedInt<1>>>
-    lastp1_t;
-typedef Eigen::internal::all_t all_t;
+using lastp1_t = symbolic::AddExpr<symbolic::SymbolExpr<internal::symbolic_last_tag>,
+                                   symbolic::ValueExpr<Eigen::internal::FixedInt<1>>>;
+using all_t = Eigen::internal::all_t;
 
 /** \var lastp1
  * \ingroup Core_Module
@@ -250,10 +250,10 @@ class SingleRange {
 };
 
 template <typename T>
-struct is_single_range : public std::false_type {};
+struct is_single_range : std::false_type {};
 
 template <Index ValueAtCompileTime>
-struct is_single_range<SingleRange<ValueAtCompileTime>> : public std::true_type {};
+struct is_single_range<SingleRange<ValueAtCompileTime>> : std::true_type {};
 
 template <typename SingleIndex, int NestedSizeAtCompileTime>
 struct IndexedViewHelperIndicesWrapper<
@@ -434,9 +434,8 @@ struct VectorIndexedViewSelector<
   using ColMajorReturnType = IndexedView<Derived, IvcType<Indices, Derived::SizeAtCompileTime>, ZeroIndex>;
   using ConstColMajorReturnType = IndexedView<const Derived, IvcType<Indices, Derived::SizeAtCompileTime>, ZeroIndex>;
 
-  using ReturnType = typename internal::conditional<IsRowMajor, RowMajorReturnType, ColMajorReturnType>::type;
-  using ConstReturnType =
-      typename internal::conditional<IsRowMajor, ConstRowMajorReturnType, ConstColMajorReturnType>::type;
+  using ReturnType = std::conditional_t<IsRowMajor, RowMajorReturnType, ColMajorReturnType>;
+  using ConstReturnType = std::conditional_t<IsRowMajor, ConstRowMajorReturnType, ConstColMajorReturnType>;
 
   template <bool UseRowMajor = IsRowMajor, std::enable_if_t<UseRowMajor, bool> = true>
   static inline RowMajorReturnType run(Derived& derived, const Indices& indices) {

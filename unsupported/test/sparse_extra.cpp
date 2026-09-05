@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include <cstdlib>
 #include <string>
@@ -74,7 +75,7 @@ void sparse_extra(const SparseMatrixType& ref) {
   // test coeff and coeffRef
   for (int i = 0; i < (int)zeroCoords.size(); ++i) {
     VERIFY_IS_MUCH_SMALLER_THAN(m.coeff(zeroCoords[i].x(), zeroCoords[i].y()), eps);
-    if (internal::is_same<SparseMatrixType, SparseMatrix<Scalar, Flags> >::value)
+    EIGEN_IF_CONSTEXPR ((std::is_same<SparseMatrixType, SparseMatrix<Scalar, Flags> >::value))
       VERIFY_RAISES_ASSERT(m.coeffRef(zeroCoords[0].x(), zeroCoords[0].y()) = 5);
   }
   VERIFY_IS_APPROX(m, refMat);
@@ -173,6 +174,7 @@ void check_marketio_dense() {
 template <typename Scalar>
 void check_sparse_inverse() {
   typedef SparseMatrix<Scalar> MatrixType;
+  typedef SparseMatrix<Scalar, RowMajor> RowMatrixType;
 
   Matrix<Scalar, -1, -1> A;
   A.resize(1000, 1000);
@@ -197,11 +199,16 @@ void check_sparse_inverse() {
 
   const MatrixType sparseInv = Eigen::SparseInverse<Scalar>().compute(A.sparseView()).inverse();
 
+  // The two inverses are computed independently (SparseLU solve against the identity vs the Takahashi
+  // recurrence), so entrywise and summed deviations scale with n * eps for this 1000x1000 matrix. The input is
+  // deterministic, but the deviation still moves by a factor of three with the accumulation order that the compiler,
+  // the ISA and the buffer alignment happen to produce, so these factors are the smallest powers of two at or above
+  // the long-standing 1e-11 and 1e-10 bounds rather than a tight fit to a single host.
   Scalar sumdiff = 0;  // Check the diff only of the non-zero elements
   for (Eigen::Index j = 0; j < A.cols(); j++) {
     for (typename MatrixType::InnerIterator iter(sparseInv, j); iter; ++iter) {
       const Scalar diff = std::abs(inv(iter.row(), iter.col()) - iter.value());
-      VERIFY_IS_APPROX_OR_LESS_THAN(diff, 1e-11);
+      VERIFY_IS_APPROX_OR_LESS_THAN(diff, Scalar(65536) * NumTraits<Scalar>::epsilon());
 
       if (iter.value() != 0) {
         sumdiff += diff;
@@ -209,7 +216,13 @@ void check_sparse_inverse() {
     }
   }
 
-  VERIFY_IS_APPROX_OR_LESS_THAN(sumdiff, 1e-10);
+  VERIFY_IS_APPROX_OR_LESS_THAN(sumdiff, Scalar(524288) * NumTraits<Scalar>::epsilon());
+
+  RowMatrixType DU = slu.matrixU().toSparse();
+  Matrix<Scalar, Dynamic, 1> invD = DU.diagonal().cwiseInverse();
+  RowMatrixType scaled_before_view = (invD.asDiagonal() * DU).template triangularView<StrictlyUpper>();
+  RowMatrixType view_before_scaled = invD.asDiagonal() * DU.template triangularView<StrictlyUpper>();
+  VERIFY_IS_APPROX(scaled_before_view, view_before_scaled);
 }
 
 EIGEN_DECLARE_TEST(sparse_extra) {

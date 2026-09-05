@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 #ifndef METIS_SUPPORT_H
 #define METIS_SUPPORT_H
 
@@ -18,8 +19,8 @@ namespace Eigen {
  *
  * If A is the original matrix and Ap is the permuted matrix,
  * the fill-reducing permutation is defined as follows :
- * Row (column) i of A is the matperm(i) row (column) of Ap.
- * WARNING: As computed by METIS, this corresponds to the vector iperm (instead of perm)
+ * Row (column) i of Ap is the matperm(i) row (column) of A.
+ * WARNING: As computed by METIS, this corresponds to the vector perm (instead of iperm)
  */
 template <typename StorageIndex>
 class MetisOrdering {
@@ -100,7 +101,8 @@ class MetisOrdering {
     int output_error;
 
     // Call the fill-reducing routine from METIS
-    output_error = METIS_NodeND(&m, m_indexPtr.data(), m_innerIndices.data(), NULL, NULL, perm.data(), iperm.data());
+    output_error =
+        METIS_NodeND(&m, m_indexPtr.data(), m_innerIndices.data(), nullptr, nullptr, perm.data(), iperm.data());
 
     if (output_error != METIS_OK) {
       // FIXME The ordering interface should define a class of possible errors
@@ -117,7 +119,7 @@ class MetisOrdering {
   }
 
  protected:
-  IndexVector m_indexPtr;      // Pointer to the adjacenccy list of each row/column
+  IndexVector m_indexPtr;      // Pointer to the adjacency list of each row/column
   IndexVector m_innerIndices;  // Adjacency list
 };
 

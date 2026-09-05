@@ -9,6 +9,8 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
 
 /*****************************************************************
  * TensorScanSycl.h
@@ -34,8 +36,8 @@
  *1, no. 1 (2008): 1-17.
  *****************************************************************/
 
-#ifndef UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP
-#define UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP
+#ifndef UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP
+#define UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -131,7 +133,7 @@ struct ScanKernelFunctor {
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void operator()(cl::sycl::nd_item<1> itemID) const {
     for (Index loop_offset = 0; loop_offset < scanParameters.loop_range; loop_offset++) {
-      Index data_offset = (itemID.get_global_id(0) + (itemID.get_global_range(0) * loop_offset));
+      Index data_offset = itemID.get_global_id(0) + (itemID.get_global_range(0) * loop_offset);
       Index tmp = data_offset % scanParameters.panel_threads;
       const Index panel_id = data_offset / scanParameters.panel_threads;
       const Index group_id = tmp / scanParameters.group_threads;
@@ -149,7 +151,7 @@ struct ScanKernelFunctor {
       const Index group_offset = group_id * scanParameters.non_scan_stride;
       // This will be effective when the size is bigger than elements_per_block
       const Index block_offset = block_id * scanParameters.elements_per_block * scanParameters.scan_stride;
-      const Index thread_offset = (ScanParameters<Index>::ScanPerThread * local_id * scanParameters.scan_stride);
+      const Index thread_offset = ScanParameters<Index>::ScanPerThread * local_id * scanParameters.scan_stride;
       const Index global_offset = panel_offset + group_offset + block_offset + thread_offset;
       Index next_elements = 0;
       EIGEN_UNROLL_LOOP
@@ -224,7 +226,7 @@ struct ScanKernelFunctor {
       itemID.barrier(cl::sycl::access::fence_space::local_space);
       // next step optimisation
       if (local_id == 0) {
-        if (((scanParameters.elements_per_group / scanParameters.elements_per_block) > 1)) {
+        if ((scanParameters.elements_per_group / scanParameters.elements_per_block) > 1) {
           const Index temp_id = panel_id * (scanParameters.elements_per_group / scanParameters.elements_per_block) *
                                     scanParameters.non_scan_size +
                                 group_id * (scanParameters.elements_per_group / scanParameters.elements_per_block) +
@@ -301,7 +303,7 @@ struct ScanAdjustmentKernelFunctor {
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void operator()(cl::sycl::nd_item<1> itemID) const {
     for (Index loop_offset = 0; loop_offset < scanParameters.loop_range; loop_offset++) {
-      Index data_offset = (itemID.get_global_id(0) + (itemID.get_global_range(0) * loop_offset));
+      Index data_offset = itemID.get_global_id(0) + (itemID.get_global_range(0) * loop_offset);
       Index tmp = data_offset % scanParameters.panel_threads;
       const Index panel_id = data_offset / scanParameters.panel_threads;
       const Index group_id = tmp / scanParameters.group_threads;
@@ -390,7 +392,7 @@ struct ScanInfo {
 #endif
     global_range = roundUp(max_threads, local_range);
     loop_range = Index(
-        std::ceil(double(elements_per_panel * panel_size) / (global_range * ScanParameters<Index>::ScanPerThread)));
+        numext::ceil(double(elements_per_panel * panel_size) / (global_range * ScanParameters<Index>::ScanPerThread)));
   }
   inline ScanParameters<Index> get_scan_parameter() {
     return ScanParameters<Index>(total_size, non_scan_size, scan_size, non_scan_stride, scan_stride, panel_threads,
@@ -478,7 +480,7 @@ struct ScanLauncher<Self, Reducer, Eigen::SyclDevice, vectorize> {
 
     Index non_scan_size = 1;
     Index panel_size = 1;
-    if (static_cast<int>(Self::Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Self::Layout) == static_cast<int>(ColMajor)) {
       for (int i = 0; i < consume_dim; i++) {
         non_scan_size *= dims[i];
       }
@@ -503,4 +505,4 @@ struct ScanLauncher<Self, Reducer, Eigen::SyclDevice, vectorize> {
 }  // namespace internal
 }  // namespace Eigen
 
-#endif  // UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP
+#endif  // UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_SYCL_SYCL_HPP

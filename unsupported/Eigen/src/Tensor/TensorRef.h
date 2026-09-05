@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_REF_H
-#define EIGEN_CXX11_TENSOR_TENSOR_REF_H
+#ifndef EIGEN_TENSOR_TENSOR_REF_H
+#define EIGEN_TENSOR_TENSOR_REF_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -20,8 +21,8 @@ namespace internal {
 template <typename Dimensions, typename Scalar>
 class TensorLazyBaseEvaluator {
  public:
-  TensorLazyBaseEvaluator() : m_refcount(0) {}
-  virtual ~TensorLazyBaseEvaluator() {}
+  TensorLazyBaseEvaluator() = default;
+  virtual ~TensorLazyBaseEvaluator() = default;
 
   EIGEN_DEVICE_FUNC virtual const Dimensions& dimensions() const = 0;
   EIGEN_DEVICE_FUNC virtual const Scalar* data() const = 0;
@@ -34,11 +35,10 @@ class TensorLazyBaseEvaluator {
   int refCount() const { return m_refcount; }
 
  private:
-  // No copy, no assignment;
-  TensorLazyBaseEvaluator(const TensorLazyBaseEvaluator& other);
-  TensorLazyBaseEvaluator& operator=(const TensorLazyBaseEvaluator& other);
+  TensorLazyBaseEvaluator(const TensorLazyBaseEvaluator& other) = delete;
+  TensorLazyBaseEvaluator& operator=(const TensorLazyBaseEvaluator& other) = delete;
 
-  int m_refcount;
+  int m_refcount = 0;
 };
 
 template <typename Dimensions, typename Expr, typename Device>
@@ -50,7 +50,7 @@ class TensorLazyEvaluatorReadOnly
   typedef typename Storage::Type EvaluatorPointerType;
   typedef TensorEvaluator<Expr, Device> EvalType;
 
-  TensorLazyEvaluatorReadOnly(const Expr& expr, const Device& device) : m_impl(expr, device), m_dummy(Scalar(0)) {
+  TensorLazyEvaluatorReadOnly(const Expr& expr, const Device& device) : m_impl(expr, device), m_dummy() {
     EIGEN_STATIC_ASSERT(
         internal::array_size<Dimensions>::value == internal::array_size<typename EvalType::Dimensions>::value,
         "Dimension sizes must match.");
@@ -58,7 +58,7 @@ class TensorLazyEvaluatorReadOnly
     for (std::size_t i = 0; i < m_dims.size(); ++i) {
       m_dims[i] = other_dims[i];
     }
-    m_impl.evalSubExprsIfNeeded(NULL);
+    m_impl.evalSubExprsIfNeeded(nullptr);
   }
   virtual ~TensorLazyEvaluatorReadOnly() { m_impl.cleanup(); }
 
@@ -69,7 +69,7 @@ class TensorLazyEvaluatorReadOnly
   EIGEN_DEVICE_FUNC virtual Scalar& coeffRef(DenseIndex /*index*/) {
     eigen_assert(false && "can't reference the coefficient of a rvalue");
     return m_dummy;
-  };
+  }
 
  protected:
   TensorEvaluator<Expr, Device> m_impl;
@@ -86,7 +86,7 @@ class TensorLazyEvaluatorWritable : public TensorLazyEvaluatorReadOnly<Dimension
   typedef typename Storage::Type EvaluatorPointerType;
 
   TensorLazyEvaluatorWritable(const Expr& expr, const Device& device) : Base(expr, device) {}
-  virtual ~TensorLazyEvaluatorWritable() {}
+  virtual ~TensorLazyEvaluatorWritable() = default;
 
   EIGEN_DEVICE_FUNC virtual Scalar& coeffRef(DenseIndex index) { return this->m_impl.coeffRef(index); }
 };
@@ -101,7 +101,7 @@ class TensorLazyEvaluator : public std::conditional_t<IsWritable, TensorLazyEval
   typedef typename Base::Scalar Scalar;
 
   TensorLazyEvaluator(const Expr& expr, const Device& device) : Base(expr, device) {}
-  virtual ~TensorLazyEvaluator() {}
+  virtual ~TensorLazyEvaluator() = default;
 };
 
 template <typename Derived>
@@ -109,7 +109,7 @@ class TensorRefBase : public TensorBase<Derived> {
  public:
   typedef typename traits<Derived>::PlainObjectType PlainObjectType;
   typedef typename PlainObjectType::Base Base;
-  typedef typename Eigen::internal::nested<Derived>::type Nested;
+  typedef typename Eigen::internal::ref_selector<Derived>::type Nested;
   typedef typename traits<PlainObjectType>::StorageKind StorageKind;
   typedef typename traits<PlainObjectType>::Index Index;
   typedef typename traits<PlainObjectType>::Scalar Scalar;
@@ -135,7 +135,7 @@ class TensorRefBase : public TensorBase<Derived> {
   typedef TensorBlockNotImplemented TensorBlock;
   //===------------------------------------------------------------------===//
 
-  EIGEN_STRONG_INLINE TensorRefBase() : m_evaluator(NULL) {}
+  EIGEN_STRONG_INLINE TensorRefBase() = default;
 
   TensorRefBase(const TensorRefBase& other) : TensorBase<Derived>(other), m_evaluator(other.m_evaluator) {
     eigen_assert(m_evaluator->refCount() > 0);
@@ -184,8 +184,9 @@ class TensorRefBase : public TensorBase<Derived> {
 
   template <typename... IndexTypes>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar operator()(Index firstIndex, IndexTypes... otherIndices) const {
-    const std::size_t num_indices = (sizeof...(otherIndices) + 1);
-    const array<Index, num_indices> indices{{firstIndex, otherIndices...}};
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    const std::size_t num_indices = sizeof...(otherIndices) + 1;
+    const array<Index, num_indices> indices{{firstIndex, static_cast<Index>(otherIndices)...}};
     return coeff(indices);
   }
 
@@ -193,7 +194,7 @@ class TensorRefBase : public TensorBase<Derived> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar coeff(const array<Index, NumIndices>& indices) const {
     const Dimensions& dims = this->dimensions();
     Index index = 0;
-    if (PlainObjectType::Options & RowMajor) {
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
       index += indices[0];
       for (size_t i = 1; i < NumIndices; ++i) {
         index = index * dims[i] + indices[i];
@@ -224,13 +225,13 @@ class TensorRefBase : public TensorBase<Derived> {
     }
   }
 
-  TensorLazyBaseEvaluator<Dimensions, Scalar>* m_evaluator;
+  TensorLazyBaseEvaluator<Dimensions, Scalar>* m_evaluator = nullptr;
 };
 
 }  // namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief A reference to a tensor expression
  * The expression will be evaluated lazily (as much as possible).
@@ -243,10 +244,13 @@ class TensorRef : public internal::TensorRefBase<TensorRef<PlainObjectType>> {
  public:
   using Scalar = typename Base::Scalar;
   using Dimensions = typename Base::Dimensions;
+  // Without this, unqualified Index below does not find the dependent base's typedef and resolves to Eigen::Index,
+  // giving the accessors a different index type than the rest of the class.
+  using Index = typename Base::Index;
 
-  EIGEN_STRONG_INLINE TensorRef() : Base() {}
+  EIGEN_STRONG_INLINE TensorRef() = default;
 
-  EIGEN_STRONG_INLINE TensorRef(const TensorRef& other) : Base(other) {}
+  EIGEN_STRONG_INLINE TensorRef(const TensorRef& other) = default;
 
   template <typename Expression>
   EIGEN_STRONG_INLINE TensorRef(const Expression& expr) : Base(expr) {
@@ -267,8 +271,9 @@ class TensorRef : public internal::TensorRefBase<TensorRef<PlainObjectType>> {
 
   template <typename... IndexTypes>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar& coeffRef(Index firstIndex, IndexTypes... otherIndices) {
-    const std::size_t num_indices = (sizeof...(otherIndices) + 1);
-    const array<Index, num_indices> indices{{firstIndex, otherIndices...}};
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    const std::size_t num_indices = sizeof...(otherIndices) + 1;
+    const array<Index, num_indices> indices{{firstIndex, static_cast<Index>(otherIndices)...}};
     return coeffRef(indices);
   }
 
@@ -276,7 +281,7 @@ class TensorRef : public internal::TensorRefBase<TensorRef<PlainObjectType>> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar& coeffRef(const array<Index, NumIndices>& indices) {
     const Dimensions& dims = this->dimensions();
     Index index = 0;
-    if (PlainObjectType::Options & RowMajor) {
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
       index += indices[0];
       for (size_t i = 1; i < NumIndices; ++i) {
         index = index * dims[i] + indices[i];
@@ -294,7 +299,7 @@ class TensorRef : public internal::TensorRefBase<TensorRef<PlainObjectType>> {
 };
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief A reference to a constant tensor expression
  * The expression will be evaluated lazily (as much as possible).
@@ -305,9 +310,9 @@ class TensorRef<const PlainObjectType> : public internal::TensorRefBase<TensorRe
   typedef internal::TensorRefBase<TensorRef<const PlainObjectType>> Base;
 
  public:
-  EIGEN_STRONG_INLINE TensorRef() : Base() {}
+  EIGEN_STRONG_INLINE TensorRef() = default;
 
-  EIGEN_STRONG_INLINE TensorRef(const TensorRef& other) : Base(other) {}
+  EIGEN_STRONG_INLINE TensorRef(const TensorRef& other) = default;
 
   template <typename Expression>
   EIGEN_STRONG_INLINE TensorRef(const Expression& expr) : Base(expr) {}
@@ -387,4 +392,4 @@ struct TensorEvaluator<TensorRef<Derived>, Device> : public TensorEvaluator<cons
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_REF_H
+#endif  // EIGEN_TENSOR_TENSOR_REF_H

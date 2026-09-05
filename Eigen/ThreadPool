@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_THREADPOOL_MODULE_H
 #define EIGEN_THREADPOOL_MODULE_H
@@ -16,9 +17,8 @@
 
 /** \defgroup ThreadPool_Module ThreadPool Module
  *
- * This module provides 2 threadpool implementations
- *  - a simple reference implementation
- *  - a faster non blocking implementation
+ * This module provides a non blocking threadpool implementation, Eigen::ThreadPoolTempl, together with the
+ * Eigen::ThreadPool alias for its default thread environment.
  *
  * \code
  * #include <Eigen/ThreadPool>
@@ -64,7 +64,6 @@
 // IWYU pragma: begin_exports
 #include "src/ThreadPool/ThreadLocal.h"
 #include "src/ThreadPool/ThreadYield.h"
-#include "src/ThreadPool/ThreadCancel.h"
 #include "src/ThreadPool/EventCount.h"
 #include "src/ThreadPool/RunQueue.h"
 #include "src/ThreadPool/ThreadPoolInterface.h"

@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MATHFUNCTIONSIMPL_H
 #define EIGEN_MATHFUNCTIONSIMPL_H
@@ -92,7 +93,7 @@ struct generic_rsqrt_newton_step {
       inv_sqrt = pmadd(half_r, h_n, inv_sqrt);
     }
 
-    // If x is NaN, then either:
+    // If inv_sqrt is NaN, then either:
     // 1) the input is NaN
     // 2) zero and infinity were multiplied
     // In either of these cases, return approx_rsqrt
@@ -150,7 +151,7 @@ struct generic_sqrt_newton_step {
 template <typename RealScalar>
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE RealScalar positive_real_hypot(const RealScalar& x,
                                                                                const RealScalar& y) {
-  // IEEE IEC 6059 special cases.
+  // IEEE IEC 60559 special cases.
   if ((numext::isinf)(x) || (numext::isinf)(y)) return NumTraits<RealScalar>::infinity();
   if ((numext::isnan)(x) || (numext::isnan)(y)) return NumTraits<RealScalar>::quiet_NaN();
 
@@ -163,10 +164,9 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE RealScalar positive_real_hypot(c
 
 template <typename Scalar>
 struct hypot_impl {
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
   static EIGEN_DEVICE_FUNC inline RealScalar run(const Scalar& x, const Scalar& y) {
-    EIGEN_USING_STD(abs);
-    return positive_real_hypot<RealScalar>(abs(x), abs(y));
+    return positive_real_hypot<RealScalar>(numext::abs(x), numext::abs(y));
   }
 };
 

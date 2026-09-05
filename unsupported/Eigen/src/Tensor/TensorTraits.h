@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_TRAITS_H
-#define EIGEN_CXX11_TENSOR_TENSOR_TRAITS_H
+#ifndef EIGEN_TENSOR_TENSOR_TRAITS_H
+#define EIGEN_TENSOR_TENSOR_TRAITS_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -16,30 +17,32 @@
 namespace Eigen {
 namespace internal {
 
-template <typename Scalar, int Options>
-class compute_tensor_flags {
+template <int Options>
+struct tensor_alignment_for_options {
   enum {
     is_dynamic_size_storage = 1,
 
-    is_aligned = (((Options & DontAlign) == 0) && (
+    value = (((Options & DontAlign) == 0) && (
 #if EIGEN_MAX_STATIC_ALIGN_BYTES > 0
-                                                      (!is_dynamic_size_storage)
+                                                 (!is_dynamic_size_storage)
 #else
-                                                      0
+                                                 0
 #endif
-                                                      |
+                                                 |
 #if EIGEN_MAX_ALIGN_BYTES > 0
-                                                      is_dynamic_size_storage
+                                                 is_dynamic_size_storage
 #else
-                                                      0
+                                                 0
 #endif
-                                                      )),
-    packet_access_bit = packet_traits<Scalar>::Vectorizable && is_aligned ? PacketAccessBit : 0
+                                                 ))
   };
-
- public:
-  enum { ret = packet_access_bit };
 };
+
+template <typename Scalar, int Options>
+struct compute_tensor_flags
+    : std::integral_constant<int, packet_traits<Scalar>::Vectorizable && tensor_alignment_for_options<Options>::value
+                                      ? PacketAccessBit
+                                      : 0> {};
 
 template <typename Scalar_, int NumIndices_, int Options_, typename IndexType_>
 struct traits<Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {
@@ -50,7 +53,7 @@ struct traits<Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {
   static constexpr int Layout = Options_ & RowMajor ? RowMajor : ColMajor;
   enum {
     Options = Options_,
-    Flags = compute_tensor_flags<Scalar_, Options_>::ret | (is_const<Scalar_>::value ? 0 : LvalueBit)
+    Flags = compute_tensor_flags<Scalar_, Options_>::value | (std::is_const<Scalar_>::value ? 0 : LvalueBit)
   };
   template <typename T>
   struct MakePointer {
@@ -68,7 +71,7 @@ struct traits<TensorFixedSize<Scalar_, Dimensions, Options_, IndexType_> > {
   static constexpr int Layout = Options_ & RowMajor ? RowMajor : ColMajor;
   enum {
     Options = Options_,
-    Flags = compute_tensor_flags<Scalar_, Options_>::ret | (is_const<Scalar_>::value ? 0 : LvalueBit)
+    Flags = compute_tensor_flags<Scalar_, Options_>::value | (std::is_const<Scalar_>::value ? 0 : LvalueBit)
   };
   template <typename T>
   struct MakePointer {
@@ -88,9 +91,7 @@ struct traits<TensorMap<PlainObjectType, Options_, MakePointer_> > : public trai
   enum { Options = Options_, Flags = BaseTraits::Flags };
   template <class T>
   struct MakePointer {
-    // Intermediate typedef to workaround MSVC issue.
-    typedef MakePointer_<T> MakePointerT;
-    typedef typename MakePointerT::Type Type;
+    typedef typename MakePointer_<T>::Type Type;
   };
   typedef typename MakePointer<Scalar>::Type PointerType;
 };
@@ -148,41 +149,33 @@ struct eval<const TensorRef<PlainObjectType>, Eigen::Dense> {
   typedef const TensorRef<PlainObjectType> EIGEN_DEVICE_REF type;
 };
 
-// TODO: nested<> does not exist anymore in Eigen/Core, and should be removed in favor of ref_selector.
-template <typename T, int n = 1, typename PlainObject = void>
-struct nested {
-  typedef typename ref_selector<T>::type type;
+template <typename T>
+struct tensor_ref_selector {
+  typedef const T EIGEN_DEVICE_REF type;
+  typedef T EIGEN_DEVICE_REF non_const_type;
 };
 
 template <typename Scalar_, int NumIndices_, int Options_, typename IndexType_>
-struct nested<Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {
-  typedef const Tensor<Scalar_, NumIndices_, Options_, IndexType_> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<Tensor<Scalar_, NumIndices_, Options_, IndexType_> >
+    : tensor_ref_selector<Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {};
 
 template <typename Scalar_, int NumIndices_, int Options_, typename IndexType_>
-struct nested<const Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {
-  typedef const Tensor<Scalar_, NumIndices_, Options_, IndexType_> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<const Tensor<Scalar_, NumIndices_, Options_, IndexType_> >
+    : tensor_ref_selector<const Tensor<Scalar_, NumIndices_, Options_, IndexType_> > {};
 
 template <typename Scalar_, typename Dimensions, int Options, typename IndexType_>
-struct nested<TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> > {
-  typedef const TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> >
+    : tensor_ref_selector<TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> > {};
 
 template <typename Scalar_, typename Dimensions, int Options, typename IndexType_>
-struct nested<const TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> > {
-  typedef const TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<const TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> >
+    : tensor_ref_selector<const TensorFixedSize<Scalar_, Dimensions, Options, IndexType_> > {};
 
 template <typename PlainObjectType>
-struct nested<TensorRef<PlainObjectType> > {
-  typedef const TensorRef<PlainObjectType> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<TensorRef<PlainObjectType> > : tensor_ref_selector<TensorRef<PlainObjectType> > {};
 
 template <typename PlainObjectType>
-struct nested<const TensorRef<PlainObjectType> > {
-  typedef const TensorRef<PlainObjectType> EIGEN_DEVICE_REF type;
-};
+struct ref_selector<const TensorRef<PlainObjectType> > : tensor_ref_selector<const TensorRef<PlainObjectType> > {};
 
 }  // end namespace internal
 
@@ -216,7 +209,7 @@ struct nested<const TensorRef<PlainObjectType> > {
 // needed.  The number of padded rows and columns are computed as:
 //   Pr = ((R' - 1) * S + K - R) / 2
 //   Pc = ((C' - 1) * S + K - C) / 2
-// when the stride is 1, we have the simplified case R'=R, C'=C, Pr=Pc=(K-1)/2.
+// When the stride is 1, we have the simplified case R'=R, C'=C, Pr=Pc=(K-1)/2.
 // This is where SAME comes from - the output has the same size as the input has.
 // When Padding = VALID: the output size is computed as
 //   R' = ceil(float(R - K + 1) / float(S))
@@ -229,4 +222,4 @@ enum PaddingType { PADDING_VALID = 1, PADDING_SAME = 2 };
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_TRAITS_H
+#endif  // EIGEN_TENSOR_TENSOR_TRAITS_H

@@ -30,6 +30,7 @@
  *    LAPACKE_?geqp3 function.
  ********************************************************************************
 */
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef EIGEN_COLPIVOTINGHOUSEHOLDERQR_LAPACKE_H
 #define EIGEN_COLPIVOTINGHOUSEHOLDERQR_LAPACKE_H
@@ -70,7 +71,7 @@ struct ColPivHouseholderQR_LAPACKE_impl {
   typedef typename MatrixType::Scalar Scalar;
   typedef typename MatrixType::RealScalar RealScalar;
   typedef typename internal::lapacke_helpers::translate_type_imp<Scalar>::type LapackeType;
-  static constexpr int LapackeStorage = MatrixType::IsRowMajor ? (LAPACK_ROW_MAJOR) : (LAPACK_COL_MAJOR);
+  static constexpr int LapackeStorage = MatrixType::IsRowMajor ? LAPACK_ROW_MAJOR : LAPACK_COL_MAJOR;
 
   typedef typename internal::plain_diag_type<MatrixType>::type HCoeffsType;
   typedef PermutationMatrix<Dynamic, Dynamic, lapack_int> PermutationType;
@@ -106,7 +107,7 @@ struct ColPivHouseholderQR_LAPACKE_impl {
     colsPermutation.indices().array() -= 1;
     det_p = colsPermutation.determinant();
     isInitialized = true;
-  };
+  }
 
   static void init(Index rows, Index cols, HCoeffsType& hCoeffs, PermutationType& colsPermutation,
                    bool& usePrescribedThreshold, bool& isInitialized) {
@@ -156,6 +157,10 @@ COLPIVQR_LAPACKE(MatrixXfR)
 COLPIVQR_LAPACKE(MatrixXdR)
 COLPIVQR_LAPACKE(MatrixXcfR)
 COLPIVQR_LAPACKE(MatrixXcdR)
+
+#undef COLPIVQR_LAPACKE
+#undef COLPIVQR_LAPACKE_INIT
+#undef COLPIVQR_LAPACKE_COMPUTEINPLACE
 
 #endif
 }  // end namespace Eigen

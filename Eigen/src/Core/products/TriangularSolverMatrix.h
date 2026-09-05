@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_TRIANGULAR_SOLVER_MATRIX_H
 #define EIGEN_TRIANGULAR_SOLVER_MATRIX_H
@@ -23,6 +24,12 @@ template <typename Scalar, typename Index, int Mode, bool Conjugate, int TriStor
 struct trsmKernelL {
   // Generic Implementation of triangular solve for triangular matrix on left and multiple rhs.
   // Handles non-packed matrices.
+  //
+  // A lower-triangular panel is addressed from its top-left element with indices in [0, size);
+  // an upper-triangular one is addressed from its bottom-right element with indices in
+  // (-size, 0]. Both origins are elements of the panel, so callers never form a pointer outside
+  // the matrix they solve in. The AVX-512 specializations take both by the top-left element and
+  // convert when they delegate here.
   static void kernel(Index size, Index otherSize, const Scalar* _tri, Index triStride, Scalar* _other, Index otherIncr,
                      Index otherStride);
 };
@@ -42,8 +49,8 @@ EIGEN_STRONG_INLINE void trsmKernelL<Scalar, Index, Mode, Conjugate, TriStorageO
                                      Specialized>::kernel(Index size, Index otherSize, const Scalar* _tri,
                                                           Index triStride, Scalar* _other, Index otherIncr,
                                                           Index otherStride) {
-  typedef const_blas_data_mapper<Scalar, Index, TriStorageOrder> TriMapper;
-  typedef blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride> OtherMapper;
+  using TriMapper = const_blas_data_mapper<Scalar, Index, TriStorageOrder>;
+  using OtherMapper = blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride>;
   TriMapper tri(_tri, triStride);
   OtherMapper other(_other, otherStride, otherIncr);
 
@@ -53,13 +60,13 @@ EIGEN_STRONG_INLINE void trsmKernelL<Scalar, Index, Mode, Conjugate, TriStorageO
   // tr solve
   for (Index k = 0; k < size; ++k) {
     // TODO: write a small kernel handling this (can be shared with trsv)
-    Index i = IsLower ? k : -k - 1;
+    Index i = IsLower ? k : -k;
     Index rs = size - k - 1;  // remaining size
     Index s = TriStorageOrder == RowMajor ? (IsLower ? 0 : i + 1) : IsLower ? i + 1 : i - rs;
 
     Scalar a = (Mode & UnitDiag) ? Scalar(1) : Scalar(Scalar(1) / conj(tri(i, i)));
     for (Index j = 0; j < otherSize; ++j) {
-      if (TriStorageOrder == RowMajor) {
+      EIGEN_IF_CONSTEXPR (TriStorageOrder == RowMajor) {
         Scalar b(0);
         const Scalar* l = &tri(i, s);
         typename OtherMapper::LinearMapper r = other.getLinearMapper(s, j);
@@ -84,20 +91,20 @@ EIGEN_STRONG_INLINE void trsmKernelR<Scalar, Index, Mode, Conjugate, TriStorageO
                                      Specialized>::kernel(Index size, Index otherSize, const Scalar* _tri,
                                                           Index triStride, Scalar* _other, Index otherIncr,
                                                           Index otherStride) {
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-  typedef blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride> LhsMapper;
-  typedef const_blas_data_mapper<Scalar, Index, TriStorageOrder> RhsMapper;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using LhsMapper = blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride>;
+  using RhsMapper = const_blas_data_mapper<Scalar, Index, TriStorageOrder>;
   LhsMapper lhs(_other, otherStride, otherIncr);
   RhsMapper rhs(_tri, triStride);
 
-  enum { RhsStorageOrder = TriStorageOrder, IsLower = (Mode & Lower) == Lower };
+  enum { IsLower = (Mode & Lower) == Lower };
   conj_if<Conjugate> conj;
 
   for (Index k = 0; k < size; ++k) {
     Index j = IsLower ? size - k - 1 : k;
 
     typename LhsMapper::LinearMapper r = lhs.getLinearMapper(0, j);
-    EIGEN_IF_CONSTEXPR(OtherInnerStride == 1 && packet_traits<Scalar>::Vectorizable) {
+    EIGEN_IF_CONSTEXPR (OtherInnerStride == 1 && packet_traits<Scalar>::Vectorizable) {
       using Packet = typename packet_traits<Scalar>::type;
       constexpr Index PS = unpacket_traits<Packet>::size;
       // Unrolled k3 loop by 4 to reduce r load/store traffic.
@@ -143,7 +150,7 @@ EIGEN_STRONG_INLINE void trsmKernelR<Scalar, Index, Mode, Conjugate, TriStorageO
         for (; i < otherSize; ++i) r(i) -= a(i) * b;
       }
       // Vectorized diagonal scaling.
-      EIGEN_IF_CONSTEXPR((Mode & UnitDiag) == 0) {
+      EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) == 0) {
         Scalar inv_rjj = RealScalar(1) / conj(rhs(j, j));
         Packet pinv = pset1<Packet>(inv_rjj);
         Index i = 0;
@@ -152,14 +159,13 @@ EIGEN_STRONG_INLINE void trsmKernelR<Scalar, Index, Mode, Conjugate, TriStorageO
         }
         for (; i < otherSize; ++i) r(i) *= inv_rjj;
       }
-    }
-    else {
+    } else {
       for (Index k3 = 0; k3 < k; ++k3) {
         Scalar b = conj(rhs(IsLower ? j + 1 + k3 : k3, j));
         typename LhsMapper::LinearMapper a = lhs.getLinearMapper(0, IsLower ? j + 1 + k3 : k3);
         for (Index i = 0; i < otherSize; ++i) r(i) -= a(i) * b;
       }
-      EIGEN_IF_CONSTEXPR((Mode & UnitDiag) == 0) {
+      EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) == 0) {
         Scalar inv_rjj = RealScalar(1) / conj(rhs(j, j));
         for (Index i = 0; i < otherSize; ++i) r(i) *= inv_rjj;
       }
@@ -201,8 +207,8 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheLeft, Mode, C
 
 #if defined(EIGEN_VECTORIZE_AVX512) && defined(EIGEN_USE_AVX512_TRSM_L_KERNELS) && EIGEN_USE_AVX512_TRSM_L_KERNELS && \
     EIGEN_ENABLE_AVX512_NOCOPY_TRSM_L_CUTOFFS
-  EIGEN_IF_CONSTEXPR(
-      (OtherInnerStride == 1 && (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
+  EIGEN_IF_CONSTEXPR ((OtherInnerStride == 1 &&
+                       (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
     // Very rough cutoffs to determine when to call trsm w/o packing
     // For small problem sizes trsmKernel compiled with clang is generally faster.
     // TODO: Investigate better heuristics for cutoffs.
@@ -215,12 +221,12 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheLeft, Mode, C
   }
 #endif
 
-  typedef const_blas_data_mapper<Scalar, Index, TriStorageOrder> TriMapper;
-  typedef blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride> OtherMapper;
+  using TriMapper = const_blas_data_mapper<Scalar, Index, TriStorageOrder>;
+  using OtherMapper = blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride>;
   TriMapper tri(_tri, triStride);
   OtherMapper other(_other, otherStride, otherIncr);
 
-  typedef gebp_traits<Scalar, Scalar> Traits;
+  using Traits = gebp_traits<Scalar, Scalar>;
 
   enum { SmallPanelWidth = plain_enum_max(Traits::mr, Traits::nr), IsLower = (Mode & Lower) == Lower };
 
@@ -239,7 +245,7 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheLeft, Mode, C
       pack_lhs;
   gemm_pack_rhs<Scalar, Index, OtherMapper, Traits::nr, ColMajor, false, true> pack_rhs;
 
-  // the goal here is to subdivise the Rhs panels such that we keep some cache
+  // the goal here is to subdivide the Rhs panels such that we keep some cache
   // coherence when accessing the rhs elements
   Index subcols = cols > 0 ? l2 / (4 * sizeof(Scalar) * std::max<Index>(otherStride, size)) : 0;
   subcols = std::max<Index>((subcols / Traits::nr) * Traits::nr, Traits::nr);
@@ -267,16 +273,16 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheLeft, Mode, C
         Index actualPanelWidth = std::min<Index>(actual_kc - k1, SmallPanelWidth);
         // tr solve
         {
-          Index i = IsLower ? k2 + k1 : k2 - k1;
+          Index i = IsLower ? k2 + k1 : k2 - k1 - 1;
 #if defined(EIGEN_VECTORIZE_AVX512) && defined(EIGEN_USE_AVX512_TRSM_L_KERNELS) && EIGEN_USE_AVX512_TRSM_L_KERNELS
-          EIGEN_IF_CONSTEXPR(
-              (OtherInnerStride == 1 && (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
+          EIGEN_IF_CONSTEXPR ((OtherInnerStride == 1 &&
+                               (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
             i = IsLower ? k2 + k1 : k2 - k1 - actualPanelWidth;
           }
 #endif
           trsmKernelL<Scalar, Index, Mode, Conjugate, TriStorageOrder, OtherInnerStride, /*Specialized=*/true>::kernel(
               actualPanelWidth, actual_cols, _tri + i + (i)*triStride, triStride,
-              _other + i * OtherInnerStride + j2 * otherStride, otherIncr, otherStride);
+              _other + i * otherIncr + j2 * otherStride, otherIncr, otherStride);
         }
 
         Index lengthTarget = actual_kc - k1 - actualPanelWidth;
@@ -334,8 +340,8 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheRight, Mode, 
 
 #if defined(EIGEN_VECTORIZE_AVX512) && defined(EIGEN_USE_AVX512_TRSM_R_KERNELS) && EIGEN_USE_AVX512_TRSM_R_KERNELS && \
     EIGEN_ENABLE_AVX512_NOCOPY_TRSM_R_CUTOFFS
-  EIGEN_IF_CONSTEXPR(
-      (OtherInnerStride == 1 && (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
+  EIGEN_IF_CONSTEXPR ((OtherInnerStride == 1 &&
+                       (std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value))) {
     // TODO: Investigate better heuristics for cutoffs.
     std::ptrdiff_t l1, l2, l3;
     manage_caching_sizes(GetAction, &l1, &l2, &l3);
@@ -348,12 +354,12 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheRight, Mode, 
   }
 #endif
 
-  typedef blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride> LhsMapper;
-  typedef const_blas_data_mapper<Scalar, Index, TriStorageOrder> RhsMapper;
+  using LhsMapper = blas_data_mapper<Scalar, Index, ColMajor, Unaligned, OtherInnerStride>;
+  using RhsMapper = const_blas_data_mapper<Scalar, Index, TriStorageOrder>;
   LhsMapper lhs(_other, otherStride, otherIncr);
   RhsMapper rhs(_tri, triStride);
 
-  typedef gebp_traits<Scalar, Scalar> Traits;
+  using Traits = gebp_traits<Scalar, Scalar>;
   enum {
     RhsStorageOrder = TriStorageOrder,
     SmallPanelWidth = plain_enum_max(Traits::mr, Traits::nr),
@@ -428,8 +434,8 @@ EIGEN_DONT_INLINE void triangular_solve_matrix<Scalar, Index, OnTheRight, Mode, 
             trsmKernelR<Scalar, Index, Mode, Conjugate, TriStorageOrder, OtherInnerStride,
                         /*Specialized=*/true>::kernel(actualPanelWidth, actual_mc,
                                                       _tri + absolute_j2 + absolute_j2 * triStride, triStride,
-                                                      _other + i2 * OtherInnerStride + absolute_j2 * otherStride,
-                                                      otherIncr, otherStride);
+                                                      _other + i2 * otherIncr + absolute_j2 * otherStride, otherIncr,
+                                                      otherStride);
           }
           // pack the just computed part of lhs to A
           pack_lhs_panel(blockA, lhs.getSubMapper(i2, absolute_j2), actualPanelWidth, actual_mc, actual_kc, j2);

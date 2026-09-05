@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_ARRAYBASE_H
 #define EIGEN_ARRAYBASE_H
@@ -45,16 +46,16 @@ class ArrayBase : public DenseBase<Derived> {
  public:
 #ifndef EIGEN_PARSED_BY_DOXYGEN
   /** The base class for a given storage type. */
-  typedef ArrayBase StorageBaseType;
+  using StorageBaseType = ArrayBase;
 
-  typedef ArrayBase Eigen_BaseClassForSpecializationOfGlobalMathFuncImpl;
+  using Eigen_BaseClassForSpecializationOfGlobalMathFuncImpl = ArrayBase;
 
-  typedef typename internal::traits<Derived>::StorageKind StorageKind;
-  typedef typename internal::traits<Derived>::Scalar Scalar;
-  typedef typename internal::packet_traits<Scalar>::type PacketScalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using StorageKind = typename internal::traits<Derived>::StorageKind;
+  using Scalar = typename internal::traits<Derived>::Scalar;
+  using PacketScalar = typename internal::packet_traits<Scalar>::type;
+  using RealScalar = typename NumTraits<Scalar>::Real;
 
-  typedef DenseBase<Derived> Base;
+  using Base = DenseBase<Derived>;
   using Base::ColsAtCompileTime;
   using Base::Flags;
   using Base::IsVectorAtCompileTime;
@@ -79,12 +80,12 @@ class ArrayBase : public DenseBase<Derived> {
   using Base::operator*=;
   using Base::operator/=;
 
-  typedef typename Base::CoeffReturnType CoeffReturnType;
+  using CoeffReturnType = typename Base::CoeffReturnType;
 
-  typedef typename Base::PlainObject PlainObject;
+  using PlainObject = typename Base::PlainObject;
 
   /** \internal Represents a matrix with all coefficients equal to one another*/
-  typedef CwiseNullaryOp<internal::scalar_constant_op<Scalar>, PlainObject> ConstantReturnType;
+  using ConstantReturnType = CwiseNullaryOp<internal::scalar_constant_op<Scalar>, PlainObject>;
 #endif  // not EIGEN_PARSED_BY_DOXYGEN
 
 #define EIGEN_CURRENT_STORAGE_BASE_CLASS Eigen::ArrayBase

@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_INTDIV_H
-#define EIGEN_CXX11_TENSOR_TENSOR_INTDIV_H
+#ifndef EIGEN_TENSOR_TENSOR_INTDIV_H
+#define EIGEN_TENSOR_TENSOR_INTDIV_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -125,7 +126,7 @@ struct DividerHelper<64, T> {
 
 /** \internal
  *
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Fast integer division by a constant.
  *
@@ -137,11 +138,7 @@ struct DividerHelper<64, T> {
 template <typename T, bool div_gt_one = false>
 struct TensorIntDivisor {
  public:
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorIntDivisor() {
-    multiplier = 0;
-    shift1 = 0;
-    shift2 = 0;
-  }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorIntDivisor() = default;
 
   // Must have 0 < divider < 2^31. This is relaxed to
   // 0 < divider < 2^63 when using 64-bit indices on platforms that support
@@ -176,9 +173,9 @@ struct TensorIntDivisor {
 
  private:
   typedef typename DividerTraits<T>::type UnsignedType;
-  UnsignedType multiplier;
-  int32_t shift1;
-  int32_t shift2;
+  UnsignedType multiplier = 0;
+  int32_t shift1 = 0;
+  int32_t shift2 = 0;
 };
 
 // Optimized version for signed 32 bit integers.
@@ -187,10 +184,7 @@ struct TensorIntDivisor {
 template <>
 class TensorIntDivisor<int32_t, true> {
  public:
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorIntDivisor() {
-    magic = 0;
-    shift = 0;
-  }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorIntDivisor() = default;
   // Must have 2 <= divider
   EIGEN_DEVICE_FUNC TensorIntDivisor(int32_t divider) {
     eigen_assert(divider >= 2);
@@ -199,18 +193,18 @@ class TensorIntDivisor<int32_t, true> {
 
   EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE int divide(const int32_t n) const {
 #ifdef EIGEN_GPU_COMPILE_PHASE
-    return (__umulhi(magic, n) >> shift);
+    return __umulhi(magic, n) >> shift;
 #elif defined(SYCL_DEVICE_ONLY)
-    return (cl::sycl::mul_hi(magic, static_cast<uint32_t>(n)) >> shift);
+    return cl::sycl::mul_hi(magic, static_cast<uint32_t>(n)) >> shift;
 #else
     uint64_t v = static_cast<uint64_t>(magic) * static_cast<uint64_t>(n);
-    return (static_cast<uint32_t>(v >> 32) >> shift);
+    return static_cast<uint32_t>(v >> 32) >> shift;
 #endif
   }
 
  private:
-  // Compute the magic numbers. See Hacker's Delight section 10 for an in
-  // depth explanation.
+  // Compute the magic numbers. See Hacker's Delight section 10 for an in-depth
+  // explanation.
   EIGEN_DEVICE_FUNC void calcMagic(int32_t d) {
     const unsigned two31 = 0x80000000;  // 2**31.
     unsigned ad = d;
@@ -243,8 +237,8 @@ class TensorIntDivisor<int32_t, true> {
     shift = p - 32;
   }
 
-  uint32_t magic;
-  int32_t shift;
+  uint32_t magic = 0;
+  int32_t shift = 0;
 };
 
 template <typename T, bool div_gt_one>
@@ -255,4 +249,4 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator/(const T& numerator, const Tens
 }  // end namespace internal
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_INTDIV_H
+#endif  // EIGEN_TENSOR_TENSOR_INTDIV_H

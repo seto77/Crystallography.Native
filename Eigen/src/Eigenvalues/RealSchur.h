@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_REAL_SCHUR_H
 #define EIGEN_REAL_SCHUR_H
@@ -57,7 +58,7 @@ namespace Eigen {
 template <typename MatrixType_>
 class RealSchur {
  public:
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
     ColsAtCompileTime = MatrixType::ColsAtCompileTime,
@@ -65,12 +66,12 @@ class RealSchur {
     MaxRowsAtCompileTime = MatrixType::MaxRowsAtCompileTime,
     MaxColsAtCompileTime = MatrixType::MaxColsAtCompileTime
   };
-  typedef typename MatrixType::Scalar Scalar;
-  typedef internal::make_complex_t<Scalar> ComplexScalar;
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
+  using Scalar = typename MatrixType::Scalar;
+  using ComplexScalar = internal::make_complex_t<Scalar>;
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
 
-  typedef Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1> EigenvalueType;
-  typedef Matrix<Scalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1> ColumnVectorType;
+  using EigenvalueType = Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1>;
+  using ColumnVectorType = Matrix<Scalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1>;
 
   /** \brief Default constructor.
    *
@@ -170,8 +171,8 @@ class RealSchur {
 
   /** \brief Computes Schur decomposition of a Hessenberg matrix H = Z T Z^T
    *  \param[in] matrixH Matrix in Hessenberg form H
-   *  \param[in] matrixQ orthogonal matrix Q that transform a matrix A to H : A = Q H Q^T
-   *  \param computeU Computes the matriX U of the Schur vectors
+   *  \param[in] matrixQ orthogonal matrix Q that transforms a matrix A to H : A = Q H Q^T
+   *  \param computeU Computes the matrix U of the Schur vectors
    * \return Reference to \c *this
    *
    *  This routine assumes that the matrix is already reduced in Hessenberg form matrixH
@@ -226,7 +227,7 @@ class RealSchur {
   bool m_matUisUptodate;
   Index m_maxIters;
 
-  typedef Matrix<Scalar, 3, 1> Vector3s;
+  using Vector3s = Matrix<Scalar, 3, 1>;
 
   Scalar computeNormOfT();
   Index findSmallSubdiagEntry(Index iu, const Scalar& considerAsZero);
@@ -274,8 +275,6 @@ template <typename MatrixType>
 template <typename HessMatrixType, typename OrthMatrixType>
 RealSchur<MatrixType>& RealSchur<MatrixType>::computeFromHessenberg(const HessMatrixType& matrixH,
                                                                     const OrthMatrixType& matrixQ, bool computeU) {
-  using std::abs;
-
   m_matT = matrixH;
   m_workspaceVector.resize(m_matT.cols());
   if (computeU && !internal::is_same_dense(m_matU, matrixQ)) m_matU = matrixQ;
@@ -343,9 +342,9 @@ RealSchur<MatrixType>& RealSchur<MatrixType>::computeFromHessenberg(const HessMa
 template <typename MatrixType>
 inline typename MatrixType::Scalar RealSchur<MatrixType>::computeNormOfT() {
   const Index size = m_matT.cols();
-  // FIXME: a triangular reduction would be more efficient here.
-  // Scalar norm = m_matT.upper().cwiseAbs().sum()
-  //               + m_matT.bottomLeftCorner(size-1,size-1).diagonal().cwiseAbs().sum();
+  // m_matT is upper-Hessenberg, so per column only rows [0, j+1] are nonzero.
+  // The column-wise loop touches ~n^2/2 entries; scanning the full matrix
+  // would double that, and TriangularView has no direct cwiseAbs().sum().
   Scalar norm(0);
   for (Index j = 0; j < size; ++j) norm += m_matT.col(j).segment(0, (std::min)(size, j + 2)).cwiseAbs().sum();
   return norm;

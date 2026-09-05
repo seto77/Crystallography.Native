@@ -1,5 +1,6 @@
 // -*- coding: utf-8
 // vim: set fileencoding=utf-8
+// SPDX-License-Identifier: MPL-2.0
 
 // This file is part of Eigen, a lightweight C++ template library
 // for linear algebra.
@@ -62,7 +63,7 @@ class HybridNonLinearSolver {
           nb_of_superdiagonals(-1),
           epsfcn(Scalar(0.)) {}
     Scalar factor;
-    Index maxfev;  // maximum number of function evaluation
+    Index maxfev;  // maximum number of function evaluations
     Scalar xtol;
     Index nb_of_subdiagonals;
     Index nb_of_superdiagonals;
@@ -101,7 +102,6 @@ class HybridNonLinearSolver {
  private:
   FunctorType &functor;
   Index n;
-  Scalar sum;
   bool sing;
   Scalar temp;
   Scalar delta;
@@ -114,7 +114,7 @@ class HybridNonLinearSolver {
   Scalar actred, prered;
   FVectorType wa1, wa2, wa3, wa4;
 
-  HybridNonLinearSolver &operator=(const HybridNonLinearSolver &);
+  HybridNonLinearSolver &operator=(const HybridNonLinearSolver &) = delete;
 };
 
 template <typename FunctorType, typename Scalar>
@@ -306,8 +306,9 @@ HybridNonLinearSolverSpace::Status HybridNonLinearSolver<FunctorType, Scalar>::s
 
     /* compute the qr factorization of the updated jacobian. */
     internal::r1updt<Scalar>(R, wa1, v_givens, w_givens, wa2, wa3, &sing);
-    internal::r1mpyq<Scalar>(n, n, fjac.data(), v_givens, w_givens);
-    internal::r1mpyq<Scalar>(1, n, qtf.data(), v_givens, w_givens);
+    internal::r1mpyq<Scalar>(fjac, v_givens, w_givens);
+    Transpose<FVectorType> qtf_row = qtf.transpose();
+    internal::r1mpyq<Scalar>(qtf_row, v_givens, w_givens);
 
     jeval = false;
   }
@@ -522,8 +523,9 @@ HybridNonLinearSolverSpace::Status HybridNonLinearSolver<FunctorType, Scalar>::s
 
     /* compute the qr factorization of the updated jacobian. */
     internal::r1updt<Scalar>(R, wa1, v_givens, w_givens, wa2, wa3, &sing);
-    internal::r1mpyq<Scalar>(n, n, fjac.data(), v_givens, w_givens);
-    internal::r1mpyq<Scalar>(1, n, qtf.data(), v_givens, w_givens);
+    internal::r1mpyq<Scalar>(fjac, v_givens, w_givens);
+    Transpose<FVectorType> qtf_row = qtf.transpose();
+    internal::r1mpyq<Scalar>(qtf_row, v_givens, w_givens);
 
     jeval = false;
   }

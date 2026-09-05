@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COREEVALUATORS_H
 #define EIGEN_COREEVALUATORS_H
@@ -54,7 +55,7 @@ struct storage_kind_to_shape<TranspositionsStorage> {
 //  - etc.
 // Therefore, we need specialization of evaluator providing additional template arguments for each kind of evaluators.
 // We currently distinguish the following kind of evaluators:
-// - unary_evaluator    for expressions taking only one arguments (CwiseUnaryOp, CwiseUnaryView, Transpose,
+// - unary_evaluator    for expressions taking only one argument (CwiseUnaryOp, CwiseUnaryView, Transpose,
 // MatrixWrapper, ArrayWrapper, Reverse, Replicate)
 // - binary_evaluator   for expression taking two arguments (CwiseBinaryOp)
 // - ternary_evaluator   for expression taking three arguments (CwiseTernaryOp)
@@ -119,9 +120,8 @@ struct evaluator_base {
   using ExpressionTraits = traits<ExpressionType>;
 
   enum { Alignment = 0 };
-  // noncopyable:
-  // Don't make this class inherit noncopyable as this kills EBO (Empty Base Optimization)
-  // and make complex evaluator much larger than then should do.
+  // Spell out deleted copy operations instead of inheriting from an empty helper:
+  // an extra base can kill EBO and make complex evaluators larger than they should be.
   EIGEN_DEVICE_FUNC constexpr evaluator_base() = default;
 
   evaluator_base(const evaluator_base&) = delete;
@@ -360,7 +360,7 @@ struct unary_evaluator<Transpose<ArgType>, IndexBased> : evaluator_base<Transpos
 
 // -------------------- CwiseNullaryOp --------------------
 // Like Matrix and Array, this is not really a unary expression, so we directly specialize evaluator.
-// Likewise, there is not need to more sophisticated dispatching here.
+// Likewise, there is no need for more sophisticated dispatching here.
 
 template <typename Scalar, typename NullaryOp, bool has_nullary = has_nullary_operator<NullaryOp>::value,
           bool has_unary = has_unary_operator<NullaryOp>::value,
@@ -452,7 +452,7 @@ struct evaluator<CwiseNullaryOp<NullaryOp, PlainObjectType>>
     CoeffReadCost = functor_traits<NullaryOp>::Cost,
 
     Flags = (evaluator<PlainObjectTypeCleaned>::Flags &
-             (HereditaryBits | (functor_has_linear_access<NullaryOp>::ret ? LinearAccessBit : 0) |
+             (HereditaryBits | (functor_has_linear_access<NullaryOp>::value ? LinearAccessBit : 0) |
               (functor_traits<NullaryOp>::PacketAccess ? PacketAccessBit : 0))) |
             (functor_traits<NullaryOp>::IsRepeatable ? 0 : EvalBeforeNestingBit),
     Alignment = AlignedMax
@@ -921,8 +921,8 @@ struct ternary_evaluator<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>, IndexBased
     Arg1Flags = evaluator<Arg1>::Flags,
     Arg2Flags = evaluator<Arg2>::Flags,
     Arg3Flags = evaluator<Arg3>::Flags,
-    SameType = is_same<typename Arg1::Scalar, typename Arg2::Scalar>::value &&
-               is_same<typename Arg1::Scalar, typename Arg3::Scalar>::value,
+    SameType = std::is_same<typename Arg1::Scalar, typename Arg2::Scalar>::value &&
+               std::is_same<typename Arg1::Scalar, typename Arg3::Scalar>::value,
     StorageOrdersAgree = (int(Arg1Flags) & RowMajorBit) == (int(Arg2Flags) & RowMajorBit) &&
                          (int(Arg1Flags) & RowMajorBit) == (int(Arg3Flags) & RowMajorBit),
     Flags0 = (int(Arg1Flags) | int(Arg2Flags) | int(Arg3Flags)) &
@@ -999,15 +999,25 @@ struct scalar_boolean_select_spec {
   using DummyArg3 = CwiseBinaryOp<scalar_cmp_op<Scalar, Scalar, cmp, false>, CmpLhsType, CmpRhsType>;
   using DummyXprType = CwiseTernaryOp<DummyTernaryOp, Arg1, Arg2, DummyArg3>;
 
-  // only use the typed comparison if it is vectorized
-  static constexpr bool UseTyped = functor_traits<scalar_cmp_op<Scalar, Scalar, cmp, true>>::PacketAccess;
-  using CondScalar = std::conditional_t<UseTyped, Scalar, bool>;
+  using PacketTernaryOp = scalar_boolean_select_op<Scalar, Scalar, Scalar>;
+  using PacketArg3 = CwiseBinaryOp<scalar_cmp_op<Scalar, Scalar, cmp, true>, CmpLhsType, CmpRhsType>;
+  using PacketXprType = CwiseTernaryOp<PacketTernaryOp, Arg1, Arg2, PacketArg3>;
 
-  using TernaryOp = scalar_boolean_select_op<Scalar, Scalar, CondScalar>;
-  using Arg3 = CwiseBinaryOp<scalar_cmp_op<Scalar, Scalar, cmp, UseTyped>, CmpLhsType, CmpRhsType>;
-  using XprType = CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>;
+  // Rebuild the comparison with a typed result only when the entire select expression can use packets. Otherwise,
+  // evaluate the original expression so indirect evaluators do not retain references into a temporary rewrite.
+  static constexpr bool UseTyped = (ternary_evaluator<PacketXprType>::Flags & PacketAccessBit) != 0;
+  using Arg3 = std::conditional_t<UseTyped, PacketArg3, DummyArg3>;
+  using XprType = std::conditional_t<UseTyped, PacketXprType, DummyXprType>;
 
   using Base = ternary_evaluator<XprType>;
+
+  EIGEN_DEVICE_FUNC constexpr static const DummyXprType& expression(const DummyXprType& xpr, std::false_type) {
+    return xpr;
+  }
+
+  EIGEN_DEVICE_FUNC constexpr static XprType expression(const DummyXprType& xpr, std::true_type) {
+    return XprType(xpr.arg1(), xpr.arg2(), Arg3(xpr.arg3().lhs(), xpr.arg3().rhs()));
+  }
 };
 
 // specialization for expressions like (a < b).select(c, d) to enable full vectorization
@@ -1018,11 +1028,9 @@ struct evaluator<CwiseTernaryOp<scalar_boolean_select_op<Scalar, Scalar, bool>, 
   using Helper = scalar_boolean_select_spec<Arg1, Arg2, Scalar, CmpLhsType, CmpRhsType, cmp>;
   using Base = typename Helper::Base;
   using DummyXprType = typename Helper::DummyXprType;
-  using Arg3 = typename Helper::Arg3;
-  using XprType = typename Helper::XprType;
 
   EIGEN_DEVICE_FUNC constexpr explicit evaluator(const DummyXprType& xpr)
-      : Base(XprType(xpr.arg1(), xpr.arg2(), Arg3(xpr.arg3().lhs(), xpr.arg3().rhs()))) {}
+      : Base(Helper::expression(xpr, bool_constant<Helper::UseTyped>())) {}
 };
 
 // -------------------- CwiseBinaryOp --------------------
@@ -1047,7 +1055,7 @@ struct binary_evaluator<CwiseBinaryOp<BinaryOp, Lhs, Rhs>, IndexBased, IndexBase
 
     LhsFlags = evaluator<Lhs>::Flags,
     RhsFlags = evaluator<Rhs>::Flags,
-    SameType = is_same<typename Lhs::Scalar, typename Rhs::Scalar>::value,
+    SameType = std::is_same<typename Lhs::Scalar, typename Rhs::Scalar>::value,
     StorageOrdersAgree = (int(LhsFlags) & RowMajorBit) == (int(RhsFlags) & RowMajorBit),
     Flags0 = (int(LhsFlags) | int(RhsFlags)) &
              (HereditaryBits |
@@ -1188,7 +1196,7 @@ struct mapbase_evaluator : evaluator_base<Derived> {
         m_innerStride(map.innerStride()),
         m_outerStride(map.outerStride()) {
     EIGEN_STATIC_ASSERT(check_implication((evaluator<Derived>::Flags & PacketAccessBit) != 0,
-                                          inner_stride_at_compile_time<Derived>::ret == 1),
+                                          inner_stride_at_compile_time<Derived>::value == 1),
                         PACKET_ACCESS_REQUIRES_TO_HAVE_INNER_STRIDE_FIXED_TO_1);
     EIGEN_INTERNAL_CHECK_COST_VALUE(CoeffReadCost);
   }
@@ -1319,7 +1327,7 @@ struct evaluator<Ref<PlainObjectType, RefOptions, StrideType>>
 // -------------------- Block --------------------
 
 template <typename ArgType, int BlockRows, int BlockCols, bool InnerPanel,
-          bool HasDirectAccess = has_direct_access<ArgType>::ret>
+          bool HasDirectAccess = has_direct_access<ArgType>::value>
 struct block_evaluator;
 
 template <typename ArgType, int BlockRows, int BlockCols, bool InnerPanel>
@@ -1344,10 +1352,10 @@ struct evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>>
                                                                             : ArgTypeIsRowMajor,
     HasSameStorageOrderAsArgType = (IsRowMajor == ArgTypeIsRowMajor),
     InnerSize = IsRowMajor ? int(ColsAtCompileTime) : int(RowsAtCompileTime),
-    InnerStrideAtCompileTime = HasSameStorageOrderAsArgType ? int(inner_stride_at_compile_time<ArgType>::ret)
-                                                            : int(outer_stride_at_compile_time<ArgType>::ret),
-    OuterStrideAtCompileTime = HasSameStorageOrderAsArgType ? int(outer_stride_at_compile_time<ArgType>::ret)
-                                                            : int(inner_stride_at_compile_time<ArgType>::ret),
+    InnerStrideAtCompileTime = HasSameStorageOrderAsArgType ? int(inner_stride_at_compile_time<ArgType>::value)
+                                                            : int(outer_stride_at_compile_time<ArgType>::value),
+    OuterStrideAtCompileTime = HasSameStorageOrderAsArgType ? int(outer_stride_at_compile_time<ArgType>::value)
+                                                            : int(inner_stride_at_compile_time<ArgType>::value),
     MaskPacketAccessBit = (InnerStrideAtCompileTime == 1 || HasSameStorageOrderAsArgType) ? PacketAccessBit : 0,
 
     FlagsLinearAccessBit = (RowsAtCompileTime == 1 || ColsAtCompileTime == 1 ||
@@ -1429,9 +1437,10 @@ struct unary_evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>, IndexBa
 
   template <int LoadMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packet(Index index) const {
-    EIGEN_IF_CONSTEXPR(ForwardLinearAccess)
-    return m_argImpl.template packet<LoadMode, PacketType>(m_linear_offset.value() + index);
-    else return packet<LoadMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0);
+    EIGEN_IF_CONSTEXPR (ForwardLinearAccess)
+      return m_argImpl.template packet<LoadMode, PacketType>(m_linear_offset.value() + index);
+    else
+      return packet<LoadMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0);
   }
 
   template <int StoreMode, typename PacketType>
@@ -1441,10 +1450,11 @@ struct unary_evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>, IndexBa
 
   template <int StoreMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacket(Index index, const PacketType& x) {
-    EIGEN_IF_CONSTEXPR(ForwardLinearAccess)
-    return m_argImpl.template writePacket<StoreMode, PacketType>(m_linear_offset.value() + index, x);
-    else return writePacket<StoreMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index,
-                                                   RowsAtCompileTime == 1 ? index : 0, x);
+    EIGEN_IF_CONSTEXPR (ForwardLinearAccess)
+      return m_argImpl.template writePacket<StoreMode, PacketType>(m_linear_offset.value() + index, x);
+    else
+      return writePacket<StoreMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0,
+                                                x);
   }
 
   template <int LoadMode, typename PacketType>
@@ -1455,10 +1465,11 @@ struct unary_evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>, IndexBa
 
   template <int LoadMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packetSegment(Index index, Index begin, Index count) const {
-    EIGEN_IF_CONSTEXPR(ForwardLinearAccess)
-    return m_argImpl.template packetSegment<LoadMode, PacketType>(m_linear_offset.value() + index, begin, count);
-    else return packetSegment<LoadMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index,
-                                                    RowsAtCompileTime == 1 ? index : 0, begin, count);
+    EIGEN_IF_CONSTEXPR (ForwardLinearAccess)
+      return m_argImpl.template packetSegment<LoadMode, PacketType>(m_linear_offset.value() + index, begin, count);
+    else
+      return packetSegment<LoadMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0,
+                                                 begin, count);
   }
 
   template <int StoreMode, typename PacketType>
@@ -1471,29 +1482,30 @@ struct unary_evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>, IndexBa
   template <int StoreMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacketSegment(Index index, const PacketType& x, Index begin,
                                                                 Index count) {
-    EIGEN_IF_CONSTEXPR(ForwardLinearAccess)
-    return m_argImpl.template writePacketSegment<StoreMode, PacketType>(m_linear_offset.value() + index, x, begin,
-                                                                        count);
-    else return writePacketSegment<StoreMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index,
-                                                          RowsAtCompileTime == 1 ? index : 0, x, begin, count);
+    EIGEN_IF_CONSTEXPR (ForwardLinearAccess)
+      return m_argImpl.template writePacketSegment<StoreMode, PacketType>(m_linear_offset.value() + index, x, begin,
+                                                                          count);
+    else
+      return writePacketSegment<StoreMode, PacketType>(RowsAtCompileTime == 1 ? 0 : index,
+                                                       RowsAtCompileTime == 1 ? index : 0, x, begin, count);
   }
 
  protected:
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE CoeffReturnType
-  linear_coeff_impl(Index index, internal::true_type /* ForwardLinearAccess */) const {
+  linear_coeff_impl(Index index, std::true_type /* ForwardLinearAccess */) const {
     return m_argImpl.coeff(m_linear_offset.value() + index);
   }
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE CoeffReturnType
-  linear_coeff_impl(Index index, internal::false_type /* not ForwardLinearAccess */) const {
+  linear_coeff_impl(Index index, std::false_type /* not ForwardLinearAccess */) const {
     return coeff(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0);
   }
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar& linear_coeffRef_impl(
-      Index index, internal::true_type /* ForwardLinearAccess */) {
+      Index index, std::true_type /* ForwardLinearAccess */) {
     return m_argImpl.coeffRef(m_linear_offset.value() + index);
   }
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar& linear_coeffRef_impl(
-      Index index, internal::false_type /* not ForwardLinearAccess */) {
+      Index index, std::false_type /* not ForwardLinearAccess */) {
     return coeffRef(RowsAtCompileTime == 1 ? 0 : index, RowsAtCompileTime == 1 ? index : 0);
   }
 
@@ -1535,7 +1547,15 @@ struct unary_evaluator<Replicate<ArgType, RowFactor, ColFactor>>
   enum {
     CoeffReadCost = evaluator<ArgTypeNestedCleaned>::CoeffReadCost,
     LinearAccessMask = XprType::IsVectorAtCompileTime ? LinearAccessBit : 0,
-    Flags = (evaluator<ArgTypeNestedCleaned>::Flags & (HereditaryBits | LinearAccessMask) & ~RowMajorBit) |
+    // The packet paths below load from a single copy of the nested expression, so they are valid
+    // exactly when a packet cannot cross a replication boundary: the inner (storage-order)
+    // direction must not be replicated. The outer coordinate's modulo then maps any packet into
+    // the nested expression unchanged. When the inner direction is replicated, serving a packet
+    // would need a broadcast (or a wrap-around load) the methods below do not perform.
+    InnerFactor = traits<XprType>::IsRowMajor ? ColFactor : RowFactor,
+    MaskPacketAccessBit = InnerFactor == 1 ? PacketAccessBit : 0,
+    Flags = (evaluator<ArgTypeNestedCleaned>::Flags & (HereditaryBits | LinearAccessMask | MaskPacketAccessBit) &
+             ~RowMajorBit) |
             (traits<XprType>::Flags & RowMajorBit),
 
     Alignment = evaluator<ArgTypeNestedCleaned>::Alignment
@@ -1599,7 +1619,7 @@ struct unary_evaluator<Replicate<ArgType, RowFactor, ColFactor>>
   }
 
  protected:
-  const ArgTypeNested m_arg;
+  ArgTypeNested m_arg;
   evaluator<ArgTypeNestedCleaned> m_argImpl;
   const variable_if_dynamic<Index, ArgType::RowsAtCompileTime> m_rows;
   const variable_if_dynamic<Index, ArgType::ColsAtCompileTime> m_cols;

@@ -7,9 +7,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSORSTORAGE_H
-#define EIGEN_CXX11_TENSOR_TENSORSTORAGE_H
+#ifndef EIGEN_TENSOR_TENSORSTORAGE_H
+#define EIGEN_TENSOR_TENSORSTORAGE_H
 
 #ifdef EIGEN_TENSOR_STORAGE_CTOR_PLUGIN
 #define EIGEN_INTERNAL_TENSOR_STORAGE_CTOR_PLUGIN EIGEN_TENSOR_STORAGE_CTOR_PLUGIN;
@@ -24,7 +25,7 @@ namespace Eigen {
 
 /** \internal
  *
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Stores the data of a tensor
  *
@@ -66,7 +67,7 @@ class TensorStorage<T, DSizes<IndexType, NumIndices_>, Options_> {
   typedef TensorStorage<T, DSizes<IndexType, NumIndices_>, Options_> Self;
 
   EIGEN_DEVICE_FUNC TensorStorage() : m_data(0), m_dimensions() {
-    if (NumIndices_ == 0) {
+    EIGEN_IF_CONSTEXPR (NumIndices_ == 0) {
       m_data = internal::conditional_aligned_new_auto<T, (Options_ & DontAlign) == 0>(1);
     }
   }
@@ -119,7 +120,7 @@ class TensorStorage<T, DSizes<IndexType, NumIndices_>, Options_> {
       internal::conditional_aligned_delete_auto<T, (Options_ & DontAlign) == 0>(m_data, currentSz);
       if (size)
         m_data = internal::conditional_aligned_new_auto<T, (Options_ & DontAlign) == 0>(size);
-      else if (NumIndices_ == 0) {
+      else EIGEN_IF_CONSTEXPR (NumIndices_ == 0) {
         m_data = internal::conditional_aligned_new_auto<T, (Options_ & DontAlign) == 0>(1);
       } else
         m_data = 0;
@@ -140,4 +141,4 @@ class TensorStorage<T, DSizes<IndexType, NumIndices_>, Options_> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSORSTORAGE_H
+#endif  // EIGEN_TENSOR_TENSORSTORAGE_H

@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_CONVERSION_H
-#define EIGEN_CXX11_TENSOR_TENSOR_CONVERSION_H
+#ifndef EIGEN_TENSOR_TENSOR_CONVERSION_H
+#define EIGEN_TENSOR_TENSOR_CONVERSION_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,8 +23,6 @@ struct traits<TensorConversionOp<TargetType, XprType> > {
   typedef TargetType Scalar;
   typedef typename traits<XprType>::StorageKind StorageKind;
   typedef typename traits<XprType>::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = traits<XprType>::NumDimensions;
   static constexpr int Layout = traits<XprType>::Layout;
   enum { Flags = 0 };
@@ -33,12 +32,6 @@ struct traits<TensorConversionOp<TargetType, XprType> > {
 template <typename TargetType, typename XprType>
 struct eval<TensorConversionOp<TargetType, XprType>, Eigen::Dense> {
   typedef const TensorConversionOp<TargetType, XprType>& type;
-};
-
-template <typename TargetType, typename XprType>
-struct nested<TensorConversionOp<TargetType, XprType>, 1,
-              typename eval<TensorConversionOp<TargetType, XprType> >::type> {
-  typedef TensorConversionOp<TargetType, XprType> type;
 };
 
 }  // end namespace internal
@@ -140,7 +133,8 @@ struct PacketConverter<TensorEvaluator, SrcPacket, TgtPacket, 1, TgtCoeffRatio> 
       typedef typename internal::unpacket_traits<SrcPacket>::type SrcType;
       typedef typename internal::unpacket_traits<TgtPacket>::type TgtType;
       internal::scalar_cast_op<SrcType, TgtType> converter;
-      EIGEN_ALIGN_MAX typename internal::unpacket_traits<TgtPacket>::type values[TgtPacketSize];
+      EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<TgtPacket>::alignment)
+      typename internal::unpacket_traits<TgtPacket>::type values[TgtPacketSize];
       EIGEN_UNROLL_LOOP
       for (int i = 0; i < TgtPacketSize; ++i) {
         values[i] = converter(m_impl.coeff(index + i));
@@ -156,7 +150,7 @@ struct PacketConverter<TensorEvaluator, SrcPacket, TgtPacket, 1, TgtCoeffRatio> 
 };
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor conversion class. This class makes it possible to vectorize
  * type casting operations when the number of scalars per packet in the source
@@ -168,7 +162,7 @@ class TensorConversionOp : public TensorBase<TensorConversionOp<TargetType, XprT
   typedef typename internal::traits<TensorConversionOp>::Scalar Scalar;
   typedef typename internal::traits<TensorConversionOp>::StorageKind StorageKind;
   typedef typename internal::traits<TensorConversionOp>::Index Index;
-  typedef typename internal::nested<TensorConversionOp>::type Nested;
+  typedef typename internal::ref_selector<TensorConversionOp>::type Nested;
   typedef Scalar CoeffReturnType;
   typedef typename NumTraits<Scalar>::Real RealScalar;
 
@@ -183,7 +177,7 @@ class TensorConversionOp : public TensorBase<TensorConversionOp<TargetType, XprT
 template <bool SameType, typename Eval, typename EvalPointerType>
 struct ConversionSubExprEval {
   static EIGEN_STRONG_INLINE bool run(Eval& impl, EvalPointerType) {
-    impl.evalSubExprsIfNeeded(NULL);
+    impl.evalSubExprsIfNeeded(nullptr);
     return true;
   }
 };
@@ -241,7 +235,8 @@ struct PacketConv {
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TargetPacket run(const TensorEvaluator<ArgType, Device>& impl,
                                                                 Index index) {
     internal::scalar_cast_op<SrcType, TargetType> converter;
-    EIGEN_ALIGN_MAX std::remove_const_t<TargetType> values[PacketSize];
+    EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<TargetPacket>::alignment)
+    std::remove_const_t<TargetType> values[PacketSize];
     EIGEN_UNROLL_LOOP
     for (int i = 0; i < PacketSize; ++i) {
       values[i] = converter(impl.coeff(index + i));
@@ -275,7 +270,8 @@ struct PacketConv<SrcPacket, TargetPacket, LoadMode, /*ActuallyVectorize=*/false
   template <typename ArgType, typename Device>
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TargetPacket run(const TensorEvaluator<ArgType, Device>& impl,
                                                                 Index index) {
-    EIGEN_ALIGN_MAX std::remove_const_t<TargetType> values[PacketSize];
+    EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<TargetPacket>::alignment)
+    std::remove_const_t<TargetType> values[PacketSize];
     for (int i = 0; i < PacketSize; ++i) values[i] = impl.coeff(index + i);
     return internal::pload<TargetPacket>(values);
   }
@@ -304,7 +300,7 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device> {
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
   typedef typename PacketType<SrcType, Device>::type PacketSourceType;
   static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
-  static constexpr bool IsSameType = internal::is_same<TargetType, SrcType>::value;
+  static constexpr bool IsSameType = std::is_same<TargetType, SrcType>::value;
   typedef StorageMemory<CoeffReturnType, Device> Storage;
   typedef typename Storage::Type EvaluatorPointerType;
 
@@ -373,9 +369,10 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device> {
     // If we are not going to do the cast, we just need to check that base
     // TensorEvaluator has packet access. Otherwise we also need to make sure,
     // that we have an implementation of vectorized cast.
-    const bool Vectorizable = IsSameType ? TensorEvaluator<ArgType, Device>::PacketAccess
-                                         : int(TensorEvaluator<ArgType, Device>::PacketAccess) &
-                                               int(internal::type_casting_traits<SrcType, TargetType>::VectorizedCast);
+    constexpr bool Vectorizable = IsSameType
+                                      ? TensorEvaluator<ArgType, Device>::PacketAccess
+                                      : int(TensorEvaluator<ArgType, Device>::PacketAccess) &
+                                            int(internal::type_casting_traits<SrcType, TargetType>::VectorizedCast);
 
     return internal::PacketConv<PacketSourceType, PacketReturnType, LoadMode, Vectorizable, IsSameType>::run(m_impl,
                                                                                                              index);
@@ -399,10 +396,19 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device> {
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
                                                           bool /*root_of_expr_ast*/ = false) const {
+    // The forwarded destination buffer is sized for TargetType (the assign
+    // LHS); the child block evaluator below us writes SrcType. When the cast
+    // is non-degenerate the buffer would be misinterpreted by any
+    // block-materializing child's prepareStorage (assert in debug, corruption
+    // in release). Drop the buffer; the child falls back to scratch and
+    // writeBlock still lands the cast values in the LHS.
+    EIGEN_IF_CONSTEXPR (!IsSameType) {
+      desc.DropDestinationBuffer();
+    }
     return TensorBlock(m_impl.block(desc, scratch), TensorConversionOpBlockFactory());
   }
 
-  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return NULL; }
+  EIGEN_DEVICE_FUNC EvaluatorPointerType data() const { return nullptr; }
 
   /// required by sycl in order to extract the sycl accessor
   const TensorEvaluator<ArgType, Device>& impl() const { return m_impl; }
@@ -413,4 +419,4 @@ struct TensorEvaluator<const TensorConversionOp<TargetType, ArgType>, Device> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_CONVERSION_H
+#endif  // EIGEN_TENSOR_TENSOR_CONVERSION_H

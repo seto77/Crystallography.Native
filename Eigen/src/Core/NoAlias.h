@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_NOALIAS_H
 #define EIGEN_NOALIAS_H
@@ -24,7 +25,7 @@ namespace Eigen {
  *
  * This class represents an expression with special assignment operators
  * assuming no aliasing between the target expression and the source expression.
- * More precisely it alloas to bypass the EvalBeforeAssignBit flag of the source expression.
+ * More precisely it allows to bypass the EvalBeforeAssignBit flag of the source expression.
  * It is the return type of MatrixBase::noalias()
  * and most of the time this is the only way it is used.
  *
@@ -33,7 +34,7 @@ namespace Eigen {
 template <typename ExpressionType, template <typename> class StorageBase>
 class NoAlias {
  public:
-  typedef typename ExpressionType::Scalar Scalar;
+  using Scalar = typename ExpressionType::Scalar;
 
   EIGEN_DEVICE_FUNC constexpr explicit NoAlias(ExpressionType& expression) : m_expression(expression) {}
 

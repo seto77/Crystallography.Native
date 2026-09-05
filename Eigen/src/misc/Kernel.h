@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MISC_KERNEL_H
 #define EIGEN_MISC_KERNEL_H
@@ -22,24 +23,16 @@ namespace internal {
  */
 template <typename DecompositionType>
 struct traits<kernel_retval_base<DecompositionType> > {
-  typedef typename DecompositionType::MatrixType MatrixType;
-  typedef Matrix<typename MatrixType::Scalar,
-                 MatrixType::ColsAtCompileTime,  // the number of rows in the "kernel matrix"
-                                                 // is the number of cols of the original matrix
-                                                 // so that the product "matrix * kernel = zero" makes sense
-                 Dynamic,                        // we don't know at compile-time the dimension of the kernel
-                 traits<MatrixType>::Options,
-                 MatrixType::MaxColsAtCompileTime,  // see explanation for 2nd template parameter
-                 MatrixType::MaxColsAtCompileTime   // the kernel is a subspace of the domain space,
-                                                    // whose dimension is the number of columns of the original matrix
-                 >
-      ReturnType;
+  using MatrixType = typename DecompositionType::MatrixType;
+  using ReturnType =
+      Matrix<typename MatrixType::Scalar, MatrixType::ColsAtCompileTime, Dynamic, traits<MatrixType>::Options,
+             MatrixType::MaxColsAtCompileTime, MatrixType::MaxColsAtCompileTime>;
 };
 
 template <typename DecompositionType_>
 struct kernel_retval_base : public ReturnByValue<kernel_retval_base<DecompositionType_> > {
-  typedef DecompositionType_ DecompositionType;
-  typedef ReturnByValue<kernel_retval_base> Base;
+  using DecompositionType = DecompositionType_;
+  using Base = ReturnByValue<kernel_retval_base>;
 
   explicit kernel_retval_base(const DecompositionType& dec)
       : m_dec(dec), m_rank(dec.rank()), m_cols(m_rank == dec.cols() ? 1 : dec.cols() - m_rank) {}

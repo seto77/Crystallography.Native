@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_UMEYAMA_H
 #define EIGEN_UMEYAMA_H
@@ -21,7 +22,7 @@
 
 namespace Eigen {
 
-// These helpers are required since it allows to use mixed types as parameters
+// These helpers are required since they allow the use of mixed types as parameters
 // for the Umeyama. The problem with mixed parameters is that the return type
 // cannot trivially be deduced when float and double types are mixed.
 namespace internal {
@@ -40,10 +41,9 @@ struct umeyama_transform_matrix_type {
     HomogeneousDimension = int(MinRowsAtCompileTime) == Dynamic ? Dynamic : int(MinRowsAtCompileTime) + 1
   };
 
-  typedef Matrix<typename traits<MatrixType>::Scalar, HomogeneousDimension, HomogeneousDimension,
-                 AutoAlign | (traits<MatrixType>::Flags & RowMajorBit ? RowMajor : ColMajor), HomogeneousDimension,
-                 HomogeneousDimension>
-      type;
+  using type = Matrix<typename traits<MatrixType>::Scalar, HomogeneousDimension, HomogeneousDimension,
+                      AutoAlign | (traits<MatrixType>::Flags & RowMajorBit ? RowMajor : ColMajor), HomogeneousDimension,
+                      HomogeneousDimension>;
 };
 
 }  // namespace internal
@@ -67,7 +67,7 @@ struct umeyama_transform_matrix_type {
  * \f$ \Sigma_{\mathbf{x}\mathbf{y}} \in \mathbb{R}^{d \times d} \f$
  * of the input point sets \f$ \mathbf{x} \f$ and \f$ \mathbf{y} \f$ where
  * \f$d\f$ is corresponding to the dimension (which is typically small).
- * The analysis is involving the SVD having a complexity of \f$O(d^3)\f$
+ * The analysis involves the SVD having a complexity of \f$O(d^3)\f$
  * though the actual computational effort lies in the covariance
  * matrix computation which has an asymptotic lower bound of \f$O(dm)\f$ when
  * the input point sets have dimension \f$d \times m\f$.
@@ -89,20 +89,20 @@ struct umeyama_transform_matrix_type {
 template <typename Derived, typename OtherDerived>
 typename internal::umeyama_transform_matrix_type<Derived, OtherDerived>::type umeyama(
     const MatrixBase<Derived>& src, const MatrixBase<OtherDerived>& dst, bool with_scaling = true) {
-  typedef typename internal::umeyama_transform_matrix_type<Derived, OtherDerived>::type TransformationMatrixType;
-  typedef typename internal::traits<TransformationMatrixType>::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using TransformationMatrixType = typename internal::umeyama_transform_matrix_type<Derived, OtherDerived>::type;
+  using Scalar = typename internal::traits<TransformationMatrixType>::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
 
   EIGEN_STATIC_ASSERT(!NumTraits<Scalar>::IsComplex, NUMERIC_TYPE_MUST_BE_REAL)
   EIGEN_STATIC_ASSERT(
-      (internal::is_same<Scalar, typename internal::traits<OtherDerived>::Scalar>::value),
+      (std::is_same<Scalar, typename internal::traits<OtherDerived>::Scalar>::value),
       YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
 
   enum { Dimension = internal::min_size_prefer_dynamic(Derived::RowsAtCompileTime, OtherDerived::RowsAtCompileTime) };
 
-  typedef Matrix<Scalar, Dimension, 1> VectorType;
-  typedef Matrix<Scalar, Dimension, Dimension> MatrixType;
-  typedef typename internal::plain_matrix_type_row_major<Derived>::type RowMajorMatrixType;
+  using VectorType = Matrix<Scalar, Dimension, 1>;
+  using MatrixType = Matrix<Scalar, Dimension, Dimension>;
+  using RowMajorMatrixType = typename internal::plain_matrix_type_row_major<Derived>::type;
 
   const Index m = src.rows();  // dimension
   const Index n = src.cols();  // number of measurements
@@ -140,6 +140,13 @@ typename internal::umeyama_transform_matrix_type<Derived, OtherDerived>::type um
   if (with_scaling) {
     // Eq. (36)-(37)
     const Scalar src_var = src_demean.rowwise().squaredNorm().sum() * one_over_n;
+
+    if (src_var <= Scalar(0)) {
+      // Degenerate: source points have zero variance (all nearly identical).
+      // Scaling is undefined; return the best-fit pure translation.
+      Rt.col(m).head(m) = dst_mean - src_mean;
+      return Rt;
+    }
 
     // Eq. (42)
     const Scalar c = Scalar(1) / src_var * svd.singularValues().dot(S);

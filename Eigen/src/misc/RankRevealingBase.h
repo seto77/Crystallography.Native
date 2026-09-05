@@ -4,6 +4,8 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_RANK_REVEALING_BASE_H
 #define EIGEN_RANK_REVEALING_BASE_H
@@ -26,8 +28,8 @@ namespace Eigen {
 template <typename Derived>
 class RankRevealingBase {
  public:
-  typedef typename internal::traits<Derived>::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using Scalar = typename internal::traits<Derived>::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
 
   RankRevealingBase()
       : m_usePrescribedThreshold(false),
@@ -36,7 +38,7 @@ class RankRevealingBase {
         m_nonzero_pivots(0) {}
 
   /** Allows to prescribe a threshold to be used by certain methods, such as rank(),
-   * who need to determine when pivots are to be considered nonzero. This is not used for the
+   * which need to determine when pivots are to be considered nonzero. This is not used for the
    * decomposition itself.
    *
    * When it needs to get the threshold value, Eigen calls threshold(). By default, this

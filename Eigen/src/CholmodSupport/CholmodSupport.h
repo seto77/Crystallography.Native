@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_CHOLMODSUPPORT_H
 #define EIGEN_CHOLMODSUPPORT_H
@@ -82,9 +83,9 @@ cholmod_sparse viewAsCholmod(Ref<SparseMatrix<Scalar_, Options_, StorageIndex_> 
   res.dtype = 0;
   res.stype = -1;
 
-  if (internal::is_same<StorageIndex_, int>::value) {
+  EIGEN_IF_CONSTEXPR ((std::is_same<StorageIndex_, int>::value)) {
     res.itype = CHOLMOD_INT;
-  } else if (internal::is_same<StorageIndex_, SuiteSparse_long>::value) {
+  } else EIGEN_IF_CONSTEXPR ((std::is_same<StorageIndex_, SuiteSparse_long>::value)) {
     res.itype = CHOLMOD_LONG;
   } else {
     eigen_assert(false && "Index type not supported yet");
@@ -116,12 +117,12 @@ template <typename Scalar_, int Options_, typename Index_, unsigned int UpLo>
 cholmod_sparse viewAsCholmod(const SparseSelfAdjointView<const SparseMatrix<Scalar_, Options_, Index_>, UpLo>& mat) {
   cholmod_sparse res = viewAsCholmod(Ref<SparseMatrix<Scalar_, Options_, Index_> >(mat.matrix().const_cast_derived()));
 
-  if (UpLo == Upper) res.stype = 1;
-  if (UpLo == Lower) res.stype = -1;
+  EIGEN_IF_CONSTEXPR (UpLo == Upper) res.stype = 1;
+  EIGEN_IF_CONSTEXPR (UpLo == Lower) res.stype = -1;
   // swap stype for rowmajor matrices (only works for real matrices)
   EIGEN_STATIC_ASSERT((Options_ & RowMajorBit) == 0 || NumTraits<Scalar_>::IsComplex == 0,
                       THIS_METHOD_IS_ONLY_FOR_COLUMN_MAJOR_MATRICES);
-  if (Options_ & RowMajorBit) res.stype *= -1;
+  EIGEN_IF_CONSTEXPR (Options_ & RowMajorBit) res.stype *= -1;
 
   return res;
 }
@@ -259,14 +260,14 @@ class CholmodBase : public SparseSolverBase<Derived> {
 
  public:
   CholmodBase() : m_cholmodFactor(0), m_info(Success), m_factorizationIsOk(false), m_analysisIsOk(false) {
-    EIGEN_STATIC_ASSERT((internal::is_same<double, RealScalar>::value), CHOLMOD_SUPPORTS_DOUBLE_PRECISION_ONLY);
+    EIGEN_STATIC_ASSERT((std::is_same<double, RealScalar>::value), CHOLMOD_SUPPORTS_DOUBLE_PRECISION_ONLY);
     m_shiftOffset[0] = m_shiftOffset[1] = 0.0;
     internal::cm_start<StorageIndex>(m_cholmod);
   }
 
   explicit CholmodBase(const MatrixType& matrix)
       : m_cholmodFactor(0), m_info(Success), m_factorizationIsOk(false), m_analysisIsOk(false) {
-    EIGEN_STATIC_ASSERT((internal::is_same<double, RealScalar>::value), CHOLMOD_SUPPORTS_DOUBLE_PRECISION_ONLY);
+    EIGEN_STATIC_ASSERT((std::is_same<double, RealScalar>::value), CHOLMOD_SUPPORTS_DOUBLE_PRECISION_ONLY);
     m_shiftOffset[0] = m_shiftOffset[1] = 0.0;
     internal::cm_start<StorageIndex>(m_cholmod);
     compute(matrix);
@@ -283,7 +284,7 @@ class CholmodBase : public SparseSolverBase<Derived> {
   /** \brief Reports whether previous computation was successful.
    *
    * \returns \c Success if computation was successful,
-   *          \c NumericalIssue if the matrix.appears to be negative.
+   *          \c NumericalIssue if the matrix appears to be negative.
    */
   ComputationInfo info() const {
     eigen_assert(m_isInitialized && "Decomposition is not initialized.");
@@ -428,7 +429,7 @@ class CholmodBase : public SparseSolverBase<Derived> {
       // Supernodal factorization stored as a packed list of dense column-major blocks,
       // as described by the following structure:
 
-      // super[k] == index of the first column of the j-th super node
+      // super[k] == index of the first column of the k-th super node
       StorageIndex* super = static_cast<StorageIndex*>(m_cholmodFactor->super);
       // pi[k] == offset to the description of row indices
       StorageIndex* pi = static_cast<StorageIndex*>(m_cholmodFactor->pi);
@@ -482,7 +483,7 @@ class CholmodBase : public SparseSolverBase<Derived> {
  * \implsparsesolverconcept
  *
  * This class supports all kind of SparseMatrix<>: row or column major; upper, lower, or both; compressed or non
- * compressed.
+ * compressed, except row-major matrices with complex scalars.
  *
  * \warning Only double precision real and complex scalar types are supported by Cholmod.
  *
@@ -507,8 +508,6 @@ class CholmodSimplicialLLT : public CholmodBase<MatrixType_, UpLo_, CholmodSimpl
     init();
     this->compute(matrix);
   }
-
-  ~CholmodSimplicialLLT() {}
 
   /** \returns an expression of the factor L */
   inline MatrixL matrixL() const { return viewAsEigen<Scalar, StorageIndex>(*Base::m_cholmodFactor); }
@@ -541,7 +540,7 @@ class CholmodSimplicialLLT : public CholmodBase<MatrixType_, UpLo_, CholmodSimpl
  * \implsparsesolverconcept
  *
  * This class supports all kind of SparseMatrix<>: row or column major; upper, lower, or both; compressed or non
- * compressed.
+ * compressed, except row-major matrices with complex scalars.
  *
  * \warning Only double precision real and complex scalar types are supported by Cholmod.
  *
@@ -567,8 +566,6 @@ class CholmodSimplicialLDLT : public CholmodBase<MatrixType_, UpLo_, CholmodSimp
     init();
     this->compute(matrix);
   }
-
-  ~CholmodSimplicialLDLT() {}
 
   /** \returns a vector expression of the diagonal D */
   inline VectorType vectorD() const {
@@ -614,7 +611,7 @@ class CholmodSimplicialLDLT : public CholmodBase<MatrixType_, UpLo_, CholmodSimp
  * \implsparsesolverconcept
  *
  * This class supports all kind of SparseMatrix<>: row or column major; upper, lower, or both; compressed or non
- * compressed.
+ * compressed, except row-major matrices with complex scalars.
  *
  * \warning Only double precision real and complex scalar types are supported by Cholmod.
  *
@@ -637,8 +634,6 @@ class CholmodSupernodalLLT : public CholmodBase<MatrixType_, UpLo_, CholmodSuper
     init();
     this->compute(matrix);
   }
-
-  ~CholmodSupernodalLLT() {}
 
   /** \returns an expression of the factor L */
   inline MatrixType matrixL() const {
@@ -679,7 +674,7 @@ class CholmodSupernodalLLT : public CholmodBase<MatrixType_, UpLo_, CholmodSuper
  * \implsparsesolverconcept
  *
  * This class supports all kind of SparseMatrix<>: row or column major; upper, lower, or both; compressed or non
- * compressed.
+ * compressed, except row-major matrices with complex scalars.
  *
  * \warning Only double precision real and complex scalar types are supported by Cholmod.
  *
@@ -699,8 +694,6 @@ class CholmodDecomposition : public CholmodBase<MatrixType_, UpLo_, CholmodDecom
     init();
     this->compute(matrix);
   }
-
-  ~CholmodDecomposition() {}
 
   void setMode(CholmodMode mode) {
     switch (mode) {

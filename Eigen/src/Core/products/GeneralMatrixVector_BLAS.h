@@ -29,6 +29,7 @@
  *   General matrix-vector product functionality based on ?GEMV.
  ********************************************************************************
 */
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef EIGEN_GENERAL_MATRIX_VECTOR_BLAS_H
 #define EIGEN_GENERAL_MATRIX_VECTOR_BLAS_H
@@ -61,7 +62,7 @@ struct general_matrix_vector_product_gemv;
     static void run(Index rows, Index cols, const const_blas_data_mapper<Scalar, Index, ColMajor>& lhs,          \
                     const const_blas_data_mapper<Scalar, Index, RowMajor>& rhs, Scalar* res, Index resIncr,      \
                     Scalar alpha) {                                                                              \
-      if (ConjugateLhs) {                                                                                        \
+      EIGEN_IF_CONSTEXPR (ConjugateLhs) {                                                                        \
         general_matrix_vector_product<Index, Scalar, const_blas_data_mapper<Scalar, Index, ColMajor>, ColMajor,  \
                                       ConjugateLhs, Scalar, const_blas_data_mapper<Scalar, Index, RowMajor>,     \
                                       ConjugateRhs, BuiltIn>::run(rows, cols, lhs, rhs, res, resIncr, alpha);    \
@@ -102,12 +103,12 @@ EIGEN_BLAS_GEMV_SPECIALIZE(scomplex)
       const EIGTYPE beta(1);                                                                                        \
       const EIGTYPE* x_ptr;                                                                                         \
       char trans = (LhsStorageOrder == ColMajor) ? 'N' : (ConjugateLhs) ? 'C' : 'T';                                \
-      if (LhsStorageOrder == RowMajor) {                                                                            \
+      EIGEN_IF_CONSTEXPR (LhsStorageOrder == RowMajor) {                                                            \
         m = convert_index<BlasIndex>(cols);                                                                         \
         n = convert_index<BlasIndex>(rows);                                                                         \
       }                                                                                                             \
       GEMVVector x_tmp;                                                                                             \
-      if (ConjugateRhs) {                                                                                           \
+      EIGEN_IF_CONSTEXPR (ConjugateRhs) {                                                                           \
         Map<const GEMVVector, 0, InnerStride<> > map_x(rhs, cols, 1, InnerStride<>(incx));                          \
         x_tmp = map_x.conjugate();                                                                                  \
         x_ptr = x_tmp.data();                                                                                       \
@@ -126,10 +127,10 @@ EIGEN_BLAS_GEMV_SPECIALIZATION(float, float, sgemv)
 EIGEN_BLAS_GEMV_SPECIALIZATION(dcomplex, MKL_Complex16, zgemv)
 EIGEN_BLAS_GEMV_SPECIALIZATION(scomplex, MKL_Complex8, cgemv)
 #else
-EIGEN_BLAS_GEMV_SPECIALIZATION(double, double, dgemv_)
-EIGEN_BLAS_GEMV_SPECIALIZATION(float, float, sgemv_)
-EIGEN_BLAS_GEMV_SPECIALIZATION(dcomplex, double, zgemv_)
-EIGEN_BLAS_GEMV_SPECIALIZATION(scomplex, float, cgemv_)
+EIGEN_BLAS_GEMV_SPECIALIZATION(double, double, EIGEN_BLAS_SYM(dgemv))
+EIGEN_BLAS_GEMV_SPECIALIZATION(float, float, EIGEN_BLAS_SYM(sgemv))
+EIGEN_BLAS_GEMV_SPECIALIZATION(dcomplex, double, EIGEN_BLAS_SYM(zgemv))
+EIGEN_BLAS_GEMV_SPECIALIZATION(scomplex, float, EIGEN_BLAS_SYM(cgemv))
 #endif
 
 #undef EIGEN_BLAS_GEMV_SPECIALIZE

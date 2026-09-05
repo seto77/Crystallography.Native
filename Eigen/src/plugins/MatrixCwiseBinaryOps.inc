@@ -7,8 +7,9 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-// This file is a base class plugin containing matrix specifics coefficient wise functions.
+// This file is a base class plugin containing matrix specific coefficient wise functions.
 
 /** \returns an expression of the Schur product (coefficient wise product) of *this and \a other
  *
@@ -18,9 +19,10 @@
  * \sa class CwiseBinaryOp, cwiseAbs2
  */
 template <typename OtherDerived>
-EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived, product)
+EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived,
+                                                                                     internal::scalar_product_op)
     cwiseProduct(const EIGEN_CURRENT_STORAGE_BASE_CLASS<OtherDerived>& other) const {
-  return EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived, product)(derived(), other.derived());
+  return EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived, internal::scalar_product_op)(derived(), other.derived());
 }
 
 template <typename OtherDerived>

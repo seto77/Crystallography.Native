@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MAP_H
 #define EIGEN_MAP_H
@@ -19,7 +20,7 @@ namespace Eigen {
 namespace internal {
 template <typename PlainObjectType, int MapOptions, typename StrideType>
 struct traits<Map<PlainObjectType, MapOptions, StrideType> > : public traits<PlainObjectType> {
-  typedef traits<PlainObjectType> TraitsBase;
+  using TraitsBase = traits<PlainObjectType>;
   enum {
     PlainObjectTypeInnerSize = ((traits<PlainObjectType>::Flags & RowMajorBit) == RowMajorBit)
                                    ? PlainObjectType::ColsAtCompileTime
@@ -95,11 +96,11 @@ struct traits<Map<PlainObjectType, MapOptions, StrideType> > : public traits<Pla
 template <typename PlainObjectType, int MapOptions, typename StrideType>
 class Map : public MapBase<Map<PlainObjectType, MapOptions, StrideType> > {
  public:
-  typedef MapBase<Map> Base;
+  using Base = MapBase<Map>;
   EIGEN_DENSE_PUBLIC_INTERFACE(Map)
 
-  typedef typename Base::PointerType PointerType;
-  typedef PointerType PointerArgType;
+  using PointerType = typename Base::PointerType;
+  using PointerArgType = PointerType;
   EIGEN_DEVICE_FUNC constexpr inline PointerType cast_to_pointer_type(PointerArgType ptr) const { return ptr; }
 
   EIGEN_DEVICE_FUNC constexpr Index innerStride() const {

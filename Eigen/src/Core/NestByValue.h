@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_NESTBYVALUE_H
 #define EIGEN_NESTBYVALUE_H
@@ -38,8 +39,8 @@ struct traits<NestByValue<ExpressionType> > : public traits<ExpressionType> {
 template <typename ExpressionType>
 class NestByValue : public internal::dense_xpr_base<NestByValue<ExpressionType> >::type {
  public:
-  typedef typename internal::dense_xpr_base<NestByValue>::type Base;
-  static constexpr bool HasDirectAccess = internal::has_direct_access<ExpressionType>::ret;
+  using Base = typename internal::dense_xpr_base<NestByValue>::type;
+  static constexpr bool HasDirectAccess = internal::has_direct_access<ExpressionType>::value;
 
   EIGEN_DENSE_PUBLIC_INTERFACE(NestByValue)
 
@@ -77,10 +78,10 @@ EIGEN_DEVICE_FUNC constexpr inline const NestByValue<Derived> DenseBase<Derived>
 
 namespace internal {
 
-// Evaluator of Solve -> eval into a temporary
+// Evaluator of NestByValue<> -> forwards to the evaluator of the nested expression
 template <typename ArgType>
 struct evaluator<NestByValue<ArgType> > : public evaluator<ArgType> {
-  typedef evaluator<ArgType> Base;
+  using Base = evaluator<ArgType>;
 
   EIGEN_DEVICE_FUNC constexpr explicit evaluator(const NestByValue<ArgType>& xpr) : Base(xpr.nestedExpression()) {}
 };

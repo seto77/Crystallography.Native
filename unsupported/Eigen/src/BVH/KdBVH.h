@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef KDBVH_H_INCLUDED
 #define KDBVH_H_INCLUDED
@@ -77,7 +78,7 @@ class KdBVH {
   typedef const int *VolumeIterator;  // the iterators are just pointers into the tree's vectors
   typedef const Object *ObjectIterator;
 
-  KdBVH() {}
+  KdBVH() = default;
 
   /** Given an iterator range over \a Object references, constructs the BVH.  Requires that bounding_box(Object) return
    * a Volume. */

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SELFADJOINT_MATRIX_VECTOR_H
 #define EIGEN_SELFADJOINT_MATRIX_VECTOR_H
@@ -43,8 +44,8 @@ template <typename Scalar, typename Index, int StorageOrder, int UpLo, bool Conj
 EIGEN_DONT_INLINE EIGEN_DEVICE_FUNC void
 selfadjoint_matrix_vector_product<Scalar, Index, StorageOrder, UpLo, ConjugateLhs, ConjugateRhs, Version>::run(
     Index size, const Scalar* lhs, Index lhsStride, const Scalar* rhs, Scalar* res, Scalar alpha) {
-  typedef typename packet_traits<Scalar>::type Packet;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using Packet = typename packet_traits<Scalar>::type;
+  using RealScalar = typename NumTraits<Scalar>::Real;
   const Index PacketSize = sizeof(Packet) / sizeof(Scalar);
 
   enum {
@@ -110,7 +111,7 @@ selfadjoint_matrix_vector_product<Scalar, Index, StorageOrder, UpLo, ConjugateLh
       res[j + 3] += cjd.pmul(numext::real(A3[j + 3]), t3);
 
       // Handle the 4x4 diagonal block: off-diagonal cross terms
-      if (FirstTriangular) {
+      EIGEN_IF_CONSTEXPR (FirstTriangular) {
         // Upper triangle stored (A_k[l] for l <= k)
         res[j] += cj0.pmul(A1[j], t1) + cj0.pmul(A2[j], t2) + cj0.pmul(A3[j], t3);
         res[j + 1] += cj0.pmul(A2[j + 1], t2) + cj0.pmul(A3[j + 1], t3);
@@ -214,7 +215,7 @@ selfadjoint_matrix_vector_product<Scalar, Index, StorageOrder, UpLo, ConjugateLh
 
       res[j] += cjd.pmul(numext::real(A0[j]), t0);
       res[j + 1] += cjd.pmul(numext::real(A1[j + 1]), t1);
-      if (FirstTriangular) {
+      EIGEN_IF_CONSTEXPR (FirstTriangular) {
         res[j] += cj0.pmul(A1[j], t1);
         t3 += cj1.pmul(A1[j], rhs[j]);
       } else {
@@ -316,15 +317,15 @@ namespace internal {
 
 template <typename Lhs, int LhsMode, typename Rhs>
 struct selfadjoint_product_impl<Lhs, LhsMode, false, Rhs, 0, true> {
-  typedef typename Product<Lhs, Rhs>::Scalar Scalar;
+  using Scalar = typename Product<Lhs, Rhs>::Scalar;
 
-  typedef internal::blas_traits<Lhs> LhsBlasTraits;
-  typedef typename LhsBlasTraits::DirectLinearAccessType ActualLhsType;
-  typedef internal::remove_all_t<ActualLhsType> ActualLhsTypeCleaned;
+  using LhsBlasTraits = internal::blas_traits<Lhs>;
+  using ActualLhsType = typename LhsBlasTraits::DirectLinearAccessType;
+  using ActualLhsTypeCleaned = internal::remove_all_t<ActualLhsType>;
 
-  typedef internal::blas_traits<Rhs> RhsBlasTraits;
-  typedef typename RhsBlasTraits::DirectLinearAccessType ActualRhsType;
-  typedef internal::remove_all_t<ActualRhsType> ActualRhsTypeCleaned;
+  using RhsBlasTraits = internal::blas_traits<Rhs>;
+  using ActualRhsType = typename RhsBlasTraits::DirectLinearAccessType;
+  using ActualRhsTypeCleaned = internal::remove_all_t<ActualRhsType>;
 
   enum { LhsUpLo = LhsMode & (Upper | Lower) };
 
@@ -335,17 +336,19 @@ struct selfadjoint_product_impl<Lhs, LhsMode, false, Rhs, 0, true> {
 
   template <typename Dest>
   static EIGEN_DEVICE_FUNC void run(Dest& dest, const Lhs& a_lhs, const Rhs& a_rhs, const Scalar& alpha) {
-    typedef typename Dest::Scalar ResScalar;
-    typedef typename Rhs::Scalar RhsScalar;
-    typedef Map<Matrix<ResScalar, Dynamic, 1>, plain_enum_min(AlignedMax, internal::packet_traits<ResScalar>::size)>
-        MappedDest;
+    using ResScalar = typename Dest::Scalar;
+    using RhsScalar = typename Rhs::Scalar;
 
     eigen_assert(dest.rows() == a_lhs.rows() && dest.cols() == a_rhs.cols());
 
     add_const_on_value_type_t<ActualLhsType> lhs = LhsBlasTraits::extract(a_lhs);
     add_const_on_value_type_t<ActualRhsType> rhs = RhsBlasTraits::extract(a_rhs);
 
-    Scalar actualAlpha = alpha * LhsBlasTraits::extractScalarFactor(a_lhs) * RhsBlasTraits::extractScalarFactor(a_rhs);
+    // Empty product, return early.  Otherwise, we get `nullptr` use errors below when we try to access
+    // coeffRef(0,0).
+    if (lhs.size() == 0) return;
+
+    Scalar actualAlpha = combine_scalar_factors(alpha, a_lhs, a_rhs);
 
     enum {
       EvalToDest = (Dest::InnerStrideAtCompileTime == 1),
@@ -364,23 +367,8 @@ struct selfadjoint_product_impl<Lhs, LhsMode, false, Rhs, 0, true> {
     ei_declare_aligned_stack_constructed_variable(RhsScalar, actualRhsPtr, rhs.size(),
                                                   UseRhs ? const_cast<RhsScalar*>(rhs.data()) : static_rhs.data());
 
-    if (!EvalToDest) {
-#ifdef EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-      constexpr int Size = Dest::SizeAtCompileTime;
-      Index size = dest.size();
-      EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-#endif
-      MappedDest(actualDestPtr, dest.size()) = dest;
-    }
-
-    if (!UseRhs) {
-#ifdef EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-      constexpr int Size = ActualRhsTypeCleaned::SizeAtCompileTime;
-      Index size = rhs.size();
-      EIGEN_DENSE_STORAGE_CTOR_PLUGIN
-#endif
-      Map<typename ActualRhsTypeCleaned::PlainObject>(actualRhsPtr, rhs.size()) = rhs;
-    }
+    internal::gemv_prepare_destination<EvalToDest>(dest, actualDestPtr);
+    internal::gemv_prepare_rhs<UseRhs>(rhs, actualRhsPtr);
 
     internal::selfadjoint_matrix_vector_product<
         Scalar, Index, (internal::traits<ActualLhsTypeCleaned>::Flags & RowMajorBit) ? RowMajor : ColMajor,
@@ -392,13 +380,13 @@ struct selfadjoint_product_impl<Lhs, LhsMode, false, Rhs, 0, true> {
                                                    actualAlpha                              // scale factor
     );
 
-    if (!EvalToDest) dest = MappedDest(actualDestPtr, dest.size());
+    internal::gemv_copy_destination<EvalToDest>(dest, actualDestPtr);
   }
 };
 
 template <typename Lhs, typename Rhs, int RhsMode>
 struct selfadjoint_product_impl<Lhs, 0, true, Rhs, RhsMode, false> {
-  typedef typename Product<Lhs, Rhs>::Scalar Scalar;
+  using Scalar = typename Product<Lhs, Rhs>::Scalar;
   enum { RhsUpLo = RhsMode & (Upper | Lower) };
 
   template <typename Dest>

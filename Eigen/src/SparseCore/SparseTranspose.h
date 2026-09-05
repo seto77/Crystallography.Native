@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPARSETRANSPOSE_H
 #define EIGEN_SPARSETRANSPOSE_H
@@ -21,12 +22,12 @@ class SparseTransposeImpl : public SparseMatrixBase<Transpose<MatrixType> > {};
 
 template <typename MatrixType>
 class SparseTransposeImpl<MatrixType, CompressedAccessBit> : public SparseCompressedBase<Transpose<MatrixType> > {
-  typedef SparseCompressedBase<Transpose<MatrixType> > Base;
+  using Base = SparseCompressedBase<Transpose<MatrixType>>;
 
  public:
   using Base::derived;
-  typedef typename Base::Scalar Scalar;
-  typedef typename Base::StorageIndex StorageIndex;
+  using Scalar = typename Base::Scalar;
+  using StorageIndex = typename Base::StorageIndex;
 
   inline Index nonZeros() const { return derived().nestedExpression().nonZeros(); }
 
@@ -45,17 +46,17 @@ class SparseTransposeImpl<MatrixType, CompressedAccessBit> : public SparseCompre
 template <typename MatrixType>
 class TransposeImpl<MatrixType, Sparse> : public internal::SparseTransposeImpl<MatrixType> {
  protected:
-  typedef internal::SparseTransposeImpl<MatrixType> Base;
+  using Base = internal::SparseTransposeImpl<MatrixType>;
 };
 
 namespace internal {
 
 template <typename ArgType>
 struct unary_evaluator<Transpose<ArgType>, IteratorBased> : public evaluator_base<Transpose<ArgType> > {
-  typedef typename evaluator<ArgType>::InnerIterator EvalIterator;
+  using EvalIterator = typename evaluator<ArgType>::InnerIterator;
 
  public:
-  typedef Transpose<ArgType> XprType;
+  using XprType = Transpose<ArgType>;
 
   inline Index nonZerosEstimate() const { return m_argImpl.nonZerosEstimate(); }
 

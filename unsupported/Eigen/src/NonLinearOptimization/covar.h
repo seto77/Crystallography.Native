@@ -1,4 +1,10 @@
 // IWYU pragma: private
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_NONLINEAROPTIMIZATION_COVAR_H
+#define EIGEN_NONLINEAROPTIMIZATION_COVAR_H
+
 #include "./InternalHeaderCheck.h"
 
 namespace Eigen {
@@ -7,7 +13,7 @@ namespace internal {
 
 template <typename Scalar>
 void covar(Matrix<Scalar, Dynamic, Dynamic> &r, const VectorXi &ipvt,
-           Scalar tol = std::sqrt(NumTraits<Scalar>::epsilon())) {
+           Scalar tol = numext::sqrt(NumTraits<Scalar>::epsilon())) {
   using std::abs;
   typedef DenseIndex Index;
 
@@ -64,3 +70,5 @@ void covar(Matrix<Scalar, Dynamic, Dynamic> &r, const VectorXi &ipvt,
 }  // end namespace internal
 
 }  // end namespace Eigen
+
+#endif  // EIGEN_NONLINEAROPTIMIZATION_COVAR_H

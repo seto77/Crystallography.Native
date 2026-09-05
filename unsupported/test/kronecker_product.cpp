@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifdef EIGEN_TEST_PART_1
 
@@ -176,6 +177,23 @@ EIGEN_DECLARE_TEST(kronecker_product) {
   DM_b2 = Eigen::MatrixXd::Random(4, 8);
   DM_ab2 = kroneckerProduct(DM_a2, DM_b2);
   CALL_SUBTEST(check_dimension(DM_ab2, 10 * 4, 9 * 8));
+
+  // test linear coefficient access for vector results
+  Vector2i vector_a;
+  vector_a << 10, 20;
+  Vector3i vector_b;
+  vector_b << 1, 2, 3;
+  Matrix<int, 6, 1> vector_ab = kroneckerProduct(vector_a, vector_b);
+  for (Index i = 0; i < vector_ab.size(); ++i)
+    VERIFY_IS_EQUAL(kroneckerProduct(vector_a, vector_b).coeff(i), vector_ab.coeff(i));
+
+  RowVector2i row_vector_a;
+  row_vector_a << 10, 20;
+  Matrix<int, 1, 3> row_vector_b;
+  row_vector_b << 1, 2, 3;
+  Matrix<int, 1, 6> row_vector_ab = kroneckerProduct(row_vector_a, row_vector_b);
+  for (Index i = 0; i < row_vector_ab.size(); ++i)
+    VERIFY_IS_EQUAL(kroneckerProduct(row_vector_a, row_vector_b).coeff(i), row_vector_ab.coeff(i));
 
   for (int i = 0; i < g_repeat; i++) {
     double density = Eigen::internal::random<double>(0.01, 0.5);

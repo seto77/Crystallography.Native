@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include <limits.h>
 #include "main.h"
@@ -50,15 +51,12 @@ void array_special_functions() {
   // API
   {
     ArrayType m1 = ArrayType::Random(rows, cols);
-#if EIGEN_HAS_C99_MATH
     VERIFY_IS_APPROX(m1.lgamma(), lgamma(m1));
     VERIFY_IS_APPROX(m1.digamma(), digamma(m1));
     VERIFY_IS_APPROX(m1.erf(), erf(m1));
     VERIFY_IS_APPROX(m1.erfc(), erfc(m1));
-#endif  // EIGEN_HAS_C99_MATH
   }
 
-#if EIGEN_HAS_C99_MATH
   // check special functions (comparing against numpy implementation)
   if (!NumTraits<Scalar>::IsComplex) {
     {
@@ -153,7 +151,6 @@ void array_special_functions() {
       }
     }
   }
-#endif  // EIGEN_HAS_C99_MATH
 
   // Check the ndtri function against scipy.special.ndtri
   {
@@ -186,17 +183,16 @@ void array_special_functions() {
 
   // digamma
   {
-    ArrayType x(9), res(9), ref(9);
-    x << 1, 1.5, 4, -10.5, 10000.5, 0, -1, -2, -3;
-    ref << -0.5772156649015329, 0.03648997397857645, 1.2561176684318, 2.398239129535781, 9.210340372392849, nan, nan,
-        nan, nan;
+    ArrayType x(10), res(10), ref(10);
+    x << 1, 1.5, 4, -10.5, 10000.5, 0.0, -0.0, -1, -2, -3;
+    ref << -0.5772156649015329, 0.03648997397857645, 1.2561176684318, 2.398239129535781, 9.210340372392849, -plusinf,
+        plusinf, nan, nan, nan;
     CALL_SUBTEST(verify_component_wise(ref, ref););
 
     CALL_SUBTEST(res = x.digamma(); verify_component_wise(res, ref););
     CALL_SUBTEST(res = digamma(x); verify_component_wise(res, ref););
   }
 
-#if EIGEN_HAS_C99_MATH
   {
     ArrayType n(16), x(16), res(16), ref(16);
     n << 1, 1, 1, 1.5, 17, 31, 28, 8, 42, 147, 170, -1, 0, 1, 2, 3;
@@ -214,9 +210,7 @@ void array_special_functions() {
       CALL_SUBTEST(res = polygamma(n, x); verify_component_wise(res.head(8), ref.head(8)););
     }
   }
-#endif
 
-#if EIGEN_HAS_C99_MATH
   {
     // Inputs and ground truth generated with scipy via:
     //   a = np.logspace(-3, 3, 5) - 1e-3
@@ -334,7 +328,6 @@ void array_special_functions() {
         ArrayType expected = betainc(a, b, x) + num / denom + eps; ArrayType test = betainc(a, b + one, x) + eps;
         verify_component_wise(test, expected););
   }
-#endif  // EIGEN_HAS_C99_MATH
 
   /* Code to generate the data for the following two test cases.
   N = 5
@@ -363,7 +356,6 @@ void array_special_functions() {
   v_gamma_sample_der_alpha = np.vectorize(gamma_sample_der_alpha)(a, x)
 */
 
-#if EIGEN_HAS_C99_MATH
   // Test igamma_der_a
   {
     ArrayType a(30);
@@ -413,13 +405,219 @@ void array_special_functions() {
 
     CALL_SUBTEST(res = gamma_sample_der_alpha(alpha, sample); verify_component_wise(res, v););
   }
-#endif  // EIGEN_HAS_C99_MATH
+}
+
+template <typename Scalar>
+void scalar_ndtri() {
+  const Scalar sign_mask = internal::psignmask<Scalar>();
+  VERIFY_IS_EQUAL(sign_mask, Scalar(0));
+  VERIFY((std::signbit)(sign_mask));
+
+  const Scalar packet_inf = internal::pinf<Scalar>();
+  const Scalar packet_nan = internal::pnan<Scalar>();
+  VERIFY((numext::isinf)(packet_inf));
+  VERIFY(packet_inf > Scalar(0));
+  VERIFY((numext::isnan)(packet_nan));
+
+  const Scalar expected_quartile = Scalar(0.6744897501960817432L);
+  const Scalar lower_quartile = numext::ndtri(Scalar(0.25L));
+  const Scalar upper_quartile = numext::ndtri(Scalar(0.75L));
+  VERIFY_IS_APPROX(lower_quartile, -expected_quartile);
+  VERIFY_IS_APPROX(upper_quartile, expected_quartile);
+
+  // These exactly complementary binary values exercise the scalar flipsign path in the tail approximation.
+  const Scalar lower_tail = numext::ndtri(Scalar(0.125L));
+  const Scalar upper_tail = numext::ndtri(Scalar(0.875L));
+  VERIFY(lower_tail < Scalar(0));
+  VERIFY(upper_tail > Scalar(0));
+  VERIFY_IS_APPROX(lower_tail, -upper_tail);
+
+  VERIFY_IS_EQUAL(numext::ndtri(Scalar(0.5L)), Scalar(0));
+  const Scalar negative_inf = numext::ndtri(Scalar(0));
+  const Scalar positive_inf = numext::ndtri(Scalar(1));
+  VERIFY((numext::isinf)(negative_inf));
+  VERIFY((numext::isinf)(positive_inf));
+  VERIFY(negative_inf < Scalar(0));
+  VERIFY(positive_inf > Scalar(0));
+}
+
+// A scalar type without a vectorized erf/erfc implementation must defer to
+// std::erf/std::erfc instead of the float/double-tuned polynomials.
+template <typename Scalar>
+void scalar_erf_erfc() {
+  EIGEN_USING_STD(erf);
+  EIGEN_USING_STD(erfc);
+  // Approximate comparison: the compiler may constant-fold one side to the
+  // correctly rounded value while the other runs the libm implementation.
+  for (Scalar x : {Scalar(-2.5L), Scalar(-0.5L), Scalar(0.0L), Scalar(0.25L), Scalar(3.0L)}) {
+    VERIFY_IS_APPROX(numext::erf(x), Scalar(erf(x)));
+    VERIFY_IS_APPROX(numext::erfc(x), Scalar(erfc(x)));
+  }
+}
+
+namespace custom_scalar {
+// Minimal custom real scalar providing erf/erfc via argument-dependent lookup,
+// the way multiprecision types do. numext::erf/erfc must route to these instead
+// of the float/double-tuned polynomials (issue #3023).
+struct CustomReal {
+  double value;
+  CustomReal() : value(0) {}
+  explicit CustomReal(double v) : value(v) {}
+};
+inline CustomReal erf(const CustomReal& x) { return CustomReal(std::erf(x.value)); }
+inline CustomReal erfc(const CustomReal& x) { return CustomReal(std::erfc(x.value)); }
+
+// The shape of boost::numeric::interval: neither erf nor erfc. Eigen's
+// approximations are not valid for such a type, so it must not be routed into
+// them; see failtest/erf_no_scalar_overload.cpp for the resulting error.
+struct NoErfReal {
+  double value;
+};
+}  // namespace custom_scalar
+
+namespace Eigen {
+template <>
+struct NumTraits<custom_scalar::CustomReal> : NumTraits<double> {
+  using Real = custom_scalar::CustomReal;
+  using NonInteger = custom_scalar::CustomReal;
+  using Nested = custom_scalar::CustomReal;
+};
+}  // namespace Eigen
+
+void custom_scalar_erf_erfc() {
+  using custom_scalar::CustomReal;
+  using custom_scalar::NoErfReal;
+  // Pin the routing decision in both directions.
+  STATIC_CHECK((internal::has_erf<CustomReal>::value));
+  STATIC_CHECK((internal::has_erfc<CustomReal>::value));
+  STATIC_CHECK((internal::has_erf<long double>::value));
+  STATIC_CHECK((internal::has_erfc<long double>::value));
+  STATIC_CHECK((!internal::has_erf<NoErfReal>::value));
+  STATIC_CHECK((!internal::has_erfc<NoErfReal>::value));
+
+  Eigen::Array<CustomReal, 4, 1> x;
+  x(0) = CustomReal(-2.5);
+  x(1) = CustomReal(-0.5);
+  x(2) = CustomReal(0.25);
+  x(3) = CustomReal(3.0);
+  Eigen::Array<CustomReal, 4, 1> e = x.erf();
+  Eigen::Array<CustomReal, 4, 1> c = x.erfc();
+  // The polynomial paths cannot even be instantiated for CustomReal, so
+  // compiling proves the routing; the value check guards the plumbing.
+  for (int i = 0; i < 4; ++i) {
+    VERIFY_IS_APPROX(e(i).value, std::erf(x(i).value));
+    VERIFY_IS_APPROX(c(i).value, std::erfc(x(i).value));
+  }
+}
+
+template <typename Scalar>
+void test_special_functions_edge_cases() {
+  const Scalar plusinf = std::numeric_limits<Scalar>::infinity();
+  const Scalar nan = std::numeric_limits<Scalar>::quiet_NaN();
+  const Scalar max_val = (std::numeric_limits<Scalar>::max)();
+  const Scalar denorm_min = std::numeric_limits<Scalar>::denorm_min();
+  const Scalar min_val = (std::numeric_limits<Scalar>::min)();
+
+  // Test scalar digamma edge cases
+  VERIFY_IS_EQUAL(numext::digamma(Scalar(0.0)), -plusinf);
+  VERIFY_IS_EQUAL(numext::digamma(Scalar(-0.0)), plusinf);
+  VERIFY((numext::isnan)(numext::digamma(Scalar(-1.0))));
+  VERIFY((numext::isnan)(numext::digamma(Scalar(-2.0))));
+  VERIFY_IS_EQUAL(numext::digamma(plusinf), plusinf);
+  VERIFY((numext::isnan)(numext::digamma(-plusinf)));
+  VERIFY((numext::isnan)(numext::digamma(nan)));
+
+  // Test polygamma at (0, 0)
+  VERIFY_IS_EQUAL(numext::polygamma(Scalar(0.0), Scalar(0.0)), -plusinf);
+  VERIFY_IS_EQUAL(numext::polygamma(Scalar(0.0), Scalar(-0.0)), plusinf);
+
+  // Test scalar erf/erfc edge cases
+  VERIFY_IS_EQUAL(numext::erf(Scalar(0.0)), Scalar(0.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(-0.0)), Scalar(-0.0));
+  VERIFY((std::signbit)(numext::erf(Scalar(-0.0))));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(10.0)), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(-10.0)), Scalar(-1.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(28.0)), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(-28.0)), Scalar(-1.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(100.0)), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erf(Scalar(-100.0)), Scalar(-1.0));
+  VERIFY_IS_EQUAL(numext::erf(max_val), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erf(-max_val), Scalar(-1.0));
+  VERIFY_IS_EQUAL(numext::erf(plusinf), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erf(-plusinf), Scalar(-1.0));
+  VERIFY((numext::isnan)(numext::erf(nan)));
+
+  VERIFY_IS_EQUAL(numext::erfc(Scalar(0.0)), Scalar(1.0));
+  VERIFY_IS_EQUAL(numext::erfc(Scalar(28.0)), Scalar(0.0));
+  VERIFY_IS_EQUAL(numext::erfc(Scalar(-28.0)), Scalar(2.0));
+  VERIFY_IS_EQUAL(numext::erfc(Scalar(100.0)), Scalar(0.0));
+  VERIFY_IS_EQUAL(numext::erfc(Scalar(-100.0)), Scalar(2.0));
+  VERIFY_IS_EQUAL(numext::erfc(max_val), Scalar(0.0));
+  VERIFY_IS_EQUAL(numext::erfc(-max_val), Scalar(2.0));
+  VERIFY_IS_EQUAL(numext::erfc(plusinf), Scalar(0.0));
+  VERIFY_IS_EQUAL(numext::erfc(-plusinf), Scalar(2.0));
+  VERIFY((numext::isnan)(numext::erfc(nan)));
+
+  if (sizeof(Scalar) >= 8) {
+    VERIFY_IS_EQUAL(numext::erf(Scalar(1e200)), Scalar(1.0));
+    VERIFY_IS_EQUAL(numext::erf(Scalar(-1e200)), Scalar(-1.0));
+    VERIFY_IS_EQUAL(numext::erfc(Scalar(1e200)), Scalar(0.0));
+    VERIFY_IS_EQUAL(numext::erfc(Scalar(-1e200)), Scalar(2.0));
+  } else {
+    VERIFY_IS_EQUAL(numext::erf(Scalar(1e30f)), Scalar(1.0));
+    VERIFY_IS_EQUAL(numext::erf(Scalar(-1e30f)), Scalar(-1.0));
+    VERIFY_IS_EQUAL(numext::erfc(Scalar(1e30f)), Scalar(0.0));
+    VERIFY_IS_EQUAL(numext::erfc(Scalar(-1e30f)), Scalar(2.0));
+  }
+
+  // Denormals / subnormals
+  if (denorm_min > Scalar(0)) {
+    VERIFY(numext::erf(denorm_min) > Scalar(0));
+    VERIFY(numext::erf(-denorm_min) < Scalar(0));
+  }
+  VERIFY(numext::erf(min_val) > Scalar(0));
+  VERIFY(numext::erf(-min_val) < Scalar(0));
+
+  // Array / vectorized edge cases
+  using ArrayType = Array<Scalar, Dynamic, 1>;
+  ArrayType x(14), erf_ref(14), erfc_ref(14);
+  Scalar large_val = (sizeof(Scalar) >= 8) ? Scalar(1e200) : Scalar(1e30f);
+  x << Scalar(0.0), Scalar(-0.0), denorm_min, min_val, Scalar(2.0), Scalar(-2.0), Scalar(28.0), Scalar(-28.0),
+      large_val, -large_val, max_val, -max_val, plusinf, -plusinf;
+  erf_ref << Scalar(0.0), Scalar(-0.0), numext::erf(denorm_min), numext::erf(min_val), Scalar(std::erf(2.0)),
+      Scalar(std::erf(-2.0)), Scalar(1.0), Scalar(-1.0), Scalar(1.0), Scalar(-1.0), Scalar(1.0), Scalar(-1.0),
+      Scalar(1.0), Scalar(-1.0);
+  erfc_ref << Scalar(1.0), Scalar(1.0), numext::erfc(denorm_min), numext::erfc(min_val), Scalar(std::erfc(2.0)),
+      Scalar(std::erfc(-2.0)), Scalar(0.0), Scalar(2.0), Scalar(0.0), Scalar(2.0), Scalar(0.0), Scalar(2.0),
+      Scalar(0.0), Scalar(2.0);
+
+  ArrayType erf_res = x.erf();
+  verify_component_wise(erf_res, erf_ref);
+  erf_res = erf(x);
+  verify_component_wise(erf_res, erf_ref);
+
+  ArrayType erfc_res = x.erfc();
+  verify_component_wise(erfc_res, erfc_ref);
+  erfc_res = erfc(x);
+  verify_component_wise(erfc_res, erfc_ref);
+
+  // Array with NaN
+  ArrayType x_nan(3), erf_nan_ref(3);
+  x_nan << Scalar(1.0), nan, Scalar(-1.0);
+  erf_nan_ref << Scalar(std::erf(1.0)), nan, Scalar(std::erf(-1.0));
+  ArrayType erf_nan_res = x_nan.erf();
+  verify_component_wise(erf_nan_res, erf_nan_ref);
 }
 
 EIGEN_DECLARE_TEST(special_functions) {
   CALL_SUBTEST_1(array_special_functions<ArrayXf>());
+  CALL_SUBTEST_1(test_special_functions_edge_cases<float>());
   CALL_SUBTEST_2(array_special_functions<ArrayXd>());
+  CALL_SUBTEST_2(test_special_functions_edge_cases<double>());
+  CALL_SUBTEST_3(scalar_ndtri<long double>());
+  CALL_SUBTEST_4(scalar_erf_erfc<long double>());
+  CALL_SUBTEST_5(custom_scalar_erf_erfc());
   // TODO(cantonios): half/bfloat16 don't have enough precision to reproduce results above.
-  // CALL_SUBTEST_3(array_special_functions<ArrayX<Eigen::half>>());
-  // CALL_SUBTEST_4(array_special_functions<ArrayX<Eigen::bfloat16>>());
+  // CALL_SUBTEST_4(array_special_functions<ArrayX<Eigen::half>>());
+  // CALL_SUBTEST_5(array_special_functions<ArrayX<Eigen::bfloat16>>());
 }

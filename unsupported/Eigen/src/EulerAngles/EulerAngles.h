@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_EULERANGLESCLASS_H  // TODO: Fix previous "EIGEN_EULERANGLES_H" definition?
 #define EIGEN_EULERANGLESCLASS_H
@@ -28,7 +29,7 @@ namespace Eigen {
  *  - then, rotate the axes system over the beta axis(which was rotated in the first stage) in angle beta
  *  - then, rotate the axes system over the gamma axis(which was rotated in the two stages above) in angle gamma
  *
- * \note This class support only intrinsic Euler angles for simplicity,
+ * \note This class supports only intrinsic Euler angles for simplicity,
  *  see EulerSystem how to easily overcome this for extrinsic systems.
  *
  * ### Rotation representation and conversions ###
@@ -43,13 +44,13 @@ namespace Eigen {
  *  - gimbal systems and robotics
  *  - efficient encoding(i.e. 3 floats only) of rotation for network protocols.
  *
- * However, Euler angles are slow comparing to quaternion or matrices,
- *  because their unnatural math definition, although it's simple for human.
- * To overcome this, this class provide easy movement from the math friendly representation
- *  to the human friendly representation, and vise-versa.
+ * However, Euler angles are slow compared to quaternion or matrices,
+ *  because of their unnatural math definition, although it's simple for human.
+ * To overcome this, this class provides easy movement from the math friendly representation
+ *  to the human friendly representation, and vice-versa.
  *
- * All the user need to do is a safe simple C++ type conversion,
- *  and this class take care for the math.
+ * All the user needs to do is a safe simple C++ type conversion,
+ *  and this class takes care of the math.
  * Additionally, some axes related computation is done in compile time.
  *
  * #### Euler angles ranges in conversions ####
@@ -60,8 +61,8 @@ namespace Eigen {
  * This is the general reason for infinite representation,
  *  but it's not the only general reason for not having a single representation.
  *
- * When converting rotation to EulerAngles, this class convert it to specific ranges
- * When converting some rotation to EulerAngles, the rules for ranges are as follow:
+ * When converting rotation to EulerAngles, this class converts it to specific ranges
+ * When converting some rotation to EulerAngles, the rules for ranges are as follows:
  * - If the rotation we converting from is an EulerAngles
  *  (even when it represented as RotationBase explicitly), angles ranges are __undefined__.
  * - otherwise, alpha and gamma angles will be in the range [-PI, PI].<BR>
@@ -80,8 +81,8 @@ namespace Eigen {
  *  in a form of EulerAngles{A}{B}{C}{scalar},
  *  e.g. \ref EulerAnglesXYZd, \ref EulerAnglesZYZf.
  *
- * Only for positive axes{+x,+y,+z} Euler systems are have convenient typedef.
- * If you need negative axes{-x,-y,-z}, it is recommended to create you own typedef with
+ * Only for positive axes{+x,+y,+z} Euler systems have a convenient typedef.
+ * If you need negative axes{-x,-y,-z}, it is recommended to create your own typedef with
  *  a word that represent what you need.
  *
  * ### Example ###
@@ -91,7 +92,7 @@ namespace Eigen {
  *
  * ### Additional reading ###
  *
- * If you're want to get more idea about how Euler system work in Eigen see EulerSystem.
+ * If you want to get more idea about how Euler systems work in Eigen see EulerSystem.
  *
  * More information about Euler angles: https://en.wikipedia.org/wiki/Euler_angles
  *
@@ -151,7 +152,7 @@ class EulerAngles : public RotationBase<EulerAngles<Scalar_, _System>, 3> {
    *  - a 3x3 rotation matrix expression(i.e. pure orthogonal matrix with determinant of +1),
    *  - a 3D vector expression representing Euler angles.
    *
-   * \note If \p other is a 3x3 rotation matrix, the angles range rules will be as follow:<BR>
+   * \note If \p other is a 3x3 rotation matrix, the angles range rules will be as follows:<BR>
    *  Alpha and gamma angles will be in the range [-PI, PI].<BR>
    *  As for Beta angle:
    *   - If the system is Tait-Bryan, the beta angle will be in the range [-PI/2, PI/2].
@@ -214,8 +215,13 @@ class EulerAngles : public RotationBase<EulerAngles<Scalar_, _System>, 3> {
   /** \returns A read-write reference to the angle of the third angle. */
   Scalar& gamma() { return m_angles[2]; }
 
-  /** \returns The Euler angles rotation inverse (which is as same as the negative),
-   *  (-alpha, -beta, -gamma).
+  /** \returns The Euler angles with each angle negated, (-alpha, -beta, -gamma).
+   *
+   * \note In general these angles do not describe the inverse rotation: inverting
+   * \f$ R = R_\alpha R_\beta R_\gamma \f$ also reverses the order of the three factors. They do describe it
+   * whenever the three elemental rotations commute, for instance when at most one of the angles is nonzero,
+   * and, for a system whose first and third axes coincide (a proper Euler system such as ZXZ), whenever
+   * \f$ \alpha = \gamma \f$, for any \f$ \beta \f$.
    */
   EulerAngles inverse() const {
     EulerAngles res;
@@ -223,8 +229,10 @@ class EulerAngles : public RotationBase<EulerAngles<Scalar_, _System>, 3> {
     return res;
   }
 
-  /** \returns The Euler angles rotation negative (which is as same as the inverse),
+  /** \returns The Euler angles negative (which is the same as inverse()),
    *  (-alpha, -beta, -gamma).
+   *
+   * \sa inverse()
    */
   EulerAngles operator-() const { return inverse(); }
 
@@ -238,7 +246,7 @@ class EulerAngles : public RotationBase<EulerAngles<Scalar_, _System>, 3> {
   template <class Derived>
   EulerAngles& operator=(const MatrixBase<Derived>& other) {
     EIGEN_STATIC_ASSERT(
-        (internal::is_same<Scalar, typename Derived::Scalar>::value),
+        (std::is_same<Scalar, typename Derived::Scalar>::value),
         YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
 
     internal::eulerangles_assign_impl<System, Derived>::run(*this, other.derived());
@@ -314,6 +322,9 @@ class EulerAngles : public RotationBase<EulerAngles<Scalar_, _System>, 3> {
 
 EIGEN_EULER_ANGLES_TYPEDEFS(float, f)
 EIGEN_EULER_ANGLES_TYPEDEFS(double, d)
+
+#undef EIGEN_EULER_ANGLES_TYPEDEFS
+#undef EIGEN_EULER_ANGLES_SINGLE_TYPEDEF
 
 // Specifically-referenced instantiations.
 /** \typedef EulerAnglesXYZd

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COREITERATORS_H
 #define EIGEN_COREITERATORS_H
@@ -36,9 +37,9 @@ class inner_iterator_selector;
 template <typename XprType>
 class InnerIterator {
  protected:
-  typedef internal::inner_iterator_selector<XprType, typename internal::evaluator_traits<XprType>::Kind> IteratorType;
-  typedef internal::evaluator<XprType> EvaluatorType;
-  typedef typename internal::traits<XprType>::Scalar Scalar;
+  using IteratorType = internal::inner_iterator_selector<XprType, typename internal::evaluator_traits<XprType>::Kind>;
+  using EvaluatorType = internal::evaluator<XprType>;
+  using Scalar = typename internal::traits<XprType>::Scalar;
 
  public:
   /** Construct an iterator over the \a outerId -th row or column of \a xpr */
@@ -90,8 +91,8 @@ namespace internal {
 template <typename XprType>
 class inner_iterator_selector<XprType, IndexBased> {
  protected:
-  typedef evaluator<XprType> EvaluatorType;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using EvaluatorType = evaluator<XprType>;
+  using Scalar = typename traits<XprType>::Scalar;
   enum { IsRowMajor = (XprType::Flags & RowMajorBit) == RowMajorBit };
 
  public:
@@ -125,8 +126,8 @@ class inner_iterator_selector<XprType, IndexBased> {
 template <typename XprType>
 class inner_iterator_selector<XprType, IteratorBased> : public evaluator<XprType>::InnerIterator {
  protected:
-  typedef typename evaluator<XprType>::InnerIterator Base;
-  typedef evaluator<XprType> EvaluatorType;
+  using Base = typename evaluator<XprType>::InnerIterator;
+  using EvaluatorType = evaluator<XprType>;
 
  public:
   EIGEN_STRONG_INLINE inner_iterator_selector(const EvaluatorType &eval, const Index &outerId,

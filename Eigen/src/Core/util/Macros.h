@@ -7,11 +7,17 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MACROS_H
 #define EIGEN_MACROS_H
 // IWYU pragma: private
 #include "../InternalHeaderCheck.h"
+
+// for __cpp_lib feature test macros
+#if defined(__has_include) && __has_include(<version>)
+#include <version>
+#endif
 
 //------------------------------------------------------------------------------------------
 // Eigen version and basic defaults
@@ -50,6 +56,9 @@
 #ifndef EIGEN_STACK_ALLOCATION_LIMIT
 // 131072 == 128 KB
 #define EIGEN_STACK_ALLOCATION_LIMIT 131072
+// Marks the limit above as Eigen's own, so that a backend needing more room can raise it without
+// overriding a caller's stack-safety policy. ConfigureVectorization.h consumes and undefines it.
+#define EIGEN_STACK_ALLOCATION_LIMIT_WAS_DEFAULTED
 #endif
 
 /* Specify whether to use std::fma for scalar multiply-add instructions.
@@ -83,7 +92,7 @@
 #define EIGEN_COMP_GNUC 0
 #endif
 
-/// \internal EIGEN_COMP_CLANG set to version (e.g., 372 for clang 3.7.2) if the compiler is clang
+/// \internal EIGEN_COMP_CLANG set to version (e.g., 1400 for clang 14.0.0) if the compiler is clang
 #if defined(__clang__)
 #define EIGEN_COMP_CLANG (__clang_major__ * 100 + __clang_minor__ * 10 + __clang_patchlevel__)
 #else
@@ -148,13 +157,8 @@
 #endif
 
 #if defined(__NVCC__)
-#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 9)
+// CUDA 11.4+ always defines __CUDACC_VER_MAJOR__.
 #define EIGEN_COMP_NVCC ((__CUDACC_VER_MAJOR__ * 10000) + (__CUDACC_VER_MINOR__ * 100))
-#elif defined(__CUDACC_VER__)
-#define EIGEN_COMP_NVCC __CUDACC_VER__
-#else
-#error "NVCC did not define compiler version."
-#endif
 #else
 #define EIGEN_COMP_NVCC 0
 #endif
@@ -301,6 +305,25 @@
 #define EIGEN_GNUC_STRICT_LESS_THAN(x, y, z) 0
 #endif
 
+// Work around GCC PR tree-optimization/92420, which miscompiles some packetized complex arithmetic under -ffast-math.
+// The bug was introduced by GCC r238039, fixed on the GCC 8 branch by
+// https://gcc.gnu.org/g:785eda9390473e42f0e0b7199c42032a0432de68 and on the GCC 9 branch by
+// https://gcc.gnu.org/g:2d8ea3a0a6095a56b7c59c50b1068d602cde934a.
+// See also GitLab issues #1839 and #1840.
+#if defined(__FAST_MATH__) && EIGEN_COMP_GNUC_STRICT && EIGEN_GNUC_STRICT_AT_LEAST(7, 0, 0) && \
+    (EIGEN_GNUC_STRICT_LESS_THAN(8, 4, 0) ||                                                   \
+     (EIGEN_GNUC_STRICT_AT_LEAST(9, 0, 0) && EIGEN_GNUC_STRICT_LESS_THAN(9, 3, 0)))
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_BUG 1
+// Disable the affected loop vectorizer around the complex packet helpers.
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_PUSH \
+  _Pragma("GCC push_options") _Pragma("GCC optimize(\"no-tree-loop-vectorize\")")
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_POP _Pragma("GCC pop_options")
+#else
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_BUG 0
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_PUSH
+#define EIGEN_GCC_FAST_MATH_COMPLEX_VECTORIZE_WORKAROUND_POP
+#endif
+
 /// \internal EIGEN_COMP_CLANG_STRICT set to 1 if the compiler is really Clang and not a compatible compiler (e.g.,
 /// AppleClang, etc.)
 #if EIGEN_COMP_CLANG && !(EIGEN_COMP_CLANGAPPLE || EIGEN_COMP_CLANGICC || EIGEN_COMP_CLANGFCC || EIGEN_COMP_CLANGCPE)
@@ -375,13 +398,13 @@
 
 /// \internal EIGEN_HAS_ARM64_FP16 set to 1 if the architecture provides an IEEE
 /// compliant Arm fp16 type
-#if EIGEN_ARCH_ARM_OR_ARM64
 #ifndef EIGEN_HAS_ARM64_FP16
-#if defined(__ARM_FP16_FORMAT_IEEE)
+// NOTE: Older versions of Clang miscompile `__fp16` implicit conversions to `float`
+// on ARMv7 targets: <https://gitlab.com/libeigen/eigen/-/merge_requests/2273#note_3400347860>.
+#if EIGEN_ARCH_ARMV8 && defined(__ARM_FP16_FORMAT_IEEE)
 #define EIGEN_HAS_ARM64_FP16 1
 #else
 #define EIGEN_HAS_ARM64_FP16 0
-#endif
 #endif
 #endif
 
@@ -451,8 +474,8 @@
 #define EIGEN_OS_ANDROID 1
 
 // Since NDK r16, `__NDK_MAJOR__` and `__NDK_MINOR__` are defined in
-// <android/ndk-version.h>. For NDK < r16, users should define these macros,
-// e.g. `-D__NDK_MAJOR__=11 -D__NKD_MINOR__=0` for NDK r11.
+// <android/ndk-version.h>. Include it when available so NDK-version-specific
+// workarounds can use these macros.
 #if defined __has_include
 #if __has_include(<android/ndk-version.h>)
 #include <android/ndk-version.h>
@@ -575,6 +598,18 @@
 #define EIGEN_CUDA_SDK_VER 0
 #endif
 
+#if defined(EIGEN_CUDACC) && EIGEN_CUDA_SDK_VER > 0 && EIGEN_CUDA_SDK_VER < 110400
+#error "Eigen requires CUDA 11.4 or later."
+#endif
+
+// Native FP16 packet math intrinsics (e.g. __hfma2, h2exp, h2log) are only
+// declared by the CUDA headers when __CUDA_ARCH__ >= 530. Guard the device
+// pass with a clear error rather than surfacing as "identifier `__hfma2` is
+// undefined" deep inside PacketMath.h.
+#if defined(EIGEN_CUDA_ARCH) && EIGEN_CUDA_ARCH < 600
+#error "Eigen requires CUDA compute capability >= 6.0 (sm_60). Compile with -arch=sm_60 or higher."
+#endif
+
 #if defined(__HIPCC__) && !defined(EIGEN_NO_HIP) && !defined(__SYCL_DEVICE_ONLY__)
 // Means the compiler is HIPCC (analogous to EIGEN_CUDACC, but for HIP)
 #define EIGEN_HIPCC __HIPCC__
@@ -584,29 +619,34 @@
 // ++ host_defines.h which contains the defines for the __host__ and __device__ macros
 #include <hip/hip_runtime.h>
 
+// Eigen requires ROCm/HIP >= 5.6 (GFX906 minimum architecture).
+// This floor exists to allow simplifying shared CUDA/HIP preprocessor guards —
+// all __HIP_ARCH_HAS_WARP_SHUFFLE__, __HIP_ARCH_HAS_FP16__, etc. are always true on GFX906+.
+#if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR < 5 || (HIP_VERSION_MAJOR == 5 && HIP_VERSION_MINOR < 6))
+#error "Eigen requires ROCm/HIP >= 5.6."
+#endif
+
 #if defined(__HIP_DEVICE_COMPILE__) && !defined(__SYCL_DEVICE_ONLY__)
 // analogous to EIGEN_CUDA_ARCH, but for HIP
 #define EIGEN_HIP_DEVICE_COMPILE __HIP_DEVICE_COMPILE__
 #endif
 
-// For HIP (ROCm 3.5 and higher), we need to explicitly set the launch_bounds attribute
-// value to 1024. The compiler assigns a default value of 256 when the attribute is not
-// specified. This results in failures on the HIP platform, for cases when a GPU kernel
-// without an explicit launch_bounds attribute is called with a threads_per_block value
-// greater than 256.
-//
-// This is a regression in functionality and is expected to be fixed within the next
-// couple of ROCm releases (compiler will go back to using 1024 value as the default)
-//
-// In the meantime, we will use a "only enabled for HIP" macro to set the launch_bounds
-// attribute.
+// HIP compilers default to launch_bounds(256), which causes failures when kernels
+// are called with more than 256 threads per block. On CUDA, without explicit
+// launch_bounds the compiler may over-allocate registers per thread, causing
+// cudaErrorLaunchOutOfResources for kernels launched with 1024 threads (e.g. 3D
+// convolution). Set to 1024 for all GPU compilers.
 
 #define EIGEN_HIP_LAUNCH_BOUNDS_1024 __launch_bounds__(1024)
 
 #endif
 
 #if !defined(EIGEN_HIP_LAUNCH_BOUNDS_1024)
+#if defined(EIGEN_CUDACC)
+#define EIGEN_HIP_LAUNCH_BOUNDS_1024 __launch_bounds__(1024)
+#else
 #define EIGEN_HIP_LAUNCH_BOUNDS_1024
+#endif
 #endif  // !defined(EIGEN_HIP_LAUNCH_BOUNDS_1024)
 
 // Unify CUDA/HIPCC
@@ -616,6 +656,16 @@
 // If either EIGEN_CUDACC or EIGEN_HIPCC is defined, then define EIGEN_GPUCC
 //
 #define EIGEN_GPUCC
+// NOTE: Some platforms (e.g. SPIRV) artificially set the CUDA SDK version to 0,
+// and don't support FP16, so we need to check the version number here.
+#if defined(EIGEN_CUDACC) && EIGEN_CUDA_SDK_VER >= 70500
+#define EIGEN_HAS_CUDA_FP16 1
+#elif defined(EIGEN_HIPCC)
+#define EIGEN_HAS_HIP_FP16 1
+#endif
+#if defined(EIGEN_HAS_CUDA_FP16) || defined(EIGEN_HAS_HIP_FP16)
+#define EIGEN_HAS_GPU_FP16 1
+#endif
 //
 // EIGEN_HIPCC implies the HIP compiler and is used to tweak Eigen code for use in HIP kernels
 // EIGEN_CUDACC implies the CUDA compiler and is used to tweak Eigen code for use in CUDA kernels
@@ -696,6 +746,21 @@
 #define SYCL_DEVICE_ONLY
 #endif
 
+// Under fast-math flags (-ffinite-math-only in particular), clang attaches the
+// `nofpclass(nan inf)` attribute to every function argument and return value of floating-point
+// (vector) type. A value that is a compile-time constant of NaN or infinity class -- e.g. the
+// all-ones bitmasks of ptrue and peven_mask, or the infinity/NaN constants guarding special
+// cases -- provably violates that attribute and is folded to poison, silently deleting the code
+// that consumes it. This barrier makes such a constant unprovable, at the cost of a stack
+// store/load pair where it is materialized. It uses a memory operand so that it works for any
+// packet type, including aggregates, and expands to nothing outside affected builds.
+#if EIGEN_COMP_CLANG && defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__ && !defined(EIGEN_GPU_COMPILE_PHASE) && \
+    !defined(SYCL_DEVICE_ONLY)
+#define EIGEN_FAST_MATH_CONSTANT_BARRIER(X) __asm__("" : "+m"(X))
+#else
+#define EIGEN_FAST_MATH_CONSTANT_BARRIER(X)
+#endif
+
 //------------------------------------------------------------------------------------------
 // Detect Compiler/Architecture/OS specific features
 //------------------------------------------------------------------------------------------
@@ -725,12 +790,12 @@
 //
 // With MSVC, without defining /Zc:__cplusplus, the __cplusplus macro will
 // report 199711L regardless of the language standard specified via /std.
-// We need to rely on _MSVC_LANG instead, which is only available after
-// VS2015.3.
+// We need to rely on _MSVC_LANG instead where available. Older MSVC versions
+// supported by Eigen do not define _MSVC_LANG, so use Eigen's minimum standard.
 #if EIGEN_COMP_MSVC_LANG > 0
 #define EIGEN_CPLUSPLUS EIGEN_COMP_MSVC_LANG
-#elif EIGEN_COMP_MSVC >= 1900
-#define EIGEN_CPLUSPLUS 201103L
+#elif EIGEN_COMP_MSVC
+#define EIGEN_CPLUSPLUS 201402L
 #elif defined(__cplusplus)
 #define EIGEN_CPLUSPLUS __cplusplus
 #else
@@ -746,40 +811,32 @@
 #define EIGEN_COMP_CXXVER 17
 #elif EIGEN_CPLUSPLUS >= 201402L
 #define EIGEN_COMP_CXXVER 14
-#elif EIGEN_CPLUSPLUS >= 201103L
-#define EIGEN_COMP_CXXVER 11
 #else
-#define EIGEN_COMP_CXXVER 03
+#define EIGEN_COMP_CXXVER 0
 #endif
 
 // The macros EIGEN_HAS_CXX?? defines a rough estimate of available c++ features
 // but in practice we should not rely on them but rather on the availability of
 // individual features as defined later.
 // This is why there is no EIGEN_HAS_CXX17.
-#if EIGEN_MAX_CPP_VER < 14 || EIGEN_COMP_CXXVER < 14 || (EIGEN_COMP_MSVC && EIGEN_COMP_MSVC < 1900) || \
-    (EIGEN_COMP_ICC && EIGEN_COMP_ICC < 1500) || (EIGEN_COMP_NVCC && EIGEN_COMP_NVCC < 80000) ||       \
-    (EIGEN_COMP_CLANG_STRICT && EIGEN_COMP_CLANG < 390) ||                                             \
+#if EIGEN_MAX_CPP_VER < 14 || EIGEN_COMP_CXXVER < 14 || (EIGEN_COMP_MSVC_STRICT && EIGEN_COMP_MSVC < 1910) || \
+    (EIGEN_COMP_ICC && EIGEN_COMP_ICC < 1700) || (EIGEN_COMP_NVCC && EIGEN_COMP_NVCC < 90000) ||              \
+    (EIGEN_COMP_CLANG_STRICT && EIGEN_COMP_CLANG < 390) ||                                                    \
     (EIGEN_COMP_CLANGAPPLE && EIGEN_COMP_CLANGAPPLE < 9000000) || (EIGEN_COMP_GNUC_STRICT && EIGEN_COMP_GNUC < 510)
 #error Eigen requires at least c++14 support.
 #endif
 
-// Does the compiler support C99?
-// Need to include <cmath> to make sure _GLIBCXX_USE_C99 gets defined
-#include <cmath>
+// Deprecated compatibility macro. Eigen requires C++14 and no longer uses this
+// token internally, but keep it defined so downstream #if EIGEN_HAS_C99_MATH
+// checks do not trip -Wundef.
 #ifndef EIGEN_HAS_C99_MATH
-#if ((defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901)) ||                                          \
-     (defined(__GNUC__) && defined(_GLIBCXX_USE_C99)) || (defined(_LIBCPP_VERSION) && !defined(_MSC_VER)) || \
-     (EIGEN_COMP_MSVC) || defined(SYCL_DEVICE_ONLY))
 #define EIGEN_HAS_C99_MATH 1
-#else
-#define EIGEN_HAS_C99_MATH 0
-#endif
 #endif
 
 // Does the compiler support std::hash?
 #ifndef EIGEN_HAS_STD_HASH
-// The std::hash struct is defined in C++11 but is not labelled as a __device__
-// function and is not constexpr, so cannot be used on device.
+// The std::hash struct is not labelled as a __device__ function and is not
+// constexpr, so cannot be used on device.
 #if !defined(EIGEN_GPU_COMPILE_PHASE)
 #define EIGEN_HAS_STD_HASH 1
 #else
@@ -806,8 +863,8 @@
 //       See https://gitlab.com/libeigen/eigen/-/issues/2575
 // Does the compiler support C++17 if constexpr?
 #ifndef EIGEN_HAS_CXX17_IFCONSTEXPR
-#if EIGEN_MAX_CPP_VER >= 17 && EIGEN_COMP_CXXVER >= 17 &&                                                            \
-    ((EIGEN_COMP_MSVC >= 1911) || (EIGEN_GNUC_STRICT_AT_LEAST(7, 0, 0)) || (EIGEN_CLANG_STRICT_AT_LEAST(3, 9, 0)) || \
+#if EIGEN_MAX_CPP_VER >= 17 && EIGEN_COMP_CXXVER >= 17 &&                                             \
+    ((EIGEN_COMP_MSVC >= 1911) || (EIGEN_GNUC_STRICT_AT_LEAST(7, 0, 0)) || EIGEN_COMP_CLANG_STRICT || \
      (EIGEN_COMP_CLANGAPPLE && EIGEN_COMP_CLANGAPPLE >= 10000000))
 #define EIGEN_HAS_CXX17_IFCONSTEXPR 1
 #endif
@@ -825,7 +882,7 @@
 #endif
 
 #if defined(EIGEN_CUDACC)
-// While available already with c++11, this is useful mostly starting with c++14 and relaxed constexpr rules
+// Enable device-side constexpr when the toolchain supports relaxed constexpr rules.
 #if defined(__NVCC__)
 // nvcc considers constexpr functions as __host__ __device__ with the option --expt-relaxed-constexpr
 #ifdef __CUDACC_RELAXED_CONSTEXPR__
@@ -896,14 +953,15 @@
 #endif
 #endif
 
-// EIGEN_ALWAYS_INLINE is the strongest, it has the effect of making the function inline and adding every possible
-// attribute to maximize inlining. This should only be used when really necessary: in particular,
-// it uses __attribute__((always_inline)) on GCC, which most of the time is useless and can severely harm compile times.
-// FIXME with the always_inline attribute,
+// EIGEN_ALWAYS_INLINE is the strongest default inline hint. It makes the function inline and, where supported,
+// adds attributes to maximize inlining. This should only be used when really necessary: in particular, the
+// __attribute__((always_inline)) used on GCC is often unnecessary and can severely harm compile times.
+#ifndef EIGEN_ALWAYS_INLINE
 #if EIGEN_COMP_GNUC && !defined(SYCL_DEVICE_ONLY)
 #define EIGEN_ALWAYS_INLINE __attribute__((always_inline)) inline
 #else
 #define EIGEN_ALWAYS_INLINE EIGEN_STRONG_INLINE
+#endif
 #endif
 
 // EIGEN_LAMBDA_ALWAYS_INLINE forces inlining of lambda functions.
@@ -911,18 +969,22 @@
 // On MSVC, [[msvc::forceinline]] cannot be applied to generic lambdas
 // (those with auto parameters), so we leave it empty and rely on the
 // optimizer to inline small lambda bodies at /O2.
+#ifndef EIGEN_LAMBDA_ALWAYS_INLINE
 #if EIGEN_COMP_GNUC && !defined(SYCL_DEVICE_ONLY)
 #define EIGEN_LAMBDA_ALWAYS_INLINE __attribute__((always_inline))
 #else
 #define EIGEN_LAMBDA_ALWAYS_INLINE
 #endif
+#endif
 
+#ifndef EIGEN_DONT_INLINE
 #if EIGEN_COMP_GNUC
 #define EIGEN_DONT_INLINE __attribute__((noinline))
 #elif EIGEN_COMP_MSVC
 #define EIGEN_DONT_INLINE __declspec(noinline)
 #else
 #define EIGEN_DONT_INLINE
+#endif
 #endif
 
 #if EIGEN_COMP_GNUC
@@ -1106,9 +1168,8 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
 // directly for std::complex<T>, Eigen::half, Eigen::bfloat16. For these,
 // you will need to apply to the underlying POD type.
 #if EIGEN_ARCH_PPC && EIGEN_COMP_GNUC_STRICT
-// This seems to be broken on clang. Packet4f is loaded into a single
-//   register rather than a vector, zeroing out some entries. Integer
-//   types also generate a compile error.
+// These register alternatives are broken on Clang. Packet4f is loaded into a single register rather than a vector,
+// zeroing out some entries, and integer types generate a compile error.
 #if EIGEN_OS_MAC
 // General, Altivec for Apple (VSX were added in ISA v2.06):
 #define EIGEN_OPTIMIZATION_BARRIER(X) __asm__("" : "+r,v"(X));
@@ -1116,6 +1177,10 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
 // General, Altivec, VSX otherwise:
 #define EIGEN_OPTIMIZATION_BARRIER(X) __asm__("" : "+r,v,wa"(X));
 #endif
+#elif EIGEN_ARCH_PPC && EIGEN_COMP_CLANG
+// Clang's PPC backend does not accept one register constraint covering all scalar and vector operands. In particular,
+// "wa" crashes the backend for scalar integers narrower than 64 bits.
+#define EIGEN_OPTIMIZATION_BARRIER(X) __asm__("" : "+m"(X));
 #elif EIGEN_ARCH_ARM_OR_ARM64
 #ifdef __ARM_FP
 // General, VFP or NEON.
@@ -1179,26 +1244,12 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
 #define EIGEN_USING_STD(FUNC) using std::FUNC;
 #endif
 
-#if EIGEN_COMP_CLANG  // workaround clang bug (see http://forum.kde.org/viewtopic.php?f=74&t=102653)
-#define EIGEN_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)                                           \
-  using Base::operator=;                                                                           \
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& operator=(const Derived& other) {                 \
-    Base::operator=(other);                                                                        \
-    return *this;                                                                                  \
-  }                                                                                                \
-  template <typename OtherDerived>                                                                 \
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& operator=(const DenseBase<OtherDerived>& other) { \
-    Base::operator=(other.derived());                                                              \
-    return *this;                                                                                  \
-  }
-#else
 #define EIGEN_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)                           \
   using Base::operator=;                                                           \
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& operator=(const Derived& other) { \
     Base::operator=(other);                                                        \
     return *this;                                                                  \
   }
-#endif
 
 /**
  * \internal
@@ -1210,7 +1261,7 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
 /** \internal
  * \brief Macro to manually inherit assignment operators.
  * This is necessary, because the implicitly defined assignment operator gets deleted when a custom operator= is
- * defined. With C++11 or later this also default-implements the copy-constructor
+ * defined. This also default-implements the copy-constructor.
  */
 #define EIGEN_INHERIT_ASSIGNMENT_OPERATORS(Derived) \
   EIGEN_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived)  \
@@ -1220,8 +1271,6 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
  * \brief Macro to manually define default constructors and destructors.
  * This is necessary when the copy constructor is re-defined.
  * For empty helper classes this should usually be protected, to avoid accidentally creating empty objects.
- *
- * Hiding the default destructor lead to problems in C++03 mode together with boost::multiprecision
  */
 #define EIGEN_DEFAULT_EMPTY_CONSTRUCTOR_AND_DESTRUCTOR(Derived) \
   EIGEN_DEVICE_FUNC Derived() = default;                        \
@@ -1272,64 +1321,64 @@ EIGEN_DEVICE_FUNC constexpr void ignore_unused_variable(const T&) {}
 #define EIGEN_PREDICT_TRUE(x) (x)
 #endif
 
+#define EIGEN_MAKE_CWISE_UNARY_OP(METHOD, FUNCTOR, RETURN_TYPE)     \
+  using RETURN_TYPE = CwiseUnaryOp<FUNCTOR<Scalar>, const Derived>; \
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const RETURN_TYPE METHOD() const { return RETURN_TYPE(derived()); }
+
 // the expression type of a standard coefficient wise binary operation
-#define EIGEN_CWISE_BINARY_RETURN_TYPE(LHS, RHS, OPNAME)                                                       \
-  CwiseBinaryOp<EIGEN_CAT(EIGEN_CAT(internal::scalar_, OPNAME), _op) < typename internal::traits<LHS>::Scalar, \
-                typename internal::traits<RHS>::Scalar>,                                                       \
-      const LHS, const RHS >
+#define EIGEN_CWISE_BINARY_RETURN_TYPE(LHS, RHS, FUNCTOR)                                                           \
+  CwiseBinaryOp<FUNCTOR<typename internal::traits<LHS>::Scalar, typename internal::traits<RHS>::Scalar>, const LHS, \
+                const RHS>
 
-#define EIGEN_MAKE_CWISE_BINARY_OP(METHOD, OPNAME)                                                                \
-  template <typename OtherDerived>                                                                                \
-  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_CWISE_BINARY_RETURN_TYPE(                           \
-      Derived, OtherDerived, OPNAME)(METHOD)(const EIGEN_CURRENT_STORAGE_BASE_CLASS<OtherDerived>& other) const { \
-    return EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived, OPNAME)(derived(), other.derived());             \
+#define EIGEN_MAKE_CWISE_BINARY_OP(METHOD, FUNCTOR)                                                                \
+  template <typename OtherDerived>                                                                                 \
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_CWISE_BINARY_RETURN_TYPE(                            \
+      Derived, OtherDerived, FUNCTOR)(METHOD)(const EIGEN_CURRENT_STORAGE_BASE_CLASS<OtherDerived>& other) const { \
+    return EIGEN_CWISE_BINARY_RETURN_TYPE(Derived, OtherDerived, FUNCTOR)(derived(), other.derived());             \
   }
 
-#define EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME, TYPEA, TYPEB)     \
-  (Eigen::internal::has_ReturnType<Eigen::ScalarBinaryOpTraits< \
-       TYPEA, TYPEB, EIGEN_CAT(EIGEN_CAT(Eigen::internal::scalar_, OPNAME), _op) < TYPEA, TYPEB> > > ::value)
+#define EIGEN_SCALAR_BINARY_SUPPORTED(FUNCTOR, TYPEA, TYPEB) \
+  (Eigen::internal::has_ReturnType<Eigen::ScalarBinaryOpTraits<TYPEA, TYPEB, FUNCTOR<TYPEA, TYPEB> > >::value)
 
-#define EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(EXPR, SCALAR, OPNAME)                                            \
-  CwiseBinaryOp<EIGEN_CAT(EIGEN_CAT(internal::scalar_, OPNAME), _op) < typename internal::traits<EXPR>::Scalar, \
-                SCALAR>,                                                                                        \
-      const EXPR, const typename internal::plain_constant_type<EXPR, SCALAR>::type >
+#define EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(EXPR, SCALAR, FUNCTOR)                 \
+  CwiseBinaryOp<FUNCTOR<typename internal::traits<EXPR>::Scalar, SCALAR>, const EXPR, \
+                const typename internal::plain_constant_type<EXPR, SCALAR>::type>
 
-#define EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(SCALAR, EXPR, OPNAME)           \
-  CwiseBinaryOp<EIGEN_CAT(EIGEN_CAT(internal::scalar_, OPNAME), _op) < SCALAR, \
-                typename internal::traits<EXPR>::Scalar>,                      \
-      const typename internal::plain_constant_type<EXPR, SCALAR>::type, const EXPR >
+#define EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(SCALAR, EXPR, FUNCTOR)     \
+  CwiseBinaryOp<FUNCTOR<SCALAR, typename internal::traits<EXPR>::Scalar>, \
+                const typename internal::plain_constant_type<EXPR, SCALAR>::type, const EXPR>
 
-#define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHERIGHT(METHOD, OPNAME)                                                       \
-  template <typename T>                                                                                              \
-  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(                      \
-      Derived,                                                                                                       \
-      typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(          \
-          OPNAME, Scalar, T)>::type,                                                                                 \
-      OPNAME)(METHOD)(const T& scalar) const {                                                                       \
-    typedef typename internal::promote_scalar_arg<Scalar, T, EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME, Scalar, T)>::type \
-        PromotedT;                                                                                                   \
-    return EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(Derived, PromotedT, OPNAME)(                                       \
-        derived(), typename internal::plain_constant_type<Derived, PromotedT>::type(                                 \
-                       derived().rows(), derived().cols(), internal::scalar_constant_op<PromotedT>(scalar)));        \
+#define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHERIGHT(METHOD, FUNCTOR)                                                       \
+  template <typename T>                                                                                               \
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(                       \
+      Derived,                                                                                                        \
+      typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(           \
+          FUNCTOR, Scalar, T)>::type,                                                                                 \
+      FUNCTOR)(METHOD)(const T& scalar) const {                                                                       \
+    typedef typename internal::promote_scalar_arg<Scalar, T, EIGEN_SCALAR_BINARY_SUPPORTED(FUNCTOR, Scalar, T)>::type \
+        PromotedT;                                                                                                    \
+    return EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(Derived, PromotedT, FUNCTOR)(                                       \
+        derived(), typename internal::plain_constant_type<Derived, PromotedT>::type(                                  \
+                       derived().rows(), derived().cols(), internal::scalar_constant_op<PromotedT>(scalar)));         \
   }
 
-#define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHELEFT(METHOD, OPNAME)                                                        \
-  template <typename T>                                                                                              \
-  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE friend const EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(               \
-      typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(          \
-          OPNAME, T, Scalar)>::type,                                                                                 \
-      Derived, OPNAME)(METHOD)(const T& scalar, const StorageBaseType& matrix) {                                     \
-    typedef typename internal::promote_scalar_arg<Scalar, T, EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME, T, Scalar)>::type \
-        PromotedT;                                                                                                   \
-    return EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(PromotedT, Derived, OPNAME)(                                       \
-        typename internal::plain_constant_type<Derived, PromotedT>::type(                                            \
-            matrix.derived().rows(), matrix.derived().cols(), internal::scalar_constant_op<PromotedT>(scalar)),      \
-        matrix.derived());                                                                                           \
+#define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHELEFT(METHOD, FUNCTOR)                                                        \
+  template <typename T>                                                                                               \
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE friend const EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(                \
+      typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(           \
+          FUNCTOR, T, Scalar)>::type,                                                                                 \
+      Derived, FUNCTOR)(METHOD)(const T& scalar, const StorageBaseType& matrix) {                                     \
+    typedef typename internal::promote_scalar_arg<Scalar, T, EIGEN_SCALAR_BINARY_SUPPORTED(FUNCTOR, T, Scalar)>::type \
+        PromotedT;                                                                                                    \
+    return EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(PromotedT, Derived, FUNCTOR)(                                       \
+        typename internal::plain_constant_type<Derived, PromotedT>::type(                                             \
+            matrix.derived().rows(), matrix.derived().cols(), internal::scalar_constant_op<PromotedT>(scalar)),       \
+        matrix.derived());                                                                                            \
   }
 
-#define EIGEN_MAKE_SCALAR_BINARY_OP(METHOD, OPNAME)     \
-  EIGEN_MAKE_SCALAR_BINARY_OP_ONTHELEFT(METHOD, OPNAME) \
-  EIGEN_MAKE_SCALAR_BINARY_OP_ONTHERIGHT(METHOD, OPNAME)
+#define EIGEN_MAKE_SCALAR_BINARY_OP(METHOD, FUNCTOR)     \
+  EIGEN_MAKE_SCALAR_BINARY_OP_ONTHELEFT(METHOD, FUNCTOR) \
+  EIGEN_MAKE_SCALAR_BINARY_OP_ONTHERIGHT(METHOD, FUNCTOR)
 
 #if (defined(_CPPUNWIND) || defined(__EXCEPTIONS)) && !defined(EIGEN_CUDA_ARCH) && !defined(EIGEN_EXCEPTIONS) && \
     !defined(EIGEN_USE_SYCL) && !defined(EIGEN_HIP_DEVICE_COMPILE)
@@ -1388,9 +1437,9 @@ EIGEN_DEVICE_FUNC constexpr bool all(T t, Ts... ts) {
 // Notice: Use this macro with caution. The code in the if body should still
 // compile with C++14.
 #if defined(EIGEN_HAS_CXX17_IFCONSTEXPR)
-#define EIGEN_IF_CONSTEXPR(X) if constexpr (X)
+#define EIGEN_IF_CONSTEXPR(...) if constexpr (__VA_ARGS__)
 #else
-#define EIGEN_IF_CONSTEXPR(X) if (X)
+#define EIGEN_IF_CONSTEXPR(...) if (__VA_ARGS__)
 #endif
 
 #endif  // EIGEN_MACROS_H

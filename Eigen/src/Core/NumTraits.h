@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_NUMTRAITS_H
 #define EIGEN_NUMTRAITS_H
@@ -31,7 +32,7 @@ struct default_digits_impl<T, false, false>  // Floating point
   EIGEN_DEVICE_FUNC constexpr static int run() {
     using std::ceil;
     using std::log2;
-    typedef typename NumTraits<T>::Real Real;
+    using Real = typename NumTraits<T>::Real;
     return int(ceil(-log2(NumTraits<Real>::epsilon())));
   }
 };
@@ -56,7 +57,7 @@ struct default_digits10_impl<T, false, false>  // Floating point
   EIGEN_DEVICE_FUNC constexpr static int run() {
     using std::floor;
     using std::log10;
-    typedef typename NumTraits<T>::Real Real;
+    using Real = typename NumTraits<T>::Real;
     return int(floor((internal::default_digits_impl<Real>::run() - 1) * log10(2)));
   }
 };
@@ -81,7 +82,7 @@ struct default_max_digits10_impl<T, false, false>  // Floating point
   EIGEN_DEVICE_FUNC constexpr static int run() {
     using std::ceil;
     using std::log10;
-    typedef typename NumTraits<T>::Real Real;
+    using Real = typename NumTraits<T>::Real;
     return int(ceil(internal::default_digits_impl<Real>::run() * log10(2) + 1));
   }
 };
@@ -155,7 +156,7 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Tgt bit_cast(const Src& src) {
  *     this means, just use \a T here.
  * \li An enum value \c IsComplex. It is equal to 1 if \a T is a \c std::complex type, and to 0 otherwise.
  * \li An enum value \c IsInteger. It is equal to \c 1 if \a T is an integer type such as \c int, and to \c 0 otherwise.
- * \li Enum values \c ReadCost, \c AddCost and \c MulCost representing a rough estimate of the number of CPU cycles needed to by
+ * \li Enum values \c ReadCost, \c AddCost and \c MulCost representing a rough estimate of the number of CPU cycles needed by
  *     move / add / mul instructions respectively, assuming the data is already stored in CPU registers. Stay vague here.
  *     No need to do architecture-specific stuff. If you don't know what this means, just use \c Eigen::HugeCost.
  * \li An enum value \c IsSigned. It is equal to \c 1 if \a T is a signed type and to 0 if \a T is unsigned.
@@ -197,10 +198,10 @@ struct GenericNumTraits {
     MulCost = 1
   };
 
-  typedef T Real;
-  typedef std::conditional_t<IsInteger, std::conditional_t<sizeof(T) <= 2, float, double>, T> NonInteger;
-  typedef T Nested;
-  typedef T Literal;
+  using Real = T;
+  using NonInteger = std::conditional_t<IsInteger, std::conditional_t<sizeof(T) <= 2, float, double>, T>;
+  using Nested = T;
+  using Literal = T;
 
   EIGEN_DEVICE_FUNC constexpr static Real epsilon() { return numext::numeric_limits<T>::epsilon(); }
 
@@ -259,8 +260,8 @@ struct NumTraits<long double> : GenericNumTraits<long double> {
 
 template <typename Real_>
 struct NumTraits<std::complex<Real_> > : GenericNumTraits<std::complex<Real_> > {
-  typedef Real_ Real;
-  typedef typename NumTraits<Real_>::Literal Literal;
+  using Real = Real_;
+  using Literal = typename NumTraits<Real_>::Literal;
   enum {
     IsComplex = 1,
     IsSigned = NumTraits<Real_>::IsSigned,
@@ -278,13 +279,13 @@ struct NumTraits<std::complex<Real_> > : GenericNumTraits<std::complex<Real_> > 
 
 template <typename Scalar, int Rows, int Cols, int Options, int MaxRows, int MaxCols>
 struct NumTraits<Array<Scalar, Rows, Cols, Options, MaxRows, MaxCols> > {
-  typedef Array<Scalar, Rows, Cols, Options, MaxRows, MaxCols> ArrayType;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-  typedef Array<RealScalar, Rows, Cols, Options, MaxRows, MaxCols> Real;
-  typedef typename NumTraits<Scalar>::NonInteger NonIntegerScalar;
-  typedef Array<NonIntegerScalar, Rows, Cols, Options, MaxRows, MaxCols> NonInteger;
-  typedef ArrayType& Nested;
-  typedef typename NumTraits<Scalar>::Literal Literal;
+  using ArrayType = Array<Scalar, Rows, Cols, Options, MaxRows, MaxCols>;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using Real = Array<RealScalar, Rows, Cols, Options, MaxRows, MaxCols>;
+  using NonIntegerScalar = typename NumTraits<Scalar>::NonInteger;
+  using NonInteger = Array<NonIntegerScalar, Rows, Cols, Options, MaxRows, MaxCols>;
+  using Nested = ArrayType&;
+  using Literal = typename NumTraits<Scalar>::Literal;
 
   enum {
     IsComplex = NumTraits<Scalar>::IsComplex,

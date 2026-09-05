@@ -7,71 +7,72 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_PARSED_BY_DOXYGEN
 
-/// \internal expression type of a column */
-typedef Block<Derived, internal::traits<Derived>::RowsAtCompileTime, 1, !IsRowMajor> ColXpr;
-typedef const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, 1, !IsRowMajor> ConstColXpr;
-/// \internal expression type of a row */
-typedef Block<Derived, 1, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> RowXpr;
-typedef const Block<const Derived, 1, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> ConstRowXpr;
-/// \internal expression type of a block of whole columns */
-typedef Block<Derived, internal::traits<Derived>::RowsAtCompileTime, Dynamic, !IsRowMajor> ColsBlockXpr;
-typedef const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, Dynamic, !IsRowMajor>
-    ConstColsBlockXpr;
-/// \internal expression type of a block of whole rows */
-typedef Block<Derived, Dynamic, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> RowsBlockXpr;
-typedef const Block<const Derived, Dynamic, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> ConstRowsBlockXpr;
-/// \internal expression type of a block of whole columns */
+/// \internal expression type of a column
+using ColXpr = Block<Derived, internal::traits<Derived>::RowsAtCompileTime, 1, !IsRowMajor>;
+using ConstColXpr = const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, 1, !IsRowMajor>;
+/// \internal expression type of a row
+using RowXpr = Block<Derived, 1, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
+using ConstRowXpr = const Block<const Derived, 1, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
+/// \internal expression type of a block of whole columns
+using ColsBlockXpr = Block<Derived, internal::traits<Derived>::RowsAtCompileTime, Dynamic, !IsRowMajor>;
+using ConstColsBlockXpr =
+    const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, Dynamic, !IsRowMajor>;
+/// \internal expression type of a block of whole rows
+using RowsBlockXpr = Block<Derived, Dynamic, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
+using ConstRowsBlockXpr = const Block<const Derived, Dynamic, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
+/// \internal expression type of a block of whole columns
 template <int N>
 struct NColsBlockXpr {
-  typedef Block<Derived, internal::traits<Derived>::RowsAtCompileTime, N, !IsRowMajor> Type;
+  using Type = Block<Derived, internal::traits<Derived>::RowsAtCompileTime, N, !IsRowMajor>;
 };
 template <int N>
 struct ConstNColsBlockXpr {
-  typedef const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, N, !IsRowMajor> Type;
+  using Type = const Block<const Derived, internal::traits<Derived>::RowsAtCompileTime, N, !IsRowMajor>;
 };
-/// \internal expression type of a block of whole rows */
+/// \internal expression type of a block of whole rows
 template <int N>
 struct NRowsBlockXpr {
-  typedef Block<Derived, N, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> Type;
+  using Type = Block<Derived, N, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
 };
 template <int N>
 struct ConstNRowsBlockXpr {
-  typedef const Block<const Derived, N, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor> Type;
+  using Type = const Block<const Derived, N, internal::traits<Derived>::ColsAtCompileTime, IsRowMajor>;
 };
-/// \internal expression of a block */
-typedef Block<Derived> BlockXpr;
-typedef const Block<const Derived> ConstBlockXpr;
-/// \internal expression of a block of fixed sizes */
+/// \internal expression of a block
+using BlockXpr = Block<Derived>;
+using ConstBlockXpr = const Block<const Derived>;
+/// \internal expression of a block of fixed sizes
 template <int Rows, int Cols>
 struct FixedBlockXpr {
-  typedef Block<Derived, Rows, Cols> Type;
+  using Type = Block<Derived, Rows, Cols>;
 };
 template <int Rows, int Cols>
 struct ConstFixedBlockXpr {
-  typedef Block<const Derived, Rows, Cols> Type;
+  using Type = Block<const Derived, Rows, Cols>;
 };
 
-typedef VectorBlock<Derived> SegmentReturnType;
-typedef const VectorBlock<const Derived> ConstSegmentReturnType;
+using SegmentReturnType = VectorBlock<Derived>;
+using ConstSegmentReturnType = const VectorBlock<const Derived>;
 template <int Size>
 struct FixedSegmentReturnType {
-  typedef VectorBlock<Derived, Size> Type;
+  using Type = VectorBlock<Derived, Size>;
 };
 template <int Size>
 struct ConstFixedSegmentReturnType {
-  typedef const VectorBlock<const Derived, Size> Type;
+  using Type = const VectorBlock<const Derived, Size>;
 };
 
 /// \internal inner-vector
-typedef Block<Derived, IsRowMajor ? 1 : Dynamic, IsRowMajor ? Dynamic : 1, true> InnerVectorReturnType;
-typedef Block<const Derived, IsRowMajor ? 1 : Dynamic, IsRowMajor ? Dynamic : 1, true> ConstInnerVectorReturnType;
+using InnerVectorReturnType = std::conditional_t<IsRowMajor, RowXpr, ColXpr>;
+using ConstInnerVectorReturnType = std::conditional_t<IsRowMajor, ConstRowXpr, ConstColXpr>;
 
 /// \internal set of inner-vectors
-typedef Block<Derived, Dynamic, Dynamic, true> InnerVectorsReturnType;
-typedef Block<const Derived, Dynamic, Dynamic, true> ConstInnerVectorsReturnType;
+using InnerVectorsReturnType = std::conditional_t<IsRowMajor, RowsBlockXpr, ColsBlockXpr>;
+using ConstInnerVectorsReturnType = std::conditional_t<IsRowMajor, ConstRowsBlockXpr, ConstColsBlockXpr>;
 
 #endif  // not EIGEN_PARSED_BY_DOXYGEN
 
@@ -144,7 +145,7 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE
                                                                                             blockCols));
 }
 
-/// \returns a expression of a top-right corner of \c *this with either dynamic or fixed sizes.
+/// \returns an expression of a top-right corner of \c *this with either dynamic or fixed sizes.
 ///
 /// \param cRows the number of rows in the corner
 /// \param cCols the number of columns in the corner
@@ -1015,7 +1016,7 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE typename FixedBlockXpr<NRows, NC
   return typename FixedBlockXpr<NRows, NCols>::Type(derived(), startRow, startCol);
 }
 
-/// This is the const version of block<>(Index, Index). */
+/// This is the const version of block<>(Index, Index).
 template <int NRows, int NCols>
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const typename ConstFixedBlockXpr<NRows, NCols>::Type block(
     Index startRow, Index startCol) const {
@@ -1091,7 +1092,7 @@ EIGEN_DOC_BLOCK_ADDONS_INNER_PANEL_IF(row - major)
  * \sa col(), class Block */
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE RowXpr row(Index i) { return RowXpr(derived(), i); }
 
-/// This is the const version of row(). */
+/// This is the const version of row().
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE ConstRowXpr row(Index i) const { return ConstRowXpr(derived(), i); }
 
 /// \returns an expression of a segment (i.e. a vector block) in \c *this with either dynamic or fixed sizes.
@@ -1189,7 +1190,7 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE
       derived(), 0, internal::get_runtime_value(n));
 }
 
-/// \returns an expression of a last coefficients of \c *this with either dynamic or fixed sizes.
+/// \returns an expression of the last coefficients of \c *this with either dynamic or fixed sizes.
 ///
 /// \only_for_vectors
 ///
@@ -1222,7 +1223,7 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE
       derived(), this->size() - internal::get_runtime_value(n), internal::get_runtime_value(n));
 }
 
-/// This is the const version of tail(Index).
+/// This is the const version of tail(NType).
 template <typename NType>
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE
 #ifndef EIGEN_PARSED_BY_DOXYGEN
@@ -1316,7 +1317,7 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE typename FixedSegmentReturnType<
   return typename FixedSegmentReturnType<N>::Type(derived(), size() - n, n);
 }
 
-/// This is the const version of tail<int>.
+/// This is the const version of tail<int>().
 template <int N>
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE typename ConstFixedSegmentReturnType<N>::Type tail(Index n = N) const {
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(Derived)
@@ -1337,22 +1338,21 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const ConstInnerVectorReturnType
   return ConstInnerVectorReturnType(derived(), outer);
 }
 
-/// \returns the \a outer -th column (resp. row) of the matrix \c *this if \c *this
-/// is col-major (resp. row-major).
+/// \returns the \a outerSize consecutive columns (resp. rows) of the matrix \c *this starting at \a outerStart
+/// if \c *this is col-major (resp. row-major).
 ///
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE InnerVectorsReturnType innerVectors(Index outerStart, Index outerSize) {
-  return Block<Derived, Dynamic, Dynamic, true>(derived(), IsRowMajor ? outerStart : 0, IsRowMajor ? 0 : outerStart,
-                                                IsRowMajor ? outerSize : rows(), IsRowMajor ? cols() : outerSize);
+  return InnerVectorsReturnType(derived(), IsRowMajor ? outerStart : 0, IsRowMajor ? 0 : outerStart,
+                                IsRowMajor ? outerSize : rows(), IsRowMajor ? cols() : outerSize);
 }
 
-/// \returns the \a outer -th column (resp. row) of the matrix \c *this if \c *this
-/// is col-major (resp. row-major). Read-only.
+/// \returns the \a outerSize consecutive columns (resp. rows) of the matrix \c *this starting at \a outerStart
+/// if \c *this is col-major (resp. row-major). Read-only.
 ///
 EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE const ConstInnerVectorsReturnType innerVectors(Index outerStart,
                                                                                                Index outerSize) const {
-  return Block<const Derived, Dynamic, Dynamic, true>(derived(), IsRowMajor ? outerStart : 0,
-                                                      IsRowMajor ? 0 : outerStart, IsRowMajor ? outerSize : rows(),
-                                                      IsRowMajor ? cols() : outerSize);
+  return ConstInnerVectorsReturnType(derived(), IsRowMajor ? outerStart : 0, IsRowMajor ? 0 : outerStart,
+                                     IsRowMajor ? outerSize : rows(), IsRowMajor ? cols() : outerSize);
 }
 
 /** \returns the i-th subvector (column or vector) according to the \c Direction

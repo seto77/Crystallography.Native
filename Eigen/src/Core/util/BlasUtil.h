@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BLASUTIL_H
 #define EIGEN_BLASUTIL_H
@@ -174,9 +175,9 @@ struct PacketBlockManagement<Index, Scalar, Packet, n, -1, RowMajor> {
 template <typename Scalar, typename Index, int StorageOrder, int AlignmentType>
 class blas_data_mapper<Scalar, Index, StorageOrder, AlignmentType, 1> {
  public:
-  typedef BlasLinearMapper<Scalar, Index, AlignmentType> LinearMapper;
-  typedef blas_data_mapper<Scalar, Index, StorageOrder, AlignmentType> SubMapper;
-  typedef BlasVectorMapper<Scalar, Index> VectorMapper;
+  using LinearMapper = BlasLinearMapper<Scalar, Index, AlignmentType>;
+  using SubMapper = blas_data_mapper<Scalar, Index, StorageOrder, AlignmentType>;
+  using VectorMapper = BlasVectorMapper<Scalar, Index>;
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_ALWAYS_INLINE blas_data_mapper(Scalar* data, Index stride, Index incr = 1)
       : m_data(data), m_stride(stride) {
@@ -306,8 +307,8 @@ class BlasLinearMapper {
 template <typename Scalar, typename Index, int StorageOrder, int AlignmentType, int Incr>
 class blas_data_mapper {
  public:
-  typedef BlasLinearMapper<Scalar, Index, AlignmentType, Incr> LinearMapper;
-  typedef blas_data_mapper SubMapper;
+  using LinearMapper = BlasLinearMapper<Scalar, Index, AlignmentType, Incr>;
+  using SubMapper = blas_data_mapper;
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_ALWAYS_INLINE blas_data_mapper(Scalar* data, Index stride, Index incr)
       : m_data(data), m_stride(stride), m_incr(incr) {}
@@ -445,7 +446,7 @@ class blas_data_mapper {
 template <typename Scalar, typename Index, int StorageOrder>
 class const_blas_data_mapper : public blas_data_mapper<const Scalar, Index, StorageOrder> {
  public:
-  typedef const_blas_data_mapper<Scalar, Index, StorageOrder> SubMapper;
+  using SubMapper = const_blas_data_mapper<Scalar, Index, StorageOrder>;
 
   EIGEN_ALWAYS_INLINE const_blas_data_mapper(const Scalar* data, Index stride)
       : blas_data_mapper<const Scalar, Index, StorageOrder>(data, stride) {}
@@ -460,22 +461,22 @@ class const_blas_data_mapper : public blas_data_mapper<const Scalar, Index, Stor
  * and conjugate */
 template <typename XprType>
 struct blas_traits {
-  typedef typename traits<XprType>::Scalar Scalar;
-  typedef const XprType& ExtractType;
-  typedef XprType ExtractType_;
+  using Scalar = typename traits<XprType>::Scalar;
+  using ExtractType = const XprType&;
+  using ExtractType_ = XprType;
   enum {
     IsComplex = NumTraits<Scalar>::IsComplex,
     IsTransposed = false,
     NeedToConjugate = false,
     HasUsableDirectAccess =
         ((int(XprType::Flags) & DirectAccessBit) &&
-         (bool(XprType::IsVectorAtCompileTime) || int(inner_stride_at_compile_time<XprType>::ret) == 1))
+         (bool(XprType::IsVectorAtCompileTime) || int(inner_stride_at_compile_time<XprType>::value) == 1))
             ? 1
             : 0,
     HasScalarFactor = false
   };
-  typedef std::conditional_t<bool(HasUsableDirectAccess), ExtractType, typename ExtractType_::PlainObject>
-      DirectLinearAccessType;
+  using DirectLinearAccessType =
+      std::conditional_t<bool(HasUsableDirectAccess), ExtractType, typename ExtractType_::PlainObject>;
   EIGEN_DEVICE_FUNC static inline EIGEN_DEVICE_FUNC ExtractType extract(const XprType& x) { return x; }
   EIGEN_DEVICE_FUNC static inline EIGEN_DEVICE_FUNC const Scalar extractScalarFactor(const XprType&) {
     return Scalar(1);
@@ -485,9 +486,9 @@ struct blas_traits {
 // pop conjugate
 template <typename Scalar, typename NestedXpr>
 struct blas_traits<CwiseUnaryOp<scalar_conjugate_op<Scalar>, NestedXpr> > : blas_traits<NestedXpr> {
-  typedef blas_traits<NestedXpr> Base;
-  typedef CwiseUnaryOp<scalar_conjugate_op<Scalar>, NestedXpr> XprType;
-  typedef typename Base::ExtractType ExtractType;
+  using Base = blas_traits<NestedXpr>;
+  using XprType = CwiseUnaryOp<scalar_conjugate_op<Scalar>, NestedXpr>;
+  using ExtractType = typename Base::ExtractType;
 
   enum { IsComplex = NumTraits<Scalar>::IsComplex, NeedToConjugate = Base::NeedToConjugate ? 0 : IsComplex };
   EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) { return Base::extract(x.nestedExpression()); }
@@ -502,10 +503,10 @@ struct blas_traits<
     CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain>, NestedXpr> >
     : blas_traits<NestedXpr> {
   enum { HasScalarFactor = true };
-  typedef blas_traits<NestedXpr> Base;
-  typedef CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain>, NestedXpr>
-      XprType;
-  typedef typename Base::ExtractType ExtractType;
+  using Base = blas_traits<NestedXpr>;
+  using XprType =
+      CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain>, NestedXpr>;
+  using ExtractType = typename Base::ExtractType;
   EIGEN_DEVICE_FUNC static inline EIGEN_DEVICE_FUNC ExtractType extract(const XprType& x) {
     return Base::extract(x.rhs());
   }
@@ -518,10 +519,10 @@ struct blas_traits<
     CwiseBinaryOp<scalar_product_op<Scalar>, NestedXpr, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain> > >
     : blas_traits<NestedXpr> {
   enum { HasScalarFactor = true };
-  typedef blas_traits<NestedXpr> Base;
-  typedef CwiseBinaryOp<scalar_product_op<Scalar>, NestedXpr, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain> >
-      XprType;
-  typedef typename Base::ExtractType ExtractType;
+  using Base = blas_traits<NestedXpr>;
+  using XprType =
+      CwiseBinaryOp<scalar_product_op<Scalar>, NestedXpr, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain>>;
+  using ExtractType = typename Base::ExtractType;
   EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) { return Base::extract(x.lhs()); }
   EIGEN_DEVICE_FUNC static inline Scalar extractScalarFactor(const XprType& x) {
     return Base::extractScalarFactor(x.lhs()) * x.rhs().functor().m_other;
@@ -536,9 +537,9 @@ struct blas_traits<CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp
 template <typename Scalar, typename NestedXpr>
 struct blas_traits<CwiseUnaryOp<scalar_opposite_op<Scalar>, NestedXpr> > : blas_traits<NestedXpr> {
   enum { HasScalarFactor = true };
-  typedef blas_traits<NestedXpr> Base;
-  typedef CwiseUnaryOp<scalar_opposite_op<Scalar>, NestedXpr> XprType;
-  typedef typename Base::ExtractType ExtractType;
+  using Base = blas_traits<NestedXpr>;
+  using XprType = CwiseUnaryOp<scalar_opposite_op<Scalar>, NestedXpr>;
+  using ExtractType = typename Base::ExtractType;
   EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) { return Base::extract(x.nestedExpression()); }
   EIGEN_DEVICE_FUNC static inline Scalar extractScalarFactor(const XprType& x) {
     return -Base::extractScalarFactor(x.nestedExpression());
@@ -548,14 +549,14 @@ struct blas_traits<CwiseUnaryOp<scalar_opposite_op<Scalar>, NestedXpr> > : blas_
 // pop/push transpose
 template <typename NestedXpr>
 struct blas_traits<Transpose<NestedXpr> > : blas_traits<NestedXpr> {
-  typedef typename NestedXpr::Scalar Scalar;
-  typedef blas_traits<NestedXpr> Base;
-  typedef Transpose<NestedXpr> XprType;
-  typedef Transpose<const typename Base::ExtractType_>
-      ExtractType;  // const to get rid of a compile error; anyway blas traits are only used on the RHS
-  typedef Transpose<const typename Base::ExtractType_> ExtractType_;
-  typedef std::conditional_t<bool(Base::HasUsableDirectAccess), ExtractType, typename ExtractType::PlainObject>
-      DirectLinearAccessType;
+  using Scalar = typename NestedXpr::Scalar;
+  using Base = blas_traits<NestedXpr>;
+  using XprType = Transpose<NestedXpr>;
+  using ExtractType = Transpose<const typename Base::ExtractType_>;  // const to get rid of a compile error; anyway blas
+                                                                     // traits are only used on the RHS
+  using ExtractType_ = Transpose<const typename Base::ExtractType_>;
+  using DirectLinearAccessType =
+      std::conditional_t<bool(Base::HasUsableDirectAccess), ExtractType, typename ExtractType::PlainObject>;
   enum { IsTransposed = Base::IsTransposed ? 0 : 1 };
   EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) {
     return ExtractType(Base::extract(x.nestedExpression()));

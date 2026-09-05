@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 
 // This file is part of Eigen, a lightweight C++ template library
 // for linear algebra.
@@ -166,7 +167,7 @@ class MatrixMarketIterator {
   void Getnextvalidmatrix() {
     m_isvalid = false;
     // Here, we return with the next valid matrix in the folder
-    while ((m_curs_id = readdir(m_folder_id)) != NULL) {
+    while ((m_curs_id = readdir(m_folder_id)) != nullptr) {
       m_isvalid = false;
       std::string curfile;
       curfile = m_folder + "/" + m_curs_id->d_name;
@@ -178,12 +179,14 @@ class MatrixMarketIterator {
       if (!getMarketHeader(curfile, m_sym, iscomplex, isvector)) continue;
       if (isvector) continue;
       if (!iscomplex) {
-        if (internal::is_same<Scalar, std::complex<float> >::value ||
-            internal::is_same<Scalar, std::complex<double> >::value)
+        EIGEN_IF_CONSTEXPR ((std::is_same<Scalar, std::complex<float> >::value ||
+                             std::is_same<Scalar, std::complex<double> >::value))
           continue;
       }
       if (iscomplex) {
-        if (internal::is_same<Scalar, float>::value || internal::is_same<Scalar, double>::value) continue;
+        EIGEN_IF_CONSTEXPR ((std::is_same<Scalar, float>::value || std::is_same<Scalar, double>::value)) {
+          continue;
+        }
       }
 
       // Get the matrix name

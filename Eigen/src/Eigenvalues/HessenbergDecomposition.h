@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_HESSENBERGDECOMPOSITION_H
 #define EIGEN_HESSENBERGDECOMPOSITION_H
@@ -22,7 +23,7 @@ template <typename MatrixType>
 struct HessenbergDecompositionMatrixHReturnType;
 template <typename MatrixType>
 struct traits<HessenbergDecompositionMatrixHReturnType<MatrixType>> {
-  typedef MatrixType ReturnType;
+  using ReturnType = MatrixType;
 };
 
 }  // namespace internal
@@ -61,7 +62,7 @@ template <typename MatrixType_>
 class HessenbergDecomposition {
  public:
   /** \brief Synonym for the template parameter \p MatrixType_. */
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
 
   enum {
     Size = MatrixType::RowsAtCompileTime,
@@ -72,22 +73,22 @@ class HessenbergDecomposition {
   };
 
   /** \brief Scalar type for matrices of type #MatrixType. */
-  typedef typename MatrixType::Scalar Scalar;
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
+  using Scalar = typename MatrixType::Scalar;
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
 
   /** \brief Type for vector of Householder coefficients.
    *
    * This is column vector with entries of type #Scalar. The length of the
-   * vector is one less than the size of #MatrixType, if it is a fixed-side
+   * vector is one less than the size of #MatrixType, if it is a fixed-size
    * type.
    */
-  typedef Matrix<Scalar, SizeMinusOne, 1, Options & ~RowMajor, MaxSizeMinusOne, 1> CoeffVectorType;
+  using CoeffVectorType = Matrix<Scalar, SizeMinusOne, 1, Options & ~RowMajor, MaxSizeMinusOne, 1>;
 
   /** \brief Return type of matrixQ() */
-  typedef HouseholderSequence<MatrixType, internal::remove_all_t<typename CoeffVectorType::ConjugateReturnType>>
-      HouseholderSequenceType;
+  using HouseholderSequenceType =
+      HouseholderSequence<MatrixType, internal::remove_all_t<typename CoeffVectorType::ConjugateReturnType>>;
 
-  typedef internal::HessenbergDecompositionMatrixHReturnType<MatrixType> MatrixHReturnType;
+  using MatrixHReturnType = internal::HessenbergDecompositionMatrixHReturnType<MatrixType>;
 
   /** \brief Default constructor; the decomposition will be computed later.
    *
@@ -137,7 +138,7 @@ class HessenbergDecomposition {
    * Computations</i>). The cost is \f$ 10n^3/3 \f$ flops, where \f$ n \f$
    * denotes the size of the given matrix.
    *
-   * This method reuses of the allocated data in the HessenbergDecomposition
+   * This method reuses the allocated data in the HessenbergDecomposition
    * object.
    *
    * Example: \include HessenbergDecomposition_compute.cpp
@@ -253,8 +254,8 @@ class HessenbergDecomposition {
   }
 
  private:
-  typedef Matrix<Scalar, 1, Size, int(Options) | int(RowMajor), 1, MaxSize> VectorType;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using VectorType = Matrix<Scalar, 1, Size, int(Options) | int(RowMajor), 1, MaxSize>;
+  using RealScalar = typename NumTraits<Scalar>::Real;
   static void _compute(MatrixType& matA, CoeffVectorType& hCoeffs, VectorType& temp);
 
  protected:
@@ -265,14 +266,16 @@ class HessenbergDecomposition {
 };
 
 /** \internal
- * Performs a tridiagonal decomposition of \a matA in place.
+ * Performs a Hessenberg decomposition of \a matA in place.
  *
- * \param matA the input selfadjoint matrix
+ * \param matA the input square matrix
  * \param hCoeffs returned Householder coefficients
  *
- * The result is written in the lower triangular part of \a matA.
+ * The result is written in the whole of \a matA: the upper part, including
+ * the subdiagonal, holds the Hessenberg matrix H, while the part strictly
+ * below the subdiagonal holds the Householder vectors.
  *
- * Implemented from Golub's "%Matrix Computations", algorithm 8.3.1.
+ * Implemented from Golub's "%Matrix Computations", algorithm 7.4.2.
  *
  * \sa packedMatrix()
  */
@@ -286,7 +289,19 @@ void HessenbergDecomposition<MatrixType>::_compute(MatrixType& matA, CoeffVector
     Index remainingSize = n - i - 1;
     RealScalar beta;
     Scalar h;
-    matA.col(i).tail(remainingSize).makeHouseholderInPlace(h, beta);
+    auto householder = matA.col(i).tail(remainingSize);
+    const RealScalar tailSqNorm =
+        remainingSize == 1 ? RealScalar(0) : householder.tail(remainingSize - 1).unwind().squaredNorm();
+    const RealScalar tol = (std::numeric_limits<RealScalar>::min)();
+    // Preserve negligible subdiagonal entries instead of rotating them into much larger matrix coefficients.  The
+    // latter can erase small eigenvalues through cancellation even though the reflector itself is accurate.
+    if (tailSqNorm <= tol && numext::abs2(numext::imag(householder.coeff(0))) <= tol) {
+      h = Scalar(0);
+      beta = numext::real(householder.coeff(0));
+      householder.tail(remainingSize - 1).setZero();
+    } else {
+      householder.makeHouseholderInPlace(h, beta);
+    }
     matA.col(i).coeffRef(i + 1) = beta;
     hCoeffs.coeffRef(i) = h;
 
@@ -314,7 +329,7 @@ namespace internal {
  *
  * Objects of this type represent the Hessenberg matrix in the Hessenberg
  * decomposition of some matrix. The object holds a reference to the
- * HessenbergDecomposition class until the it is assigned or evaluated for
+ * HessenbergDecomposition class until it is assigned or evaluated for
  * some other reason (the reference should remain valid during the life time
  * of this object). This class is the return type of
  * HessenbergDecomposition::matrixH(); there is no other intended use for this

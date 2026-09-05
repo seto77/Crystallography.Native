@@ -11,6 +11,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 /*****************************************************************************
 *** Platform checks for aligned malloc functions                           ***
@@ -63,8 +64,7 @@
 // set_is_malloc_allowed() function.
 #ifndef EIGEN_AVOID_THREAD_LOCAL
 
-#if ((EIGEN_COMP_GNUC) || __has_feature(cxx_thread_local) || EIGEN_COMP_MSVC >= 1900) && \
-    !defined(EIGEN_GPU_COMPILE_PHASE)
+#if !defined(EIGEN_GPU_COMPILE_PHASE)
 #define EIGEN_MALLOC_CHECK_THREAD_LOCAL thread_local
 #else
 #define EIGEN_MALLOC_CHECK_THREAD_LOCAL
@@ -494,7 +494,7 @@ EIGEN_DEVICE_FUNC inline T* conditional_aligned_new_auto(std::size_t size) {
   if (size == 0) return nullptr;  // short-cut. Also fixes Bug 884
   check_size_for_overflow<T>(size);
   T* result = static_cast<T*>(conditional_aligned_malloc<Align>(sizeof(T) * size));
-  if (NumTraits<T>::RequireInitialization) {
+  EIGEN_IF_CONSTEXPR (NumTraits<T>::RequireInitialization) {
     EIGEN_TRY { default_construct_elements_of_array(result, size); }
     EIGEN_CATCH(...) {
       conditional_aligned_free<Align>(result);
@@ -506,7 +506,7 @@ EIGEN_DEVICE_FUNC inline T* conditional_aligned_new_auto(std::size_t size) {
 
 template <typename T, bool Align>
 EIGEN_DEVICE_FUNC inline T* conditional_aligned_realloc_new_auto(T* pts, std::size_t new_size, std::size_t old_size) {
-  if (NumTraits<T>::RequireInitialization) {
+  EIGEN_IF_CONSTEXPR (NumTraits<T>::RequireInitialization) {
     return conditional_aligned_realloc_new<T, Align>(pts, new_size, old_size);
   }
 
@@ -518,7 +518,7 @@ EIGEN_DEVICE_FUNC inline T* conditional_aligned_realloc_new_auto(T* pts, std::si
 
 template <typename T, bool Align>
 EIGEN_DEVICE_FUNC inline void conditional_aligned_delete_auto(T* ptr, std::size_t size) {
-  if (NumTraits<T>::RequireInitialization) destruct_elements_of_array<T>(ptr, size);
+  EIGEN_IF_CONSTEXPR (NumTraits<T>::RequireInitialization) destruct_elements_of_array<T>(ptr, size);
   conditional_aligned_free<Align>(ptr);
 }
 
@@ -544,17 +544,20 @@ EIGEN_DEVICE_FUNC inline void conditional_aligned_delete_auto(T* ptr, std::size_
  */
 template <int Alignment, typename Scalar, typename Index>
 EIGEN_DEVICE_FUNC inline Index first_aligned(const Scalar* array, Index size) {
-  const Index ScalarSize = sizeof(Scalar);
-  const Index AlignmentSize = Alignment / ScalarSize;
-  const Index AlignmentMask = AlignmentSize - 1;
+  constexpr Index ScalarSize = sizeof(Scalar);
+  constexpr Index AlignmentSize = Alignment / ScalarSize;
+  constexpr Index AlignmentMask = AlignmentSize - 1;
 
-  if (AlignmentSize <= 1) {
+  EIGEN_IF_CONSTEXPR (AlignmentSize <= 1) {
     // Either the requested alignment if smaller than a scalar, or it exactly match a 1 scalar
     // so that all elements of the array have the same alignment.
     return 0;
-  } else if ((std::uintptr_t(array) & (sizeof(Scalar) - 1)) || (Alignment % ScalarSize) != 0) {
-    // The array is not aligned to the size of a single scalar, or the requested alignment is not a multiple of the
-    // scalar size. Consequently, no element of the array is well aligned.
+  } else EIGEN_IF_CONSTEXPR ((Alignment % ScalarSize) != 0) {
+    // The requested alignment is not a multiple of the scalar size. Consequently, no element of the array is well
+    // aligned.
+    return size;
+  } else if (std::uintptr_t(array) & (sizeof(Scalar) - 1)) {
+    // The array is not aligned to the size of a single scalar. Consequently, no element of the array is well aligned.
     return size;
   } else {
     Index first = (AlignmentSize - (Index((std::uintptr_t(array) / sizeof(Scalar))) & AlignmentMask)) & AlignmentMask;
@@ -566,7 +569,7 @@ EIGEN_DEVICE_FUNC inline Index first_aligned(const Scalar* array, Index size) {
  * requirement. \sa first_aligned(Scalar*,Index) and first_default_aligned(DenseBase<Derived>) */
 template <typename Scalar, typename Index>
 EIGEN_DEVICE_FUNC inline Index first_default_aligned(const Scalar* array, Index size) {
-  typedef typename packet_traits<Scalar>::type DefaultPacketType;
+  using DefaultPacketType = typename packet_traits<Scalar>::type;
   return first_aligned<unpacket_traits<DefaultPacketType>::alignment>(array, size);
 }
 
@@ -590,11 +593,11 @@ EIGEN_DEVICE_FUNC void smart_copy(const T* start, const T* end, T* target) {
 template <typename T>
 struct smart_copy_helper<T, true> {
   EIGEN_DEVICE_FUNC static inline void run(const T* start, const T* end, T* target) {
-    std::intptr_t size = std::intptr_t(end) - std::intptr_t(start);
-    if (size == 0) return;
+    std::ptrdiff_t count = end - start;
+    if (count <= 0) return;
     eigen_internal_assert(start != 0 && end != 0 && target != 0);
     EIGEN_USING_STD(memcpy)
-    memcpy(target, start, size);
+    memcpy(target, start, static_cast<std::size_t>(count) * sizeof(T));
   }
 };
 
@@ -615,10 +618,10 @@ void smart_memmove(const T* start, const T* end, T* target) {
 template <typename T>
 struct smart_memmove_helper<T, true> {
   static inline void run(const T* start, const T* end, T* target) {
-    std::intptr_t size = std::intptr_t(end) - std::intptr_t(start);
-    if (size == 0) return;
+    std::ptrdiff_t count = end - start;
+    if (count <= 0) return;
     eigen_internal_assert(start != 0 && end != 0 && target != 0);
-    std::memmove(target, start, size);
+    std::memmove(target, start, static_cast<std::size_t>(count) * sizeof(T));
   }
 };
 
@@ -633,11 +636,6 @@ struct smart_memmove_helper<T, false> {
     }
   }
 };
-
-template <typename T>
-EIGEN_DEVICE_FUNC T* smart_move(T* start, T* end, T* target) {
-  return std::move(start, end, target);
-}
 
 /*****************************************************************************
 *** Implementation of runtime stack allocation (falling back to malloc)    ***
@@ -665,8 +663,11 @@ EIGEN_DEVICE_FUNC T* smart_move(T* start, T* end, T* target) {
 // This helper class construct the allocated memory, and takes care of destructing and freeing the handled data
 // at destruction time. In practice this helper class is mainly useful to avoid memory leak in case of exceptions.
 template <typename T>
-class aligned_stack_memory_handler : noncopyable {
+class aligned_stack_memory_handler {
  public:
+  aligned_stack_memory_handler(const aligned_stack_memory_handler&) = delete;
+  aligned_stack_memory_handler& operator=(const aligned_stack_memory_handler&) = delete;
+
   /* Creates a stack_memory_handler responsible for the buffer \a ptr of size \a size.
    * Note that \a ptr can be 0 regardless of the other parameters.
    * This constructor takes care of constructing/initializing the elements of the buffer if required by the scalar type
@@ -675,10 +676,14 @@ class aligned_stack_memory_handler : noncopyable {
    **/
   EIGEN_DEVICE_FUNC aligned_stack_memory_handler(T* ptr, std::size_t size, bool dealloc)
       : m_ptr(ptr), m_size(size), m_deallocate(dealloc) {
-    if (NumTraits<T>::RequireInitialization && m_ptr) Eigen::internal::default_construct_elements_of_array(m_ptr, size);
+    EIGEN_IF_CONSTEXPR (NumTraits<T>::RequireInitialization) {
+      if (m_ptr) Eigen::internal::default_construct_elements_of_array(m_ptr, size);
+    }
   }
   EIGEN_DEVICE_FUNC ~aligned_stack_memory_handler() {
-    if (NumTraits<T>::RequireInitialization && m_ptr) Eigen::internal::destruct_elements_of_array<T>(m_ptr, m_size);
+    EIGEN_IF_CONSTEXPR (NumTraits<T>::RequireInitialization) {
+      if (m_ptr) Eigen::internal::destruct_elements_of_array<T>(m_ptr, m_size);
+    }
     if (m_deallocate) Eigen::internal::aligned_free(m_ptr);
   }
 
@@ -694,8 +699,8 @@ template <typename Xpr, int NbEvaluations,
           bool MapExternalBuffer = nested_eval<Xpr, NbEvaluations>::Evaluate && Xpr::MaxSizeAtCompileTime == Dynamic>
 struct local_nested_eval_wrapper {
   static constexpr bool NeedExternalBuffer = false;
-  typedef typename Xpr::Scalar Scalar;
-  typedef typename nested_eval<Xpr, NbEvaluations>::type ObjectType;
+  using Scalar = typename Xpr::Scalar;
+  using ObjectType = typename nested_eval<Xpr, NbEvaluations>::type;
   ObjectType object;
 
   EIGEN_DEVICE_FUNC local_nested_eval_wrapper(const Xpr& xpr, Scalar* ptr) : object(xpr) {
@@ -707,23 +712,25 @@ struct local_nested_eval_wrapper {
 template <typename Xpr, int NbEvaluations>
 struct local_nested_eval_wrapper<Xpr, NbEvaluations, true> {
   static constexpr bool NeedExternalBuffer = true;
-  typedef typename Xpr::Scalar Scalar;
-  typedef typename plain_object_eval<Xpr>::type PlainObject;
-  typedef Map<PlainObject, EIGEN_DEFAULT_ALIGN_BYTES> ObjectType;
+  using Scalar = typename Xpr::Scalar;
+  using PlainObject = typename plain_object_eval<Xpr>::type;
+  using ObjectType = Map<PlainObject, EIGEN_DEFAULT_ALIGN_BYTES>;
   ObjectType object;
 
   EIGEN_DEVICE_FUNC local_nested_eval_wrapper(const Xpr& xpr, Scalar* ptr)
       : object(ptr == 0 ? reinterpret_cast<Scalar*>(Eigen::internal::aligned_malloc(sizeof(Scalar) * xpr.size())) : ptr,
                xpr.rows(), xpr.cols()),
         m_deallocate(ptr == 0) {
-    if (NumTraits<Scalar>::RequireInitialization && object.data())
-      Eigen::internal::default_construct_elements_of_array(object.data(), object.size());
+    EIGEN_IF_CONSTEXPR (NumTraits<Scalar>::RequireInitialization) {
+      if (object.data()) Eigen::internal::default_construct_elements_of_array(object.data(), object.size());
+    }
     object = xpr;
   }
 
   EIGEN_DEVICE_FUNC ~local_nested_eval_wrapper() {
-    if (NumTraits<Scalar>::RequireInitialization && object.data())
-      Eigen::internal::destruct_elements_of_array(object.data(), object.size());
+    EIGEN_IF_CONSTEXPR (NumTraits<Scalar>::RequireInitialization) {
+      if (object.data()) Eigen::internal::destruct_elements_of_array(object.data(), object.size());
+    }
     if (m_deallocate) Eigen::internal::aligned_free(object.data());
   }
 
@@ -733,25 +740,6 @@ struct local_nested_eval_wrapper<Xpr, NbEvaluations, true> {
 
 #endif  // EIGEN_ALLOCA
 
-template <typename T>
-class scoped_array : noncopyable {
-  T* m_ptr;
-
- public:
-  explicit scoped_array(std::ptrdiff_t size) { m_ptr = new T[size]; }
-  ~scoped_array() { delete[] m_ptr; }
-  T& operator[](std::ptrdiff_t i) { return m_ptr[i]; }
-  const T& operator[](std::ptrdiff_t i) const { return m_ptr[i]; }
-  T*& ptr() { return m_ptr; }
-  const T* ptr() const { return m_ptr; }
-  operator const T*() const { return m_ptr; }
-};
-
-template <typename T>
-void swap(scoped_array<T>& a, scoped_array<T>& b) {
-  std::swap(a.ptr(), b.ptr());
-}
-
 }  // end namespace internal
 
 /** \internal
@@ -759,7 +747,8 @@ void swap(scoped_array<T>& a, scoped_array<T>& b) {
  * The macro ei_declare_aligned_stack_constructed_variable(TYPE,NAME,SIZE,BUFFER) declares, allocates,
  * and construct an aligned buffer named NAME of SIZE elements of type TYPE on the stack
  * if the size in bytes is smaller than EIGEN_STACK_ALLOCATION_LIMIT, and if stack allocation is supported by the
- * platform (currently, this is Linux, OSX and Visual Studio only). Otherwise the memory is allocated on the heap. The
+ * platform (currently, this is Linux, OSX and Visual Studio only). Otherwise the memory is allocated on the heap;
+ * in particular, a zero EIGEN_STACK_ALLOCATION_LIMIT disables stack allocation and every buffer is heap-allocated. The
  * allocated buffer is automatically deleted when exiting the scope of this declaration. If BUFFER is non null, then the
  * declared variable is simply an alias for BUFFER, and no allocation/deletion occurs. Here is an example: \code
  * {
@@ -783,7 +772,7 @@ void swap(scoped_array<T>& a, scoped_array<T>& b) {
 // We always manually re-align the result of EIGEN_ALLOCA.
 // If alloca is already aligned, the compiler should be smart enough to optimize away the re-alignment.
 
-#if ((EIGEN_COMP_GNUC || EIGEN_COMP_CLANG) && !EIGEN_COMP_NVHPC)
+#if ((EIGEN_COMP_GNUC || EIGEN_COMP_CLANG) && !EIGEN_COMP_NVHPC && !EIGEN_COMP_ICC)
 #define EIGEN_ALIGNED_ALLOCA(SIZE) __builtin_alloca_with_align(SIZE, CHAR_BIT* EIGEN_DEFAULT_ALIGN_BYTES)
 #else
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void* eigen_aligned_alloca_helper(void* ptr) {
@@ -931,17 +920,17 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void* eigen_aligned_alloca_helper(void* pt
 template <class T>
 class aligned_allocator {
  public:
-  typedef std::size_t size_type;
-  typedef std::ptrdiff_t difference_type;
-  typedef T* pointer;
-  typedef const T* const_pointer;
-  typedef T& reference;
-  typedef const T& const_reference;
-  typedef T value_type;
+  using size_type = std::size_t;
+  using difference_type = std::ptrdiff_t;
+  using pointer = T*;
+  using const_pointer = const T*;
+  using reference = T&;
+  using const_reference = const T&;
+  using value_type = T;
 
   template <class U>
   struct rebind {
-    typedef aligned_allocator<U> other;
+    using other = aligned_allocator<U>;
   };
 
   aligned_allocator() = default;
@@ -976,6 +965,11 @@ class aligned_allocator {
 };
 
 //---------- Cache sizes ----------
+
+#if EIGEN_OS_LINUX && !defined(EIGEN_NO_CPU_CACHE_SYSFS)
+// Linux publishes the cache topology under sysfs on every architecture.
+#define EIGEN_CPU_CACHE_SYSFS 1
+#endif
 
 #if !defined(EIGEN_NO_CPUID)
 #if EIGEN_COMP_GNUC && EIGEN_ARCH_i386_OR_x86_64
@@ -1013,7 +1007,7 @@ inline bool cpuid_is_vendor(int abcd[4], const int vendor[3]) {
   return abcd[1] == vendor[0] && abcd[3] == vendor[1] && abcd[2] == vendor[2];
 }
 
-inline void queryCacheSizes_intel_direct(int& l1, int& l2, int& l3) {
+inline void queryCacheSizes_intel_direct(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3) {
   int abcd[4];
   l1 = l2 = l3 = 0;
   int cache_id = 0;
@@ -1030,7 +1024,8 @@ inline void queryCacheSizes_intel_direct(int& l1, int& l2, int& l3) {
       int line_size = (abcd[1] & 0x00000FFF) >> 0;    // B[11:0]
       int sets = (abcd[2]);                           // C[31:0]
 
-      int cache_size = (ways + 1) * (partitions + 1) * (line_size + 1) * (sets + 1);
+      std::ptrdiff_t cache_size =
+          static_cast<std::ptrdiff_t>(ways + 1) * (partitions + 1) * (line_size + 1) * (sets + 1);
 
       switch (cache_level) {
         case 1:
@@ -1050,7 +1045,7 @@ inline void queryCacheSizes_intel_direct(int& l1, int& l2, int& l3) {
   } while (cache_type > 0 && cache_id < 16);
 }
 
-inline void queryCacheSizes_intel_codes(int& l1, int& l2, int& l3) {
+inline void queryCacheSizes_intel_codes(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3) {
   int abcd[4];
   abcd[0] = abcd[1] = abcd[2] = abcd[3] = 0;
   l1 = l2 = l3 = 0;
@@ -1246,7 +1241,7 @@ inline void queryCacheSizes_intel_codes(int& l1, int& l2, int& l3) {
   l3 *= 1024;
 }
 
-inline void queryCacheSizes_intel(int& l1, int& l2, int& l3, int max_std_funcs) {
+inline void queryCacheSizes_intel(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3, int max_std_funcs) {
   if (max_std_funcs >= 4)
     queryCacheSizes_intel_direct(l1, l2, l3);
   else if (max_std_funcs >= 2)
@@ -1255,7 +1250,7 @@ inline void queryCacheSizes_intel(int& l1, int& l2, int& l3, int max_std_funcs) 
     l1 = l2 = l3 = 0;
 }
 
-inline void queryCacheSizes_amd(int& l1, int& l2, int& l3) {
+inline void queryCacheSizes_amd(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3) {
   int abcd[4];
   abcd[0] = abcd[1] = abcd[2] = abcd[3] = 0;
 
@@ -1266,29 +1261,218 @@ inline void queryCacheSizes_amd(int& l1, int& l2, int& l3) {
     l1 = (abcd[2] >> 24) * 1024;  // C[31:24] = L1 size in KB
     abcd[0] = abcd[1] = abcd[2] = abcd[3] = 0;
     EIGEN_CPUID(abcd, 0x80000006, 0);
-    l2 = (abcd[2] >> 16) * 1024;                      // C[31;16] = l2 cache size in KB
-    l3 = ((abcd[3] & 0xFFFC000) >> 18) * 512 * 1024;  // D[31;18] = l3 cache size in 512KB
+    l2 = (abcd[2] >> 16) * 1024;                                                 // C[31;16] = l2 cache size in KB
+    l3 = static_cast<std::ptrdiff_t>((abcd[3] & 0xFFFC000) >> 18) * 512 * 1024;  // D[31;18] = l3 cache size in 512KB
   } else {
     l1 = l2 = l3 = 0;
   }
 }
 #endif
 
+#ifdef EIGEN_CPU_CACHE_SYSFS
+
+/** \internal Data-cache geometry as Linux describes it; a zero field means sysfs did not say. */
+struct CpuCacheTopology {
+  std::ptrdiff_t l1 = 0;
+  std::ptrdiff_t l2 = 0;
+  std::ptrdiff_t l3 = 0;
+  std::ptrdiff_t l3_per_cpu = 0;
+};
+
+/** \internal Reads the first line of the file at \a relative under the CPU topology directory \a root into
+ * \a value. The directory is /sys/devices/system/cpu in production; tests substitute a fixture tree. */
+template <int Size>
+inline bool readSysfsLine(const char* root, const char* relative, char (&value)[Size]) {
+  char path[512];
+  const int length = std::snprintf(path, sizeof(path), "%s/%s", root, relative);
+  if (length <= 0 || length >= static_cast<int>(sizeof(path))) return false;
+  std::FILE* file = std::fopen(path, "r");
+  if (file == nullptr) return false;
+  const bool ok = std::fgets(value, Size, file) != nullptr;
+  std::fclose(file);
+  return ok;
+}
+
+/** \internal Reads the first line of \a cpu's cache attribute \a name into \a value. */
+template <int Size>
+inline bool readCpuCacheAttribute(const char* root, int cpu, int index, const char* name, char (&value)[Size]) {
+  char relative[64];
+  const int length = std::snprintf(relative, sizeof(relative), "cpu%d/cache/index%d/%s", cpu, index, name);
+  return length > 0 && length < static_cast<int>(sizeof(relative)) && readSysfsLine(root, relative, value);
+}
+
+/** \internal Parses a sysfs cache size such as "64K". \returns 0 if \a text is not a positive size. */
+inline std::ptrdiff_t parseCpuCacheSize(const char* text) {
+  char* suffix = nullptr;
+  const std::ptrdiff_t value = std::strtol(text, &suffix, 10);
+  if (value <= 0) return 0;
+  // The kernel writes kibibytes ("%uK"), but only scale on an explicit unit: reading a bare byte
+  // count as kibibytes would overstate a cache 1024x, which is much worse than the reverse.
+  const std::ptrdiff_t multiplier = (*suffix == 'K' || *suffix == 'k')   ? 1024
+                                    : (*suffix == 'M' || *suffix == 'm') ? 1024 * 1024
+                                                                         : 1;
+  return value * multiplier;
+}
+
+/** \internal Whether \a text is where a sysfs line legitimately ends. */
+inline bool isCpuListTerminator(const char* text) { return *text == '\0' || *text == '\n' || *text == '\r'; }
+
 /** \internal
- * Queries and returns the cache sizes in Bytes of the L1, L2, and L3 data caches respectively */
-inline void queryCacheSizes(int& l1, int& l2, int& l3) {
+ * Calls \a visit(first, last) for each range of a sysfs cpu list such as "0-3" or "0-3,8-11". \returns false
+ * if \a text is malformed, so that an unparsable list reads as "unknown" rather than as whatever the ranges
+ * before the parse went wrong added up to. */
+template <typename Visitor>
+inline bool parseCpuList(const char* text, Visitor&& visit) {
+  if (isCpuListTerminator(text)) return false;
+  // Far above the 8192 CPUs current kernels can number, so a larger id means the line is not a cpu list;
+  // bounding it also keeps a caller that walks the ranges from visiting ids that cannot exist.
+  const long max_cpu_id = 1 << 16;
+  const char* cursor = text;
+  for (;;) {
+    char* end = nullptr;
+    const long first = std::strtol(cursor, &end, 10);
+    if (end == cursor || first < 0) return false;
+    long last = first;
+    if (*end == '-') {
+      cursor = end + 1;
+      last = std::strtol(cursor, &end, 10);
+      if (end == cursor || last < first) return false;
+    }
+    if (last >= max_cpu_id) return false;
+    visit(static_cast<int>(first), static_cast<int>(last));
+    // A comma promises another range, so a list ending on one is malformed: going round the loop
+    // lands on the terminator and fails the strtol above.
+    if (*end == ',') {
+      cursor = end + 1;
+      continue;
+    }
+    // Anything other than a separator or the end of the line means the format is not what this
+    // parser assumes.
+    return isCpuListTerminator(end);
+  }
+}
+
+/** \internal
+ * Counts the CPUs in a sysfs cpu list. \returns 0 if \a text is malformed: reading such a line as a small
+ * count would inflate l3_per_cpu, so the whole list is treated as unknown instead. */
+inline int parseCpuListCount(const char* text) {
+  int count = 0;
+  return parseCpuList(text, [&count](int first, int last) { count += last - first + 1; }) ? count : 0;
+}
+
+/** \internal
+ * \returns \a cpu's data-cache geometry as published under \a root.
+ *
+ * l3_per_cpu is the L3 instance size divided by the CPUs sharing it, and is deliberately derived
+ * within this single pass: the l3 reported elsewhere is a package total on a multi-die part -- 128MB
+ * on a 32-core Threadripper whose cores each reach one 16MB slice -- so pairing it with one
+ * instance's sharer count would overstate the share eightfold. */
+inline CpuCacheTopology readCpuCacheTopologySysfs(const char* root, int cpu) {
+  CpuCacheTopology topology;
+  // One directory per cache, numbered contiguously from zero. The bound only guards a malformed
+  // sysfs; it is far above what any current CPU reports.
+  for (int index = 0; index < 16; ++index) {
+    // A shared_cpu_list can be long on a large machine, and truncating it would undercount the
+    // sharers and hand out too large a share.
+    char value[512];
+
+    if (!readCpuCacheAttribute(root, cpu, index, "level", value)) break;
+    const long level = std::strtol(value, nullptr, 10);
+    std::ptrdiff_t* target =
+        level == 1 ? &topology.l1 : (level == 2 ? &topology.l2 : (level == 3 ? &topology.l3 : nullptr));
+    if (target == nullptr || *target > 0) continue;
+
+    // "Data", "Instruction", or "Unified". An instruction cache never holds the operands a product
+    // blocks for, so it must not be mistaken for the L1 data cache.
+    if (!readCpuCacheAttribute(root, cpu, index, "type", value) || value[0] == 'I') continue;
+
+    if (!readCpuCacheAttribute(root, cpu, index, "size", value)) continue;
+    const std::ptrdiff_t size = parseCpuCacheSize(value);
+    if (size <= 0) continue;
+    *target = size;
+
+    if (level == 3 && readCpuCacheAttribute(root, cpu, index, "shared_cpu_list", value) &&
+        std::strchr(value, '\n') != nullptr) {
+      const int sharing = parseCpuListCount(value);
+      if (sharing > 0) topology.l3_per_cpu = size / sharing;
+    }
+  }
+  return topology;
+}
+
+/** \internal The smaller of two reported sizes, where 0 stands for "not reported". */
+inline std::ptrdiff_t smallerReportedCacheSize(std::ptrdiff_t a, std::ptrdiff_t b) {
+  return a == 0 ? b : (b == 0 ? a : (std::min)(a, b));
+}
+
+/** \internal
+ * \returns the geometry a thread confined to the CPUs \a is_allowed(cpu) admits can rely on: per level, the
+ * smallest cache any of those CPUs reports, so that blocking sized from it fits wherever the thread lands.
+ * The candidates are the CPUs listed online under \a root; one that publishes no cache directory contributes
+ * nothing, and a level it does not report is left to the CPUs that do. */
+template <typename IsAllowed>
+inline CpuCacheTopology queryCpuCacheTopologySysfs(const char* root, IsAllowed&& is_allowed) {
+  CpuCacheTopology topology;
+  char online[512];
+  if (!readSysfsLine(root, "online", online) || std::strchr(online, '\n') == nullptr) return topology;
+  // Validate the whole line before acting on any range of it, so that a malformed list reads as "unknown".
+  if (!parseCpuList(online, [](int, int) {})) return topology;
+  parseCpuList(online, [&](int first, int last) {
+    for (int cpu = first; cpu <= last; ++cpu) {
+      if (!is_allowed(cpu)) continue;
+      const CpuCacheTopology candidate = readCpuCacheTopologySysfs(root, cpu);
+      topology.l1 = smallerReportedCacheSize(topology.l1, candidate.l1);
+      topology.l2 = smallerReportedCacheSize(topology.l2, candidate.l2);
+      topology.l3 = smallerReportedCacheSize(topology.l3, candidate.l3);
+      topology.l3_per_cpu = smallerReportedCacheSize(topology.l3_per_cpu, candidate.l3_per_cpu);
+    }
+  });
+  return topology;
+}
+
+/** \internal
+ * \returns the geometry the calling thread can rely on: that of the CPUs its affinity mask admits, narrowed as
+ * queryCpuCacheTopologySysfs(root, is_allowed) describes. Sampling one fixed CPU would not do: a cpuset or
+ * taskset can exclude CPU 0 while its directory stays readable, and on a heterogeneous part the excluded CPUs
+ * can be the ones with the large caches. Where the mask is unavailable every online CPU is a candidate, which
+ * is the conservative answer. */
+inline CpuCacheTopology queryCpuCacheTopologySysfs(const char* root = "/sys/devices/system/cpu") {
+#ifdef CPU_SETSIZE
+  // The affinity API is a GNU extension that glibc, musl and bionic expose under _GNU_SOURCE, which g++ and
+  // clang++ predefine for C++; CPU_SETSIZE is defined exactly when it is exposed. The query fails on a machine
+  // with more CPU ids than cpu_set_t holds.
+  cpu_set_t allowed;
+  if (sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
+    return queryCpuCacheTopologySysfs(root,
+                                      [&allowed](int cpu) { return cpu < CPU_SETSIZE && CPU_ISSET(cpu, &allowed); });
+  }
+#endif
+  return queryCpuCacheTopologySysfs(root, [](int) { return true; });
+}
+
+#endif  // EIGEN_CPU_CACHE_SYSFS
+
+/** \internal
+ * Queries and returns the cache sizes in Bytes of the L1, L2, and L3 data caches respectively, and in
+ * \a l3_per_cpu one CPU's share of the L3 where the platform publishes the sharing, 0 otherwise. */
+inline void queryCacheSizes(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3, std::ptrdiff_t& l3_per_cpu) {
+  l3_per_cpu = 0;
 #ifdef EIGEN_CPUID
   int abcd[4];
   const int GenuineIntel[] = {0x756e6547, 0x49656e69, 0x6c65746e};
   const int AuthenticAMD[] = {0x68747541, 0x69746e65, 0x444d4163};
   const int AMDisbetter_[] = {0x69444d41, 0x74656273, 0x21726574};  // "AMDisbetter!"
+  // Hygon Dhyana is a Zen-based joint-venture line that returns "HygonGenuine"
+  // and shares AMD's CPUID layout for cache descriptors (AMD Family 17h).
+  const int HygonGenuine[] = {0x6f677948, 0x6e65476e, 0x656e6975};  // "HygonGenuine"
 
   // identify the CPU vendor
   EIGEN_CPUID(abcd, 0x0, 0);
   int max_std_funcs = abcd[0];
   if (cpuid_is_vendor(abcd, GenuineIntel))
     queryCacheSizes_intel(l1, l2, l3, max_std_funcs);
-  else if (cpuid_is_vendor(abcd, AuthenticAMD) || cpuid_is_vendor(abcd, AMDisbetter_))
+  else if (cpuid_is_vendor(abcd, AuthenticAMD) || cpuid_is_vendor(abcd, AMDisbetter_) ||
+           cpuid_is_vendor(abcd, HygonGenuine))
     queryCacheSizes_amd(l1, l2, l3);
   else
     // by default let's use Intel's API
@@ -1318,41 +1502,59 @@ inline void queryCacheSizes(int& l1, int& l2, int& l3) {
     std::size_t val_size = sizeof(val);
     l1 = -1;
     val_size = sizeof(val);
-    if (sysctlbyname("hw.perflevel0.l1dcachesize", &val, &val_size, NULL, 0) == 0 && val > 0)
-      l1 = static_cast<int>(val);
+    if (sysctlbyname("hw.perflevel0.l1dcachesize", &val, &val_size, nullptr, 0) == 0 && val > 0)
+      l1 = val;
     else {
       val_size = sizeof(val);
-      if (sysctlbyname("hw.l1dcachesize", &val, &val_size, NULL, 0) == 0) l1 = static_cast<int>(val);
+      if (sysctlbyname("hw.l1dcachesize", &val, &val_size, nullptr, 0) == 0) l1 = val;
     }
     l2 = -1;
     val_size = sizeof(val);
-    if (sysctlbyname("hw.l2cachesize", &val, &val_size, NULL, 0) == 0) l2 = static_cast<int>(val);
+    if (sysctlbyname("hw.l2cachesize", &val, &val_size, nullptr, 0) == 0) l2 = val;
     l3 = -1;
     val_size = sizeof(val);
-    if (sysctlbyname("hw.l3cachesize", &val, &val_size, NULL, 0) == 0 && val > 0) l3 = static_cast<int>(val);
+    if (sysctlbyname("hw.l3cachesize", &val, &val_size, nullptr, 0) == 0 && val > 0) l3 = val;
   }
 #elif EIGEN_OS_UNIX && defined(_SC_LEVEL1_DCACHE_SIZE)
-  // On Linux and other POSIX systems, use sysconf to query cache sizes.
+  // A glibc extension: POSIX specifies no cache queries, and musl defines none of these names.
   l1 = sysconf(_SC_LEVEL1_DCACHE_SIZE);
   l2 = sysconf(_SC_LEVEL2_CACHE_SIZE);
   l3 = sysconf(_SC_LEVEL3_CACHE_SIZE);
 #else
   l1 = l2 = l3 = -1;
 #endif
+#ifdef EIGEN_CPU_CACHE_SYSFS
+  // glibc answers the _SC_LEVEL*_CACHE_SIZE queries from CPUID and so only implements them on x86; every
+  // other architecture gets 0, and musl has no such queries at all. Whatever the platform left unknown comes
+  // from the topology Linux publishes on every architecture, as does the L3 share, so that all four numbers
+  // describe the same CPUs.
+  const CpuCacheTopology topology = queryCpuCacheTopologySysfs();
+  if (l1 <= 0) l1 = topology.l1;
+  if (l2 <= 0) l2 = topology.l2;
+  if (l3 <= 0) l3 = topology.l3;
+  l3_per_cpu = topology.l3_per_cpu;
+#endif
+}
+
+/** \internal
+ * Queries and returns the cache sizes in Bytes of the L1, L2, and L3 data caches respectively */
+inline void queryCacheSizes(std::ptrdiff_t& l1, std::ptrdiff_t& l2, std::ptrdiff_t& l3) {
+  std::ptrdiff_t l3_per_cpu;
+  queryCacheSizes(l1, l2, l3, l3_per_cpu);
 }
 
 /** \internal
  * \returns the size in Bytes of the L1 data cache */
-inline int queryL1CacheSize() {
-  int l1(-1), l2, l3;
+inline std::ptrdiff_t queryL1CacheSize() {
+  std::ptrdiff_t l1(-1), l2, l3;
   queryCacheSizes(l1, l2, l3);
   return l1;
 }
 
 /** \internal
  * \returns the size in Bytes of the L2 or L3 cache if this later is present */
-inline int queryTopLevelCacheSize() {
-  int l1, l2(-1), l3(-1);
+inline std::ptrdiff_t queryTopLevelCacheSize() {
+  std::ptrdiff_t l1, l2(-1), l3(-1);
   queryCacheSizes(l1, l2, l3);
   return (std::max)(l2, l3);
 }
@@ -1361,7 +1563,7 @@ inline int queryTopLevelCacheSize() {
  * This wraps C++20's std::construct_at, using placement new instead if it is not available.
  */
 
-#if EIGEN_COMP_CXXVER >= 20 && defined(__cpp_lib_constexpr_dynamic_alloc) && \
+#if !defined(EIGEN_GPU_COMPILE_PHASE) && EIGEN_COMP_CXXVER >= 20 && defined(__cpp_lib_constexpr_dynamic_alloc) && \
     __cpp_lib_constexpr_dynamic_alloc >= 201907L
 using std::construct_at;
 #else

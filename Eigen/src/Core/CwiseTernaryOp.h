@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_CWISE_TERNARY_OP_H
 #define EIGEN_CWISE_TERNARY_OP_H
@@ -22,8 +23,8 @@ template <typename TernaryOp, typename Arg1, typename Arg2, typename Arg3>
 struct traits<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>> {
   // we must not inherit from traits<Arg1> since it has
   // the potential to cause problems with MSVC
-  typedef remove_all_t<Arg1> Ancestor;
-  typedef typename traits<Ancestor>::XprKind XprKind;
+  using Ancestor = remove_all_t<Arg1>;
+  using XprKind = typename traits<Ancestor>::XprKind;
   enum {
     RowsAtCompileTime = traits<Ancestor>::RowsAtCompileTime,
     ColsAtCompileTime = traits<Ancestor>::ColsAtCompileTime,
@@ -34,18 +35,18 @@ struct traits<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>> {
   // even though we require Arg1, Arg2, and Arg3 to have the same scalar type
   // (see CwiseTernaryOp constructor),
   // we still want to handle the case when the result type is different.
-  typedef typename result_of<TernaryOp(const typename Arg1::Scalar&, const typename Arg2::Scalar&,
-                                       const typename Arg3::Scalar&)>::type Scalar;
+  using Scalar = typename result_of<TernaryOp(const typename Arg1::Scalar&, const typename Arg2::Scalar&,
+                                              const typename Arg3::Scalar&)>::type;
 
-  typedef typename internal::traits<Arg1>::StorageKind StorageKind;
-  typedef typename internal::traits<Arg1>::StorageIndex StorageIndex;
+  using StorageKind = typename internal::traits<Arg1>::StorageKind;
+  using StorageIndex = typename internal::traits<Arg1>::StorageIndex;
 
-  typedef typename Arg1::Nested Arg1Nested;
-  typedef typename Arg2::Nested Arg2Nested;
-  typedef typename Arg3::Nested Arg3Nested;
-  typedef std::remove_reference_t<Arg1Nested> Arg1Nested_;
-  typedef std::remove_reference_t<Arg2Nested> Arg2Nested_;
-  typedef std::remove_reference_t<Arg3Nested> Arg3Nested_;
+  using Arg1Nested = typename Arg1::Nested;
+  using Arg2Nested = typename Arg2::Nested;
+  using Arg3Nested = typename Arg3::Nested;
+  using Arg1Nested_ = std::remove_reference_t<Arg1Nested>;
+  using Arg2Nested_ = std::remove_reference_t<Arg2Nested>;
+  using Arg3Nested_ = std::remove_reference_t<Arg3Nested>;
   enum { Flags = Arg1Nested_::Flags & RowMajorBit };
 };
 }  // end namespace internal
@@ -57,7 +58,7 @@ class CwiseTernaryOpImpl;
  * \ingroup Core_Module
  *
  * \brief Generic expression where a coefficient-wise ternary operator is
- * applied to two expressions
+ * applied to three expressions
  *
  * \tparam TernaryOp template functor implementing the operator
  * \tparam Arg1Type the type of the first argument
@@ -85,32 +86,32 @@ class CwiseTernaryOp : public CwiseTernaryOpImpl<TernaryOp, Arg1Type, Arg2Type, 
                                                  typename internal::traits<Arg1Type>::StorageKind>,
                        internal::no_assignment_operator {
  public:
-  typedef internal::remove_all_t<Arg1Type> Arg1;
-  typedef internal::remove_all_t<Arg2Type> Arg2;
-  typedef internal::remove_all_t<Arg3Type> Arg3;
+  using Arg1 = internal::remove_all_t<Arg1Type>;
+  using Arg2 = internal::remove_all_t<Arg2Type>;
+  using Arg3 = internal::remove_all_t<Arg3Type>;
 
   // require the sizes to match
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(Arg1, Arg2)
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(Arg1, Arg3)
 
   // The index types should match
-  EIGEN_STATIC_ASSERT((internal::is_same<typename internal::traits<Arg1Type>::StorageKind,
-                                         typename internal::traits<Arg2Type>::StorageKind>::value),
+  EIGEN_STATIC_ASSERT((std::is_same<typename internal::traits<Arg1Type>::StorageKind,
+                                    typename internal::traits<Arg2Type>::StorageKind>::value),
                       STORAGE_KIND_MUST_MATCH)
-  EIGEN_STATIC_ASSERT((internal::is_same<typename internal::traits<Arg1Type>::StorageKind,
-                                         typename internal::traits<Arg3Type>::StorageKind>::value),
+  EIGEN_STATIC_ASSERT((std::is_same<typename internal::traits<Arg1Type>::StorageKind,
+                                    typename internal::traits<Arg3Type>::StorageKind>::value),
                       STORAGE_KIND_MUST_MATCH)
 
-  typedef typename CwiseTernaryOpImpl<TernaryOp, Arg1Type, Arg2Type, Arg3Type,
-                                      typename internal::traits<Arg1Type>::StorageKind>::Base Base;
+  using Base = typename CwiseTernaryOpImpl<TernaryOp, Arg1Type, Arg2Type, Arg3Type,
+                                           typename internal::traits<Arg1Type>::StorageKind>::Base;
   EIGEN_GENERIC_PUBLIC_INTERFACE(CwiseTernaryOp)
 
-  typedef typename internal::ref_selector<Arg1Type>::type Arg1Nested;
-  typedef typename internal::ref_selector<Arg2Type>::type Arg2Nested;
-  typedef typename internal::ref_selector<Arg3Type>::type Arg3Nested;
-  typedef std::remove_reference_t<Arg1Nested> Arg1Nested_;
-  typedef std::remove_reference_t<Arg2Nested> Arg2Nested_;
-  typedef std::remove_reference_t<Arg3Nested> Arg3Nested_;
+  using Arg1Nested = typename internal::ref_selector<Arg1Type>::type;
+  using Arg2Nested = typename internal::ref_selector<Arg2Type>::type;
+  using Arg3Nested = typename internal::ref_selector<Arg3Type>::type;
+  using Arg1Nested_ = std::remove_reference_t<Arg1Nested>;
+  using Arg2Nested_ = std::remove_reference_t<Arg2Nested>;
+  using Arg3Nested_ = std::remove_reference_t<Arg3Nested>;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CwiseTernaryOp(const Arg1& a1, const Arg2& a2, const Arg3& a3,
                                                        const TernaryOp& func = TernaryOp())
@@ -121,31 +122,33 @@ class CwiseTernaryOp : public CwiseTernaryOpImpl<TernaryOp, Arg1Type, Arg2Type, 
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Index rows() const {
     // return the fixed size type if available to enable compile time
     // optimizations
-    if (internal::traits<internal::remove_all_t<Arg1Nested>>::RowsAtCompileTime == Dynamic &&
-        internal::traits<internal::remove_all_t<Arg2Nested>>::RowsAtCompileTime == Dynamic)
+    EIGEN_IF_CONSTEXPR (internal::traits<internal::remove_all_t<Arg1Nested>>::RowsAtCompileTime == Dynamic &&
+                        internal::traits<internal::remove_all_t<Arg2Nested>>::RowsAtCompileTime == Dynamic) {
       return m_arg3.rows();
-    else if (internal::traits<internal::remove_all_t<Arg1Nested>>::RowsAtCompileTime == Dynamic &&
-             internal::traits<internal::remove_all_t<Arg3Nested>>::RowsAtCompileTime == Dynamic)
+    } else EIGEN_IF_CONSTEXPR (internal::traits<internal::remove_all_t<Arg1Nested>>::RowsAtCompileTime == Dynamic &&
+                               internal::traits<internal::remove_all_t<Arg3Nested>>::RowsAtCompileTime == Dynamic) {
       return m_arg2.rows();
-    else
+    } else {
       return m_arg1.rows();
+    }
   }
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Index cols() const {
     // return the fixed size type if available to enable compile time
     // optimizations
-    if (internal::traits<internal::remove_all_t<Arg1Nested>>::ColsAtCompileTime == Dynamic &&
-        internal::traits<internal::remove_all_t<Arg2Nested>>::ColsAtCompileTime == Dynamic)
+    EIGEN_IF_CONSTEXPR (internal::traits<internal::remove_all_t<Arg1Nested>>::ColsAtCompileTime == Dynamic &&
+                        internal::traits<internal::remove_all_t<Arg2Nested>>::ColsAtCompileTime == Dynamic) {
       return m_arg3.cols();
-    else if (internal::traits<internal::remove_all_t<Arg1Nested>>::ColsAtCompileTime == Dynamic &&
-             internal::traits<internal::remove_all_t<Arg3Nested>>::ColsAtCompileTime == Dynamic)
+    } else EIGEN_IF_CONSTEXPR (internal::traits<internal::remove_all_t<Arg1Nested>>::ColsAtCompileTime == Dynamic &&
+                               internal::traits<internal::remove_all_t<Arg3Nested>>::ColsAtCompileTime == Dynamic) {
       return m_arg2.cols();
-    else
+    } else {
       return m_arg1.cols();
+    }
   }
 
   /** \returns the first argument nested expression */
   EIGEN_DEVICE_FUNC constexpr const Arg1Nested_& arg1() const { return m_arg1; }
-  /** \returns the first argument nested expression */
+  /** \returns the second argument nested expression */
   EIGEN_DEVICE_FUNC constexpr const Arg2Nested_& arg2() const { return m_arg2; }
   /** \returns the third argument nested expression */
   EIGEN_DEVICE_FUNC constexpr const Arg3Nested_& arg3() const { return m_arg3; }
@@ -163,7 +166,7 @@ class CwiseTernaryOp : public CwiseTernaryOpImpl<TernaryOp, Arg1Type, Arg2Type, 
 template <typename TernaryOp, typename Arg1, typename Arg2, typename Arg3, typename StorageKind>
 class CwiseTernaryOpImpl : public internal::generic_xpr_base<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>>::type {
  public:
-  typedef typename internal::generic_xpr_base<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>>::type Base;
+  using Base = typename internal::generic_xpr_base<CwiseTernaryOp<TernaryOp, Arg1, Arg2, Arg3>>::type;
 };
 
 }  // end namespace Eigen

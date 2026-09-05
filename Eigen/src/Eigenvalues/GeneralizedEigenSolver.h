@@ -8,6 +8,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_GENERALIZEDEIGENSOLVER_H
 #define EIGEN_GENERALIZEDEIGENSOLVER_H
@@ -62,7 +63,7 @@ template <typename MatrixType_>
 class GeneralizedEigenSolver {
  public:
   /** \brief Synonym for the template parameter \p MatrixType_. */
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
 
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
@@ -73,9 +74,9 @@ class GeneralizedEigenSolver {
   };
 
   /** \brief Scalar type for matrices of type #MatrixType. */
-  typedef typename MatrixType::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-  typedef Eigen::Index Index;  ///< \deprecated since Eigen 3.3
+  using Scalar = typename MatrixType::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using Index = Eigen::Index;  ///< \deprecated since Eigen 3.3
 
   /** \brief Complex scalar type for #MatrixType.
    *
@@ -83,35 +84,34 @@ class GeneralizedEigenSolver {
    * \c float or \c double) and just \c Scalar if #Scalar is
    * complex.
    */
-  typedef internal::make_complex_t<Scalar> ComplexScalar;
+  using ComplexScalar = internal::make_complex_t<Scalar>;
 
   /** \brief Type for vector of real scalar values eigenvalues as returned by betas().
    *
    * This is a column vector with entries of type #Scalar.
    * The length of the vector is the size of #MatrixType.
    */
-  typedef Matrix<Scalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1> VectorType;
+  using VectorType = Matrix<Scalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1>;
 
   /** \brief Type for vector of complex scalar values eigenvalues as returned by alphas().
    *
    * This is a column vector with entries of type #ComplexScalar.
    * The length of the vector is the size of #MatrixType.
    */
-  typedef Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1> ComplexVectorType;
+  using ComplexVectorType = Matrix<ComplexScalar, ColsAtCompileTime, 1, Options & ~RowMajor, MaxColsAtCompileTime, 1>;
 
   /** \brief Expression type for the eigenvalues as returned by eigenvalues().
    */
-  typedef CwiseBinaryOp<internal::scalar_quotient_op<ComplexScalar, Scalar>, ComplexVectorType, VectorType>
-      EigenvalueType;
+  using EigenvalueType =
+      CwiseBinaryOp<internal::scalar_quotient_op<ComplexScalar, Scalar>, ComplexVectorType, VectorType>;
 
   /** \brief Type for matrix of eigenvectors as returned by eigenvectors().
    *
    * This is a square matrix with entries of type #ComplexScalar.
    * The size is the same as the size of #MatrixType.
    */
-  typedef Matrix<ComplexScalar, RowsAtCompileTime, ColsAtCompileTime, Options, MaxRowsAtCompileTime,
-                 MaxColsAtCompileTime>
-      EigenvectorsType;
+  using EigenvectorsType =
+      Matrix<ComplexScalar, RowsAtCompileTime, ColsAtCompileTime, Options, MaxRowsAtCompileTime, MaxColsAtCompileTime>;
 
   /** \brief Default constructor.
    *
@@ -184,7 +184,7 @@ class GeneralizedEigenSolver {
    * \returns An expression of the column vector containing the eigenvalues.
    *
    * It is a shortcut for \code this->alphas().cwiseQuotient(this->betas()); \endcode
-   * Not that betas might contain zeros. It is therefore not recommended to use this function,
+   * Note that betas might contain zeros. It is therefore not recommended to use this function,
    * but rather directly deal with the alphas and betas vectors.
    *
    * \pre Either the constructor
@@ -243,7 +243,7 @@ class GeneralizedEigenSolver {
    * The cost of the computation is dominated by the cost of the
    * generalized Schur decomposition.
    *
-   * This method reuses of the allocated data in the GeneralizedEigenSolver object.
+   * This method reuses the allocated data in the GeneralizedEigenSolver object.
    */
   GeneralizedEigenSolver& compute(const MatrixType& A, const MatrixType& B, bool computeEigenvectors = true);
 
@@ -361,7 +361,7 @@ GeneralizedEigenSolver<MatrixType>& GeneralizedEigenSolver<MatrixType>::compute(
           // Compute eigenvector in position (i+1) and then position (i) is just the conjugate
           cv.setZero();
           cv.coeffRef(i + 1) = Scalar(1.0);
-          // here, the "static_cast" workaround expression template issues.
+          // here, the "static_cast" works around expression template issues.
           cv.coeffRef(i) = -(static_cast<Scalar>(beta * mS.coeffRef(i, i + 1)) - alpha * mT.coeffRef(i, i + 1)) /
                            (static_cast<Scalar>(beta * mS.coeffRef(i, i)) - alpha * mT.coeffRef(i, i));
           for (Index j = i - 1; j >= 0; j--) {
@@ -384,7 +384,7 @@ GeneralizedEigenSolver<MatrixType>& GeneralizedEigenSolver<MatrixType>::compute(
                                (alpha * mT.coeffRef(j, j) - static_cast<Scalar>(beta * mS.coeffRef(j, j)));
             }
           }
-          m_eivec.col(i + 1).noalias() = (m_realQZ.matrixZ().transpose() * cv);
+          m_eivec.col(i + 1).noalias() = m_realQZ.matrixZ().transpose() * cv;
           m_eivec.col(i + 1).normalize();
           m_eivec.col(i) = m_eivec.col(i + 1).conjugate();
         }

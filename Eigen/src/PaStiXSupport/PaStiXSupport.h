@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_PASTIXSUPPORT_H
 #define EIGEN_PASTIXSUPPORT_H
@@ -70,12 +71,12 @@ struct pastix_traits<PastixLDLT<MatrixType_, Options> > {
 inline void eigen_pastix(pastix_data_t **pastix_data, int pastix_comm, int n, int *ptr, int *idx, float *vals,
                          int *perm, int *invp, float *x, int nbrhs, int *iparm, double *dparm) {
   if (n == 0) {
-    ptr = NULL;
-    idx = NULL;
-    vals = NULL;
+    ptr = nullptr;
+    idx = nullptr;
+    vals = nullptr;
   }
   if (nbrhs == 0) {
-    x = NULL;
+    x = nullptr;
     nbrhs = 1;
   }
   s_pastix(pastix_data, pastix_comm, n, ptr, idx, vals, perm, invp, x, nbrhs, iparm, dparm);
@@ -84,12 +85,12 @@ inline void eigen_pastix(pastix_data_t **pastix_data, int pastix_comm, int n, in
 inline void eigen_pastix(pastix_data_t **pastix_data, int pastix_comm, int n, int *ptr, int *idx, double *vals,
                          int *perm, int *invp, double *x, int nbrhs, int *iparm, double *dparm) {
   if (n == 0) {
-    ptr = NULL;
-    idx = NULL;
-    vals = NULL;
+    ptr = nullptr;
+    idx = nullptr;
+    vals = nullptr;
   }
   if (nbrhs == 0) {
-    x = NULL;
+    x = nullptr;
     nbrhs = 1;
   }
   d_pastix(pastix_data, pastix_comm, n, ptr, idx, vals, perm, invp, x, nbrhs, iparm, dparm);
@@ -99,12 +100,12 @@ inline void eigen_pastix(pastix_data_t **pastix_data, int pastix_comm, int n, in
                          std::complex<float> *vals, int *perm, int *invp, std::complex<float> *x, int nbrhs, int *iparm,
                          double *dparm) {
   if (n == 0) {
-    ptr = NULL;
-    idx = NULL;
-    vals = NULL;
+    ptr = nullptr;
+    idx = nullptr;
+    vals = nullptr;
   }
   if (nbrhs == 0) {
-    x = NULL;
+    x = nullptr;
     nbrhs = 1;
   }
   c_pastix(pastix_data, pastix_comm, n, ptr, idx, reinterpret_cast<PASTIX_COMPLEX *>(vals), perm, invp,
@@ -115,19 +116,19 @@ inline void eigen_pastix(pastix_data_t **pastix_data, int pastix_comm, int n, in
                          std::complex<double> *vals, int *perm, int *invp, std::complex<double> *x, int nbrhs,
                          int *iparm, double *dparm) {
   if (n == 0) {
-    ptr = NULL;
-    idx = NULL;
-    vals = NULL;
+    ptr = nullptr;
+    idx = nullptr;
+    vals = nullptr;
   }
   if (nbrhs == 0) {
-    x = NULL;
+    x = nullptr;
     nbrhs = 1;
   }
   z_pastix(pastix_data, pastix_comm, n, ptr, idx, reinterpret_cast<PASTIX_DCOMPLEX *>(vals), perm, invp,
            reinterpret_cast<PASTIX_DCOMPLEX *>(x), nbrhs, iparm, dparm);
 }
 
-// Convert the matrix  to Fortran-style Numbering
+// Convert the matrix to Fortran-style Numbering
 template <typename MatrixType>
 void c_to_fortran_numbering(MatrixType &mat) {
   if (!(mat.outerIndexPtr()[0])) {
@@ -136,21 +137,10 @@ void c_to_fortran_numbering(MatrixType &mat) {
     for (i = 0; i < mat.nonZeros(); ++i) ++mat.innerIndexPtr()[i];
   }
 }
-
-// Convert to C-style Numbering
-template <typename MatrixType>
-void fortran_to_c_numbering(MatrixType &mat) {
-  // Check the Numbering
-  if (mat.outerIndexPtr()[0] == 1) {  // Convert to C-style numbering
-    int i;
-    for (i = 0; i <= mat.rows(); ++i) --mat.outerIndexPtr()[i];
-    for (i = 0; i < mat.nonZeros(); ++i) --mat.innerIndexPtr()[i];
-  }
-}
 }  // namespace internal
 
 // This is the base class to interface with PaStiX functions.
-// Users should not used this class directly.
+// Users should not use this class directly.
 template <class Derived>
 class PastixBase : public SparseSolverBase<Derived> {
  protected:
@@ -328,7 +318,6 @@ void PastixBase<Derived>::analyzePattern(ColSpMatrix &mat) {
 
 template <class Derived>
 void PastixBase<Derived>::factorize(ColSpMatrix &mat) {
-  //   if(&m_cpyMat != &mat) m_cpyMat = mat;
   eigen_assert(m_analysisIsOk && "The analysis phase should be called before the factorization phase");
   m_iparm(IPARM_START_TASK) = API_TASK_NUMFACT;
   m_iparm(IPARM_END_TASK) = API_TASK_NUMFACT;
@@ -451,7 +440,7 @@ class PastixLU : public PastixBase<PastixLU<MatrixType_> > {
   }
 
   void grabMatrix(const MatrixType &matrix, ColSpMatrix &out) {
-    if (IsStrSym)
+    EIGEN_IF_CONSTEXPR (IsStrSym)
       out = matrix;
     else {
       if (!m_structureIsUptodate) {
@@ -487,7 +476,8 @@ class PastixLU : public PastixBase<PastixLU<MatrixType_> > {
  * The vectors or matrices X and B can be either dense or sparse
  *
  * \tparam MatrixType the type of the sparse matrix A, it must be a SparseMatrix<>
- * \tparam UpLo The part of the matrix to use : Lower or Upper. The default is Lower as required by PaStiX
+ * \tparam UpLo The part of the matrix to use : Lower or Upper. This parameter has no default: either part is accepted
+ *              and copied to the lower part required by PaStiX.
  *
  * \implsparsesolverconcept
  *
@@ -562,7 +552,8 @@ class PastixLLT : public PastixBase<PastixLLT<MatrixType_, UpLo_> > {
  * The vectors or matrices X and B can be either dense or sparse
  *
  * \tparam MatrixType the type of the sparse matrix A, it must be a SparseMatrix<>
- * \tparam UpLo The part of the matrix to use : Lower or Upper. The default is Lower as required by PaStiX
+ * \tparam UpLo The part of the matrix to use : Lower or Upper. This parameter has no default: either part is accepted
+ *              and copied to the lower part required by PaStiX.
  *
  * \implsparsesolverconcept
  *
@@ -628,5 +619,8 @@ class PastixLDLT : public PastixBase<PastixLDLT<MatrixType_, UpLo_> > {
 };
 
 }  // end namespace Eigen
+
+#undef PASTIX_COMPLEX
+#undef PASTIX_DCOMPLEX
 
 #endif

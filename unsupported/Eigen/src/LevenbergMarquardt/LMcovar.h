@@ -7,7 +7,8 @@
 // Copyright Ken Hillstrom - Argonne National Laboratory
 //
 // This Source Code Form is subject to the terms of the Minpack license
-// (a BSD-like license) described in the campaigned CopyrightMINPACK.txt file.
+// (a BSD-like license) described in the accompanying CopyrightMINPACK.txt file.
+// SPDX-License-Identifier: MPL-2.0 AND LicenseRef-MINPACK
 
 #ifndef EIGEN_LMCOVAR_H
 #define EIGEN_LMCOVAR_H
@@ -21,7 +22,7 @@ namespace internal {
 
 template <typename Scalar>
 void covar(Matrix<Scalar, Dynamic, Dynamic>& r, const VectorXi& ipvt,
-           Scalar tol = std::sqrt(NumTraits<Scalar>::epsilon())) {
+           Scalar tol = numext::sqrt(NumTraits<Scalar>::epsilon())) {
   using std::abs;
   /* Local variables */
   Index i, j, k, l, ii, jj;

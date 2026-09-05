@@ -9,6 +9,8 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
 
 /*****************************************************************
  * TensorReductionSycl.h
@@ -25,8 +27,8 @@
  *
  *****************************************************************/
 
-#ifndef UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP
-#define UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP
+#ifndef UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP
+#define UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
 
@@ -231,7 +233,7 @@ class GenericNondeterministicReducer {
         num_values_to_reduce(num_values_to_reduce_) {}
 
   void operator()(cl::sycl::nd_item<1> itemID) const {
-    // This is to bypass the statefull condition in Eigen meanReducer
+    // This is to bypass the stateful condition in Eigen meanReducer
     Op non_const_functor;
     std::memcpy(&non_const_functor, &functor, sizeof(Op));
     auto output_accessor_ptr = output_accessor;
@@ -355,7 +357,7 @@ struct PartialReductionKernel {
       itemID.barrier(cl::sycl::access::fence_space::local_space);
     }
 
-    if (rLocalThreadId == 0 && (globalPId < num_coeffs_to_preserve)) {
+    if (rLocalThreadId == 0 && globalPId < num_coeffs_to_preserve) {
       outPtr[globalPId] = op.finalize(accumulator);
     }
   }
@@ -391,7 +393,7 @@ struct SecondStepPartialReduction {
     auto in_ptr = input_accessor + globalId;
 
     OutScalar accumulator = op.initialize();
-    // num_coeffs_to_reduce is not bigger that 256
+    // num_coeffs_to_reduce is not bigger than 256
     for (Index i = 0; i < num_coeffs_to_reduce; i++) {
       op.reduce(*in_ptr, &accumulator);
       in_ptr += num_coeffs_to_preserve;
@@ -435,7 +437,7 @@ struct PartialReducerLauncher {
     // Our empirical research shows that if each thread reduces at least 64
     // elements individually, we get better performance. However, this can change
     // on different platforms. In this step we force the code not to be
-    // morthan step reduction: Our empirical research shows that for inner_most
+    // more than 2-step reduction: Our empirical research shows that for inner_most
     // dim reducer, it is better to have 8 group in a reduce dimension for sizes
     // > 1024 to achieve the best performance.
     const Index reductionPerThread = 64;
@@ -581,4 +583,4 @@ struct GenericReducer<Self, Op, Eigen::SyclDevice> {
 }  // namespace internal
 }  // namespace Eigen
 
-#endif  // UNSUPPORTED_EIGEN_CXX11_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP
+#endif  // UNSUPPORTED_EIGEN_SRC_TENSOR_TENSOR_REDUCTION_SYCL_HPP

@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 /*
 
@@ -40,11 +41,6 @@ namespace internal {
 enum { LUNoMarker = 3 };
 enum { emptyIdxLU = -1 };
 inline Index LUnumTempV(Index& m, Index& w, Index& t, Index& b) { return (std::max)(m, (t + b) * w); }
-
-template <typename Scalar>
-inline Index LUTempSpace(Index& m, Index& w) {
-  return (2 * w + 4 + LUNoMarker) * m * sizeof(Index) + (w + 1) * m * sizeof(Scalar);
-}
 
 /**
  * Expand the existing storage to accommodate more fill-ins
@@ -88,7 +84,7 @@ Index SparseLUImpl<Scalar, StorageIndex>::expand(VectorType& vec, Index& length,
       return -1;
     }
     if (keep_prev) {
-      // In this case, the memory length should not not be reduced
+      // In this case, the memory length should not be reduced
       return new_len;
     } else {
       // Reduce the size and increase again

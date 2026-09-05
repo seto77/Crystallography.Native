@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MATRIX_EXPONENTIAL
 #define EIGEN_MATRIX_EXPONENTIAL
@@ -19,53 +20,35 @@
 namespace Eigen {
 namespace internal {
 
-/** \brief Scaling operator.
- *
- * This struct is used by CwiseUnaryOp to scale a matrix by \f$ 2^{-s} \f$.
- */
-template <typename Scalar, bool IsComplex = NumTraits<Scalar>::IsComplex>
-struct MatrixExponentialScalingOp {
-  using RealScalar = typename NumTraits<Scalar>::Real;
-
-  /** \brief Constructor.
-   *
-   * \param[in] squarings  The integer \f$ s \f$ in this document.
-   */
-  MatrixExponentialScalingOp(int squarings) : m_squarings(squarings) {}
-
-  /** \brief Scale a matrix coefficient.
-   *
-   * \param[in,out] x  The scalar to be scaled, becoming \f$ 2^{-s} x \f$.
-   */
-  inline const Scalar operator()(const Scalar& x) const {
-    using std::ldexp;
-    return Scalar(ldexp(Eigen::numext::real(x), -m_squarings), ldexp(Eigen::numext::imag(x), -m_squarings));
+/** \brief Scale a real or complex matrix by \f$ 2^{-s} \f$. */
+template <typename MatrixType,
+          bool HasWritableRealView = !NumTraits<typename traits<MatrixType>::Scalar>::IsComplex ||
+                                     complex_array_access<typename traits<MatrixType>::Scalar>::value>
+struct matrix_exp_scale_impl {
+  template <typename ArgType>
+  static MatrixType run(const ArgType& arg, int squarings) {
+    MatrixType result(arg.rows(), arg.cols());
+    result.realView().array() = arg.realView().array().ldexp(-squarings);
+    return result;
   }
-
- private:
-  int m_squarings;
 };
 
-template <typename Scalar>
-struct MatrixExponentialScalingOp<Scalar, /*IsComplex=*/false> {
-  /** \brief Constructor.
-   *
-   * \param[in] squarings  The integer \f$ s \f$ in this document.
-   */
-  MatrixExponentialScalingOp(int squarings) : m_squarings(squarings) {}
-
-  /** \brief Scale a matrix coefficient.
-   *
-   * \param[in,out] x  The scalar to be scaled, becoming \f$ 2^{-s} x \f$.
-   */
-  inline const Scalar operator()(const Scalar& x) const {
-    using std::ldexp;
-    return ldexp(x, -m_squarings);
+template <typename MatrixType>
+struct matrix_exp_scale_impl<MatrixType, false> {
+  template <typename ArgType>
+  static MatrixType run(const ArgType& arg, int squarings) {
+    using Scalar = typename traits<MatrixType>::Scalar;
+    return arg.unaryExpr([squarings](const Scalar& x) {
+      using std::ldexp;
+      return Scalar(ldexp(numext::real(x), -squarings), ldexp(numext::imag(x), -squarings));
+    });
   }
-
- private:
-  int m_squarings;
 };
+
+template <typename MatrixType, typename ArgType>
+MatrixType matrix_exp_scale(const ArgType& arg, int squarings) {
+  return matrix_exp_scale_impl<MatrixType>::run(arg, squarings);
+}
 
 /** \brief Compute the (3,3)-Pad&eacute; approximant to the exponential.
  *
@@ -232,7 +215,6 @@ struct matrix_exp_computeUV {
 
 template <typename MatrixType>
 struct matrix_exp_computeUV<MatrixType, float> {
-  using Scalar = typename traits<MatrixType>::Scalar;
   template <typename ArgType>
   static void run(const ArgType& arg, MatrixType& U, MatrixType& V, int& squarings) {
     using std::frexp;
@@ -247,7 +229,7 @@ struct matrix_exp_computeUV<MatrixType, float> {
       const float maxnorm = 3.925724783138660f;
       frexp(l1norm / maxnorm, &squarings);
       if (squarings < 0) squarings = 0;
-      MatrixType A = arg.unaryExpr(MatrixExponentialScalingOp<Scalar>(squarings));
+      MatrixType A = matrix_exp_scale<MatrixType>(arg, squarings);
       matrix_exp_pade7(A, U, V);
     }
   }
@@ -255,7 +237,6 @@ struct matrix_exp_computeUV<MatrixType, float> {
 
 template <typename MatrixType>
 struct matrix_exp_computeUV<MatrixType, double> {
-  using Scalar = typename traits<MatrixType>::Scalar;
   template <typename ArgType>
   static void run(const ArgType& arg, MatrixType& U, MatrixType& V, int& squarings) {
     using std::frexp;
@@ -274,7 +255,7 @@ struct matrix_exp_computeUV<MatrixType, double> {
       const double maxnorm = 5.371920351148152;
       frexp(l1norm / maxnorm, &squarings);
       if (squarings < 0) squarings = 0;
-      MatrixType A = arg.unaryExpr(MatrixExponentialScalingOp<Scalar>(squarings));
+      MatrixType A = matrix_exp_scale<MatrixType>(arg, squarings);
       matrix_exp_pade13(A, U, V);
     }
   }
@@ -288,8 +269,6 @@ struct matrix_exp_computeUV<MatrixType, long double> {
     matrix_exp_computeUV<MatrixType, double>::run(arg, U, V, squarings);
 
 #else
-
-    using Scalar = typename traits<MatrixType>::Scalar;
 
     using std::frexp;
     using std::pow;
@@ -310,7 +289,7 @@ struct matrix_exp_computeUV<MatrixType, long double> {
       const long double maxnorm = 4.0246098906697353063L;
       frexp(l1norm / maxnorm, &squarings);
       if (squarings < 0) squarings = 0;
-      MatrixType A = arg.unaryExpr(MatrixExponentialScalingOp<Scalar>(squarings));
+      MatrixType A = matrix_exp_scale<MatrixType>(arg, squarings);
       matrix_exp_pade13(A, U, V);
     }
 
@@ -330,7 +309,7 @@ struct matrix_exp_computeUV<MatrixType, long double> {
       const long double maxnorm = 3.2579440895405400856599663723517L;
       frexp(l1norm / maxnorm, &squarings);
       if (squarings < 0) squarings = 0;
-      MatrixType A = arg.unaryExpr(MatrixExponentialScalingOp<Scalar>(squarings));
+      MatrixType A = matrix_exp_scale<MatrixType>(arg, squarings);
       matrix_exp_pade17(A, U, V);
     }
 
@@ -350,7 +329,7 @@ struct matrix_exp_computeUV<MatrixType, long double> {
       const long double maxnorm = 2.884233277829519311757165057717815L;
       frexp(l1norm / maxnorm, &squarings);
       if (squarings < 0) squarings = 0;
-      MatrixType A = arg.unaryExpr(MatrixExponentialScalingOp<Scalar>(squarings));
+      MatrixType A = matrix_exp_scale<MatrixType>(arg, squarings);
       matrix_exp_pade17(A, U, V);
     }
 
@@ -365,18 +344,14 @@ struct matrix_exp_computeUV<MatrixType, long double> {
 };
 
 template <typename T>
-struct is_exp_known_type : false_type {};
-template <>
-struct is_exp_known_type<float> : true_type {};
-template <>
-struct is_exp_known_type<double> : true_type {};
+using is_exp_known_type = bool_constant<std::is_same<T, float>::value || std::is_same<T, double>::value
 #if LDBL_MANT_DIG <= 113
-template <>
-struct is_exp_known_type<long double> : true_type {};
+                                        || std::is_same<T, long double>::value
 #endif
+                                        >;
 
 template <typename ArgType, typename ResultType>
-void matrix_exp_compute(const ArgType& arg, ResultType& result, true_type)  // natively supported scalar type
+void matrix_exp_compute(const ArgType& arg, ResultType& result, std::true_type)  // natively supported scalar type
 {
   typedef typename ArgType::PlainObject MatrixType;
   MatrixType U, V;
@@ -394,7 +369,7 @@ void matrix_exp_compute(const ArgType& arg, ResultType& result, true_type)  // n
  * \param result variable in which result will be stored
  */
 template <typename ArgType, typename ResultType>
-void matrix_exp_compute(const ArgType& arg, ResultType& result, false_type)  // default
+void matrix_exp_compute(const ArgType& arg, ResultType& result, std::false_type)  // default
 {
   typedef typename ArgType::PlainObject MatrixType;
   typedef make_complex_t<typename traits<MatrixType>::Scalar> ComplexScalar;

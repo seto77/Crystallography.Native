@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_ASSIGN_H
-#define EIGEN_CXX11_TENSOR_TENSOR_ASSIGN_H
+#ifndef EIGEN_TENSOR_TENSOR_ASSIGN_H
+#define EIGEN_TENSOR_TENSOR_ASSIGN_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,10 +23,6 @@ struct traits<TensorAssignOp<LhsXprType, RhsXprType> > {
   typedef typename traits<LhsXprType>::StorageKind StorageKind;
   typedef
       typename promote_index_type<typename traits<LhsXprType>::Index, typename traits<RhsXprType>::Index>::type Index;
-  typedef typename LhsXprType::Nested LhsNested;
-  typedef typename RhsXprType::Nested RhsNested;
-  typedef std::remove_reference_t<LhsNested> LhsNested_;
-  typedef std::remove_reference_t<RhsNested> RhsNested_;
   static constexpr std::size_t NumDimensions = internal::traits<LhsXprType>::NumDimensions;
   static constexpr int Layout = internal::traits<LhsXprType>::Layout;
   typedef typename traits<LhsXprType>::PointerType PointerType;
@@ -38,15 +35,10 @@ struct eval<TensorAssignOp<LhsXprType, RhsXprType>, Eigen::Dense> {
   typedef const TensorAssignOp<LhsXprType, RhsXprType>& type;
 };
 
-template <typename LhsXprType, typename RhsXprType>
-struct nested<TensorAssignOp<LhsXprType, RhsXprType>, 1, typename eval<TensorAssignOp<LhsXprType, RhsXprType> >::type> {
-  typedef TensorAssignOp<LhsXprType, RhsXprType> type;
-};
-
 }  // end namespace internal
 
 /** The tensor assignment class.
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * This class represents the assignment of the values resulting from the evaluation of
  * the rhs expression to the memory locations denoted by the lhs expression.
@@ -57,14 +49,17 @@ class TensorAssignOp : public TensorBase<TensorAssignOp<LhsXprType, RhsXprType> 
   typedef typename Eigen::internal::traits<TensorAssignOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename LhsXprType::CoeffReturnType CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorAssignOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorAssignOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorAssignOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorAssignOp>::Index Index;
 
   static constexpr int NumDims = Eigen::internal::traits<TensorAssignOp>::NumDimensions;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorAssignOp(LhsXprType& lhs, const RhsXprType& rhs)
-      : m_lhs_xpr(lhs), m_rhs_xpr(rhs) {}
+      : m_lhs_xpr(lhs), m_rhs_xpr(rhs) {
+    EIGEN_STATIC_ASSERT((internal::traits<LhsXprType>::NumDimensions == internal::traits<RhsXprType>::NumDimensions),
+                        Number_of_dimensions_must_match)
+  }
 
   /** \returns the nested expressions */
   EIGEN_DEVICE_FUNC internal::remove_all_t<typename LhsXprType::Nested>& lhsExpression() const {
@@ -84,6 +79,8 @@ template <typename LeftArgType, typename RightArgType, typename Device>
 struct TensorEvaluator<const TensorAssignOp<LeftArgType, RightArgType>, Device> {
   typedef TensorAssignOp<LeftArgType, RightArgType> XprType;
   typedef typename XprType::Index Index;
+  using LeftIndex = typename TensorEvaluator<LeftArgType, Device>::Index;
+  using RightIndex = typename TensorEvaluator<RightArgType, Device>::Index;
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
@@ -130,7 +127,7 @@ struct TensorEvaluator<const TensorAssignOp<LeftArgType, RightArgType>, Device> 
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType) {
     eigen_assert(dimensions_match(m_leftImpl.dimensions(), m_rightImpl.dimensions()));
-    m_leftImpl.evalSubExprsIfNeeded(NULL);
+    m_leftImpl.evalSubExprsIfNeeded(nullptr);
     // If the lhs provides raw access to its storage area (i.e. if m_leftImpl.data() returns a non
     // null value), attempt to evaluate the rhs expression in place. Returns true iff in place
     // evaluation isn't supported and the caller still needs to manually assign the values generated
@@ -153,17 +150,22 @@ struct TensorEvaluator<const TensorAssignOp<LeftArgType, RightArgType>, Device> 
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void evalScalar(Index i) const {
-    m_leftImpl.coeffRef(i) = m_rightImpl.coeff(i);
+    m_leftImpl.coeffRef(internal::convert_index<LeftIndex>(i)) =
+        m_rightImpl.coeff(internal::convert_index<RightIndex>(i));
   }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void evalPacket(Index i) const {
-    const int LhsStoreMode = TensorEvaluator<LeftArgType, Device>::IsAligned ? Aligned : Unaligned;
-    const int RhsLoadMode = TensorEvaluator<RightArgType, Device>::IsAligned ? Aligned : Unaligned;
-    m_leftImpl.template writePacket<LhsStoreMode>(i, m_rightImpl.template packet<RhsLoadMode>(i));
+    constexpr int LhsStoreMode = TensorEvaluator<LeftArgType, Device>::IsAligned ? Aligned : Unaligned;
+    constexpr int RhsLoadMode = TensorEvaluator<RightArgType, Device>::IsAligned ? Aligned : Unaligned;
+    m_leftImpl.template writePacket<LhsStoreMode>(
+        internal::convert_index<LeftIndex>(i),
+        m_rightImpl.template packet<RhsLoadMode>(internal::convert_index<RightIndex>(i)));
   }
-  EIGEN_DEVICE_FUNC CoeffReturnType coeff(Index index) const { return m_leftImpl.coeff(index); }
+  EIGEN_DEVICE_FUNC CoeffReturnType coeff(Index index) const {
+    return m_leftImpl.coeff(internal::convert_index<LeftIndex>(index));
+  }
   template <int LoadMode>
   EIGEN_DEVICE_FUNC PacketReturnType packet(Index index) const {
-    return m_leftImpl.template packet<LoadMode>(index);
+    return m_leftImpl.template packet<LoadMode>(internal::convert_index<LeftIndex>(index));
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
@@ -183,7 +185,7 @@ struct TensorEvaluator<const TensorAssignOp<LeftArgType, RightArgType>, Device> 
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void evalBlock(TensorBlockDesc& desc, TensorBlockScratch& scratch) {
-    if (TensorEvaluator<LeftArgType, Device>::RawAccess && m_leftImpl.data() != NULL) {
+    if (TensorEvaluator<LeftArgType, Device>::RawAccess && m_leftImpl.data() != nullptr) {
       // If destination has raw data access, we pass it as a potential
       // destination for a block descriptor evaluation.
       desc.template AddDestinationBuffer<Layout>(
@@ -208,4 +210,4 @@ struct TensorEvaluator<const TensorAssignOp<LeftArgType, RightArgType>, Device> 
 
 }  // namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_ASSIGN_H
+#endif  // EIGEN_TENSOR_TENSOR_ASSIGN_H

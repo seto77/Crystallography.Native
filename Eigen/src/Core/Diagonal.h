@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_DIAGONAL_H
 #define EIGEN_DIAGONAL_H
@@ -38,9 +39,9 @@ namespace Eigen {
 namespace internal {
 template <typename MatrixType, int DiagIndex>
 struct traits<Diagonal<MatrixType, DiagIndex> > : traits<MatrixType> {
-  typedef typename ref_selector<MatrixType>::type MatrixTypeNested;
-  typedef std::remove_reference_t<MatrixTypeNested> MatrixTypeNested_;
-  typedef typename MatrixType::StorageKind StorageKind;
+  using MatrixTypeNested = typename ref_selector<MatrixType>::type;
+  using MatrixTypeNested_ = std::remove_reference_t<MatrixTypeNested>;
+  using StorageKind = typename MatrixType::StorageKind;
   enum {
     RowsAtCompileTime = (int(DiagIndex) == DynamicIndex || int(MatrixType::SizeAtCompileTime) == Dynamic)
                             ? Dynamic
@@ -57,7 +58,7 @@ struct traits<Diagonal<MatrixType, DiagIndex> > : traits<MatrixType> {
     MaskLvalueBit = is_lvalue<MatrixType>::value ? LvalueBit : 0,
     Flags = (unsigned int)MatrixTypeNested_::Flags & (RowMajorBit | MaskLvalueBit | DirectAccessBit) &
             ~RowMajorBit,  // FIXME DirectAccessBit should not be handled by expressions
-    MatrixTypeOuterStride = outer_stride_at_compile_time<MatrixType>::ret,
+    MatrixTypeOuterStride = outer_stride_at_compile_time<MatrixType>::value,
     InnerStrideAtCompileTime = MatrixTypeOuterStride == Dynamic ? Dynamic : MatrixTypeOuterStride + 1,
     OuterStrideAtCompileTime = 0
   };
@@ -68,7 +69,7 @@ template <typename MatrixType, int DiagIndex_>
 class Diagonal : public internal::dense_xpr_base<Diagonal<MatrixType, DiagIndex_> >::type {
  public:
   enum { DiagIndex = DiagIndex_ };
-  typedef typename internal::dense_xpr_base<Diagonal>::type Base;
+  using Base = typename internal::dense_xpr_base<Diagonal>::type;
   EIGEN_DENSE_PUBLIC_INTERFACE(Diagonal)
 
   EIGEN_DEVICE_FUNC constexpr explicit inline Diagonal(MatrixType& matrix, Index a_index = DiagIndex)
@@ -89,7 +90,7 @@ class Diagonal : public internal::dense_xpr_base<Diagonal<MatrixType, DiagIndex_
 
   EIGEN_DEVICE_FUNC constexpr Index outerStride() const noexcept { return 0; }
 
-  typedef std::conditional_t<internal::is_lvalue<MatrixType>::value, Scalar, const Scalar> ScalarWithConstIfNotLvalue;
+  using ScalarWithConstIfNotLvalue = std::conditional_t<internal::is_lvalue<MatrixType>::value, Scalar, const Scalar>;
 
   EIGEN_DEVICE_FUNC inline ScalarWithConstIfNotLvalue* data() {
     return rows() > 0 ? &(m_matrix.coeffRef(rowOffset(), colOffset())) : nullptr;
@@ -137,9 +138,6 @@ class Diagonal : public internal::dense_xpr_base<Diagonal<MatrixType, DiagIndex_
 
  private:
   // some compilers may fail to optimize std::max etc in case of compile-time constants...
-  EIGEN_DEVICE_FUNC constexpr Index absDiagIndex() const noexcept {
-    return m_index.value() > 0 ? m_index.value() : -m_index.value();
-  }
   EIGEN_DEVICE_FUNC constexpr Index rowOffset() const noexcept { return m_index.value() > 0 ? 0 : -m_index.value(); }
   EIGEN_DEVICE_FUNC constexpr Index colOffset() const noexcept { return m_index.value() > 0 ? m_index.value() : 0; }
   // trigger a compile-time error if someone try to call packet

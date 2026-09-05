@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_FUNCTORS_H
-#define EIGEN_CXX11_TENSOR_TENSOR_FUNCTORS_H
+#ifndef EIGEN_TENSOR_TENSOR_FUNCTORS_H
+#define EIGEN_TENSOR_TENSOR_FUNCTORS_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -26,7 +27,7 @@ struct scalar_mod_op {
   const Scalar m_divisor;
 };
 template <typename Scalar>
-struct functor_traits<scalar_mod_op<Scalar> > {
+struct functor_traits<scalar_mod_op<Scalar>> {
   enum { Cost = scalar_div_cost<Scalar, false>::value, PacketAccess = false };
 };
 
@@ -38,7 +39,7 @@ struct scalar_mod2_op {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a, const Scalar& b) const { return a % b; }
 };
 template <typename Scalar>
-struct functor_traits<scalar_mod2_op<Scalar> > {
+struct functor_traits<scalar_mod2_op<Scalar>> {
   enum { Cost = scalar_div_cost<Scalar, false>::value, PacketAccess = false };
 };
 
@@ -49,7 +50,7 @@ struct scalar_fmod_op {
   }
 };
 template <typename Scalar>
-struct functor_traits<scalar_fmod_op<Scalar> > {
+struct functor_traits<scalar_fmod_op<Scalar>> {
   enum {
     Cost = 13,  // Reciprocal throughput of FPREM on Haswell.
     PacketAccess = false
@@ -60,6 +61,19 @@ template <typename Reducer, typename Device>
 struct reducer_traits {
   enum { Cost = 1, PacketAccess = false, IsStateful = false, IsExactlyAssociative = true };
 };
+
+// Marks reducers whose partial accumulators may be accumulated independently and combined in any
+// order. That requires reduce(value, accum) to be a pure combine -- so a partial accumulator may
+// be fed back through it -- and that combine to be associative and commutative with initialize()
+// as its identity, since the accumulators receive interleaved, not contiguous, operands.
+//
+// Neither property is implied by PacketAccess: a reducer may support packets yet transform each
+// value it accepts (e.g. a sum-of-squares reducer), in which case merging through reduce() is
+// wrong; and a pure combine may still be order-dependent (e.g. composition). Conservative
+// default; built-in combines opt in below, gated on scalar categories whose semantics Eigen
+// controls.
+template <typename Reducer>
+struct reducer_can_reorder_accumulators : std::false_type {};
 
 // Standard reduction functors
 template <typename T>
@@ -105,7 +119,7 @@ struct reducer_traits<SumReducer<T>, Device> {
 
 template <typename T>
 struct MeanReducer {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE MeanReducer() : scalarCount_(0), packetCount_(0) {}
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE MeanReducer() = default;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void reduce(const T t, T* accum) {
     internal::scalar_sum_op<T> sum_op;
@@ -142,8 +156,8 @@ struct MeanReducer {
   }
 
  protected:
-  DenseIndex scalarCount_;
-  DenseIndex packetCount_;
+  DenseIndex scalarCount_ = 0;
+  DenseIndex packetCount_ = 0;
 };
 
 template <typename T, typename Device>
@@ -315,6 +329,23 @@ struct reducer_traits<OrReducer, Device> {
   enum { Cost = 1, PacketAccess = false, IsStateful = false, IsExactlyAssociative = true };
 };
 
+// Sum/prod reorder for scalars whose + and * commute; min/max additionally exclude custom scalars,
+// whose generic std::min/std::max keep the first operand when values compare equivalent.
+template <typename T>
+struct reducer_can_reorder_accumulators<SumReducer<T>>
+    : bool_constant<internal::is_arithmetic<T>::value || NumTraits<T>::IsComplex> {};
+template <typename T>
+struct reducer_can_reorder_accumulators<ProdReducer<T>>
+    : bool_constant<internal::is_arithmetic<T>::value || NumTraits<T>::IsComplex> {};
+template <typename T, int NaNPropagation>
+struct reducer_can_reorder_accumulators<MinReducer<T, NaNPropagation>> : internal::is_arithmetic<T> {};
+template <typename T, int NaNPropagation>
+struct reducer_can_reorder_accumulators<MaxReducer<T, NaNPropagation>> : internal::is_arithmetic<T> {};
+template <>
+struct reducer_can_reorder_accumulators<AndReducer> : std::true_type {};
+template <>
+struct reducer_can_reorder_accumulators<OrReducer> : std::true_type {};
+
 // Argmin/Argmax reducers.  Returns the first occurrence if multiple locations
 // contain the same min/max value.
 template <typename T>
@@ -386,11 +417,11 @@ class GaussianGenerator {
 };
 
 template <typename T, typename Index, size_t NumDims>
-struct functor_traits<GaussianGenerator<T, Index, NumDims> > {
+struct functor_traits<GaussianGenerator<T, Index, NumDims>> {
   enum {
-    Cost = NumDims *
-               (2 * NumTraits<T>::AddCost + NumTraits<T>::MulCost + functor_traits<scalar_quotient_op<T, T> >::Cost) +
-           functor_traits<scalar_exp_op<T> >::Cost,
+    Cost =
+        NumDims * (2 * NumTraits<T>::AddCost + NumTraits<T>::MulCost + functor_traits<scalar_quotient_op<T, T>>::Cost) +
+        functor_traits<scalar_exp_op<T>>::Cost,
     PacketAccess = GaussianGenerator<T, Index, NumDims>::PacketAccess
   };
 };
@@ -409,7 +440,7 @@ struct scalar_clamp_op {
   const Scalar m_max;
 };
 template <typename Scalar>
-struct functor_traits<scalar_clamp_op<Scalar> > {
+struct functor_traits<scalar_clamp_op<Scalar>> {
   enum {
     Cost = 2 * NumTraits<Scalar>::AddCost,
     PacketAccess = (packet_traits<Scalar>::HasMin && packet_traits<Scalar>::HasMax)
@@ -419,4 +450,4 @@ struct functor_traits<scalar_clamp_op<Scalar> > {
 }  // end namespace internal
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_FUNCTORS_H
+#endif  // EIGEN_TENSOR_TENSOR_FUNCTORS_H

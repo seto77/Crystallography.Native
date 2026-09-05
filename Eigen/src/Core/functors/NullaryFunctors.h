@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_NULLARY_FUNCTORS_H
 #define EIGEN_NULLARY_FUNCTORS_H
@@ -65,7 +66,7 @@ struct linspaced_op_impl;
 
 template <typename Scalar>
 struct linspaced_op_impl<Scalar, /*IsInteger*/ false> {
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
 
   EIGEN_DEVICE_FUNC constexpr linspaced_op_impl(const Scalar& low, const Scalar& high, Index num_steps)
       : m_low(low),
@@ -171,8 +172,6 @@ struct linspaced_op {
 
 template <typename Scalar>
 struct equalspaced_op {
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-
   EIGEN_DEVICE_FUNC constexpr equalspaced_op(const Scalar& start, const Scalar& step) : m_start(start), m_step(step) {}
   template <typename IndexType>
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(IndexType i) const {
@@ -207,65 +206,7 @@ struct functor_traits<equalspaced_op<Scalar>> {
 // and linear access is not possible. In all other cases, linear access is enabled.
 // Users should not have to deal with this structure.
 template <typename Functor>
-struct functor_has_linear_access {
-  enum { ret = !has_binary_operator<Functor>::value };
-};
-
-// For unreliable compilers, let's specialize the has_*ary_operator
-// helpers so that at least built-in nullary functors work fine.
-#if !(EIGEN_COMP_MSVC || EIGEN_COMP_GNUC || (EIGEN_COMP_ICC >= 1600))
-template <typename Scalar, typename IndexType>
-struct has_nullary_operator<scalar_constant_op<Scalar>, IndexType> {
-  enum { value = 1 };
-};
-template <typename Scalar, typename IndexType>
-struct has_unary_operator<scalar_constant_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-template <typename Scalar, typename IndexType>
-struct has_binary_operator<scalar_constant_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-
-template <typename Scalar, typename IndexType>
-struct has_nullary_operator<scalar_identity_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-template <typename Scalar, typename IndexType>
-struct has_unary_operator<scalar_identity_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-template <typename Scalar, typename IndexType>
-struct has_binary_operator<scalar_identity_op<Scalar>, IndexType> {
-  enum { value = 1 };
-};
-
-template <typename Scalar, typename IndexType>
-struct has_nullary_operator<linspaced_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-template <typename Scalar, typename IndexType>
-struct has_unary_operator<linspaced_op<Scalar>, IndexType> {
-  enum { value = 1 };
-};
-template <typename Scalar, typename IndexType>
-struct has_binary_operator<linspaced_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-
-template <typename Scalar, typename IndexType>
-struct has_nullary_operator<scalar_random_op<Scalar>, IndexType> {
-  enum { value = 1 };
-};
-template <typename Scalar, typename IndexType>
-struct has_unary_operator<scalar_random_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-template <typename Scalar, typename IndexType>
-struct has_binary_operator<scalar_random_op<Scalar>, IndexType> {
-  enum { value = 0 };
-};
-#endif
+using functor_has_linear_access = bool_constant<!has_binary_operator<Functor>::value>;
 
 }  // end namespace internal
 

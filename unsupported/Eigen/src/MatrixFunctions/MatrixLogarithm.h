@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_MATRIX_LOGARITHM
 #define EIGEN_MATRIX_LOGARITHM
@@ -221,7 +222,7 @@ void matrix_log_compute_pade(MatrixType& result, const MatrixType& T, int degree
 }
 
 /** \brief Compute logarithm of triangular matrices with size > 2.
- * \details This uses a inverse scale-and-square algorithm. */
+ * \details This uses an inverse scale-and-square algorithm. */
 template <typename MatrixType>
 void matrix_log_compute_big(const MatrixType& A, MatrixType& result) {
   typedef typename MatrixType::Scalar Scalar;
@@ -232,6 +233,15 @@ void matrix_log_compute_big(const MatrixType& A, MatrixType& result) {
   int numberOfExtraSquareRoots = 0;
   int degree;
   MatrixType T = A, sqrtT;
+
+  // The matrix logarithm is undefined for singular matrices. Without this
+  // guard, a zero diagonal entry (eigenvalue) is a fixed point of the
+  // square-rooting loop below (sqrt(0) = 0), so the loop never terminates
+  // (bug #1613).
+  if ((T.diagonal().array() == Scalar(0)).any()) {
+    result.setConstant(T.rows(), T.rows(), NumTraits<RealScalar>::quiet_NaN());
+    return;
+  }
 
   const int maxPadeDegree = matrix_log_max_pade_degree<Scalar>::value;
   const RealScalar maxNormForPade = RealScalar(maxPadeDegree <= 5 ? 5.3149729967117310e-1L :  // single precision
@@ -343,7 +353,7 @@ class MatrixLogarithmReturnValue : public ReturnByValue<MatrixLogarithmReturnVal
   Index cols() const { return m_A.cols(); }
 
  private:
-  const DerivedNested m_A;
+  DerivedNested m_A;
 };
 
 namespace internal {

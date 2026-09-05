@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BLOCK_H
 #define EIGEN_BLOCK_H
@@ -19,11 +20,11 @@ namespace Eigen {
 namespace internal {
 template <typename XprType_, int BlockRows, int BlockCols, bool InnerPanel_>
 struct traits<Block<XprType_, BlockRows, BlockCols, InnerPanel_>> : traits<XprType_> {
-  typedef typename traits<XprType_>::Scalar Scalar;
-  typedef typename traits<XprType_>::StorageKind StorageKind;
-  typedef typename traits<XprType_>::XprKind XprKind;
-  typedef typename ref_selector<XprType_>::type XprTypeNested;
-  typedef std::remove_reference_t<XprTypeNested> XprTypeNested_;
+  using Scalar = typename traits<XprType_>::Scalar;
+  using StorageKind = typename traits<XprType_>::StorageKind;
+  using XprKind = typename traits<XprType_>::XprKind;
+  using XprTypeNested = typename ref_selector<XprType_>::type;
+  using XprTypeNested_ = std::remove_reference_t<XprTypeNested>;
   enum {
     MatrixRows = traits<XprType_>::RowsAtCompileTime,
     MatrixCols = traits<XprType_>::ColsAtCompileTime,
@@ -42,10 +43,10 @@ struct traits<Block<XprType_, BlockRows, BlockCols, InnerPanel_>> : traits<XprTy
                                                                             : XprTypeIsRowMajor,
     HasSameStorageOrderAsXprType = (IsRowMajor == XprTypeIsRowMajor),
     InnerSize = IsRowMajor ? int(ColsAtCompileTime) : int(RowsAtCompileTime),
-    InnerStrideAtCompileTime = HasSameStorageOrderAsXprType ? int(inner_stride_at_compile_time<XprType_>::ret)
-                                                            : int(outer_stride_at_compile_time<XprType_>::ret),
-    OuterStrideAtCompileTime = HasSameStorageOrderAsXprType ? int(outer_stride_at_compile_time<XprType_>::ret)
-                                                            : int(inner_stride_at_compile_time<XprType_>::ret),
+    InnerStrideAtCompileTime = HasSameStorageOrderAsXprType ? int(inner_stride_at_compile_time<XprType_>::value)
+                                                            : int(outer_stride_at_compile_time<XprType_>::value),
+    OuterStrideAtCompileTime = HasSameStorageOrderAsXprType ? int(outer_stride_at_compile_time<XprType_>::value)
+                                                            : int(inner_stride_at_compile_time<XprType_>::value),
 
     // FIXME, this traits is rather specialized for dense object and it needs to be cleaned further
     FlagsLvalueBit = is_lvalue<XprType_>::value ? LvalueBit : 0,
@@ -55,7 +56,7 @@ struct traits<Block<XprType_, BlockRows, BlockCols, InnerPanel_>> : traits<XprTy
     // FIXME DirectAccessBit should not be handled by expressions
     //
     // Alignment is needed by MapBase's assertions
-    // We can sefely set it to false here. Internal alignment errors will be detected by an eigen_internal_assert in the
+    // We can safely set it to false here. Internal alignment errors will be detected by an eigen_internal_assert in the
     // respective evaluator
     Alignment = 0,
     InnerPanel = InnerPanel_ ? 1 : 0
@@ -63,7 +64,7 @@ struct traits<Block<XprType_, BlockRows, BlockCols, InnerPanel_>> : traits<XprTy
 };
 
 template <typename XprType, int BlockRows = Dynamic, int BlockCols = Dynamic, bool InnerPanel = false,
-          bool HasDirectAccess = internal::has_direct_access<XprType>::ret>
+          bool HasDirectAccess = internal::has_direct_access<XprType>::value>
 class BlockImpl_dense;
 
 }  // end namespace internal
@@ -108,16 +109,16 @@ class BlockImpl;
 template <typename XprType, int BlockRows, int BlockCols, bool InnerPanel>
 class Block
     : public BlockImpl<XprType, BlockRows, BlockCols, InnerPanel, typename internal::traits<XprType>::StorageKind> {
-  typedef BlockImpl<XprType, BlockRows, BlockCols, InnerPanel, typename internal::traits<XprType>::StorageKind> Impl;
+  using Impl = BlockImpl<XprType, BlockRows, BlockCols, InnerPanel, typename internal::traits<XprType>::StorageKind>;
   using BlockHelper = internal::block_xpr_helper<Block>;
 
  public:
   // typedef typename Impl::Base Base;
-  typedef Impl Base;
+  using Base = Impl;
   EIGEN_GENERIC_PUBLIC_INTERFACE(Block)
   EIGEN_INHERIT_ASSIGNMENT_OPERATORS(Block)
 
-  typedef internal::remove_all_t<XprType> NestedExpression;
+  using NestedExpression = internal::remove_all_t<XprType>;
 
   /** Column or Row constructor
    */
@@ -149,8 +150,9 @@ class Block
 
   // convert nested blocks (e.g. Block<Block<MatrixType>>) to a simple block expression (Block<MatrixType>)
 
-  using ConstUnwindReturnType = Block<const typename BlockHelper::BaseType, BlockRows, BlockCols, InnerPanel>;
-  using UnwindReturnType = Block<typename BlockHelper::BaseType, BlockRows, BlockCols, InnerPanel>;
+  static constexpr bool UnwoundInnerPanel = BlockHelper::is_inner_panel(true);
+  using ConstUnwindReturnType = Block<const typename BlockHelper::BaseType, BlockRows, BlockCols, UnwoundInnerPanel>;
+  using UnwindReturnType = Block<typename BlockHelper::BaseType, BlockRows, BlockCols, UnwoundInnerPanel>;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ConstUnwindReturnType unwind() const {
     return ConstUnwindReturnType(BlockHelper::base(*this), BlockHelper::row(*this, 0), BlockHelper::col(*this, 0),
@@ -169,11 +171,11 @@ class Block
 template <typename XprType, int BlockRows, int BlockCols, bool InnerPanel>
 class BlockImpl<XprType, BlockRows, BlockCols, InnerPanel, Dense>
     : public internal::BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel> {
-  typedef internal::BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel> Impl;
-  typedef typename XprType::StorageIndex StorageIndex;
+  using Impl = internal::BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel>;
+  using StorageIndex = typename XprType::StorageIndex;
 
  public:
-  typedef Impl Base;
+  using Base = Impl;
   EIGEN_INHERIT_ASSIGNMENT_OPERATORS(BlockImpl)
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE BlockImpl(XprType& xpr, Index i) : Impl(xpr, i) {}
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE BlockImpl(XprType& xpr, Index startRow, Index startCol)
@@ -188,11 +190,11 @@ namespace internal {
 /** \internal Internal implementation of dense Blocks in the general case. */
 template <typename XprType, int BlockRows, int BlockCols, bool InnerPanel, bool HasDirectAccess>
 class BlockImpl_dense : public internal::dense_xpr_base<Block<XprType, BlockRows, BlockCols, InnerPanel>>::type {
-  typedef Block<XprType, BlockRows, BlockCols, InnerPanel> BlockType;
-  typedef typename internal::ref_selector<XprType>::non_const_type XprTypeNested;
+  using BlockType = Block<XprType, BlockRows, BlockCols, InnerPanel>;
+  using XprTypeNested = typename internal::ref_selector<XprType>::non_const_type;
 
  public:
-  typedef typename internal::dense_xpr_base<BlockType>::type Base;
+  using Base = typename internal::dense_xpr_base<BlockType>::type;
   EIGEN_DENSE_PUBLIC_INTERFACE(BlockType)
   EIGEN_INHERIT_ASSIGNMENT_OPERATORS(BlockImpl_dense)
 
@@ -305,8 +307,8 @@ class BlockImpl_dense : public internal::dense_xpr_base<Block<XprType, BlockRows
 template <typename XprType, int BlockRows, int BlockCols, bool InnerPanel>
 class BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel, true>
     : public MapBase<Block<XprType, BlockRows, BlockCols, InnerPanel>> {
-  typedef Block<XprType, BlockRows, BlockCols, InnerPanel> BlockType;
-  typedef typename internal::ref_selector<XprType>::non_const_type XprTypeNested;
+  using BlockType = Block<XprType, BlockRows, BlockCols, InnerPanel>;
+  using XprTypeNested = typename internal::ref_selector<XprType>::non_const_type;
   enum { XprTypeIsRowMajor = (int(traits<XprType>::Flags) & RowMajorBit) != 0 };
 
   /** \internal Returns base+offset (unless base is null, in which case returns null).
@@ -318,7 +320,7 @@ class BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel, true>
   }
 
  public:
-  typedef MapBase<BlockType> Base;
+  using Base = MapBase<BlockType>;
   EIGEN_DENSE_PUBLIC_INTERFACE(BlockType)
   EIGEN_INHERIT_ASSIGNMENT_OPERATORS(BlockImpl_dense)
 
@@ -390,21 +392,6 @@ class BlockImpl_dense<XprType, BlockRows, BlockCols, InnerPanel, true>
   EIGEN_DEVICE_FUNC constexpr StorageIndex startRow() const noexcept { return m_startRow.value(); }
 
   EIGEN_DEVICE_FUNC constexpr StorageIndex startCol() const noexcept { return m_startCol.value(); }
-
-#ifndef __SUNPRO_CC
-  // FIXME sunstudio is not friendly with the above friend...
-  // META-FIXME there is no 'friend' keyword around here. Is this obsolete?
- protected:
-#endif
-
-#ifndef EIGEN_PARSED_BY_DOXYGEN
-  /** \internal used by allowAligned() */
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE BlockImpl_dense(XprType& xpr, const Scalar* data, Index blockRows,
-                                                        Index blockCols)
-      : Base(data, blockRows, blockCols), m_xpr(xpr) {
-    init();
-  }
-#endif
 
  protected:
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void init() {

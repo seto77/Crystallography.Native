@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_REDUCTIONS_AVX512_H
 #define EIGEN_REDUCTIONS_AVX512_H
@@ -16,6 +17,9 @@
 namespace Eigen {
 
 namespace internal {
+
+// Preserve this backend's any-bit semantics by testing 32-bit chunks for every scalar width.
+EIGEN_STRONG_INLINE bool avx512_predux_any(const Packet16i& bits) { return _mm512_test_epi32_mask(bits, bits) != 0; }
 
 /* -- -- -- -- -- -- -- -- -- -- -- -- Packet16i -- -- -- -- -- -- -- -- -- -- -- -- */
 
@@ -41,7 +45,7 @@ EIGEN_STRONG_INLINE int predux_max(const Packet16i& a) {
 
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet16i& a) {
-  return _mm512_reduce_or_epi32(a) != 0;
+  return avx512_predux_any(a);
 }
 
 /* -- -- -- -- -- -- -- -- -- -- -- -- Packet8l -- -- -- -- -- -- -- -- -- -- -- -- */
@@ -82,7 +86,7 @@ EIGEN_STRONG_INLINE int64_t predux_max(const Packet8l& a) {
 
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet8l& a) {
-  return _mm512_reduce_or_epi64(a) != 0;
+  return avx512_predux_any(a);
 }
 
 /* -- -- -- -- -- -- -- -- -- -- -- -- Packet16f -- -- -- -- -- -- -- -- -- -- -- -- */
@@ -137,7 +141,7 @@ EIGEN_STRONG_INLINE float predux_max<PropagateNaN>(const Packet16f& a) {
 
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet16f& a) {
-  return _mm512_reduce_or_epi32(_mm512_castps_si512(a)) != 0;
+  return avx512_predux_any(_mm512_castps_si512(a));
 }
 
 /* -- -- -- -- -- -- -- -- -- -- -- -- Packet8d -- -- -- -- -- -- -- -- -- -- -- -- */
@@ -192,7 +196,7 @@ EIGEN_STRONG_INLINE double predux_max<PropagateNaN>(const Packet8d& a) {
 
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet8d& a) {
-  return _mm512_reduce_or_epi64(_mm512_castpd_si512(a)) != 0;
+  return avx512_predux_any(_mm512_castpd_si512(a));
 }
 
 #ifndef EIGEN_VECTORIZE_AVX512FP16

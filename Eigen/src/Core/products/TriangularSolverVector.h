@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_TRIANGULAR_SOLVER_VECTOR_H
 #define EIGEN_TRIANGULAR_SOLVER_VECTOR_H
@@ -31,11 +32,11 @@ template <typename LhsScalar, typename RhsScalar, typename Index, int Mode, bool
 struct triangular_solve_vector<LhsScalar, RhsScalar, Index, OnTheLeft, Mode, Conjugate, RowMajor> {
   enum { IsLower = ((Mode & Lower) == Lower) };
   static void run(Index size, const LhsScalar* _lhs, Index lhsStride, RhsScalar* rhs) {
-    typedef Map<const Matrix<LhsScalar, Dynamic, Dynamic, RowMajor>, 0, OuterStride<> > LhsMap;
+    using LhsMap = Map<const Matrix<LhsScalar, Dynamic, Dynamic, RowMajor>, 0, OuterStride<> >;
     const LhsMap lhs(_lhs, size, size, OuterStride<>(lhsStride));
 
-    typedef const_blas_data_mapper<LhsScalar, Index, RowMajor> LhsMapper;
-    typedef const_blas_data_mapper<RhsScalar, Index, ColMajor> RhsMapper;
+    using LhsMapper = const_blas_data_mapper<LhsScalar, Index, RowMajor>;
+    using RhsMapper = const_blas_data_mapper<RhsScalar, Index, ColMajor>;
 
     std::conditional_t<Conjugate, const CwiseUnaryOp<typename internal::scalar_conjugate_op<LhsScalar>, LhsMap>,
                        const LhsMap&>
@@ -66,7 +67,9 @@ struct triangular_solve_vector<LhsScalar, RhsScalar, Index, OnTheLeft, Mode, Con
                          Map<const Matrix<RhsScalar, Dynamic, 1> >(rhs + s, k)))
                         .sum();
 
-        if ((!(Mode & UnitDiag)) && !is_identically_zero(rhs[i])) rhs[i] /= cjLhs(i, i);
+        EIGEN_IF_CONSTEXPR (!(Mode & UnitDiag)) {
+          if (!is_identically_zero(rhs[i])) rhs[i] /= cjLhs(i, i);
+        }
       }
     }
   }
@@ -77,10 +80,10 @@ template <typename LhsScalar, typename RhsScalar, typename Index, int Mode, bool
 struct triangular_solve_vector<LhsScalar, RhsScalar, Index, OnTheLeft, Mode, Conjugate, ColMajor> {
   enum { IsLower = ((Mode & Lower) == Lower) };
   static void run(Index size, const LhsScalar* _lhs, Index lhsStride, RhsScalar* rhs) {
-    typedef Map<const Matrix<LhsScalar, Dynamic, Dynamic, ColMajor>, 0, OuterStride<> > LhsMap;
+    using LhsMap = Map<const Matrix<LhsScalar, Dynamic, Dynamic, ColMajor>, 0, OuterStride<> >;
     const LhsMap lhs(_lhs, size, size, OuterStride<>(lhsStride));
-    typedef const_blas_data_mapper<LhsScalar, Index, ColMajor> LhsMapper;
-    typedef const_blas_data_mapper<RhsScalar, Index, ColMajor> RhsMapper;
+    using LhsMapper = const_blas_data_mapper<LhsScalar, Index, ColMajor>;
+    using RhsMapper = const_blas_data_mapper<RhsScalar, Index, ColMajor>;
     std::conditional_t<Conjugate, const CwiseUnaryOp<typename internal::scalar_conjugate_op<LhsScalar>, LhsMap>,
                        const LhsMap&>
         cjLhs(lhs);
@@ -94,7 +97,7 @@ struct triangular_solve_vector<LhsScalar, RhsScalar, Index, OnTheLeft, Mode, Con
       for (Index k = 0; k < actualPanelWidth; ++k) {
         Index i = IsLower ? pi + k : pi - k - 1;
         if (!is_identically_zero(rhs[i])) {
-          if (!(Mode & UnitDiag)) rhs[i] /= cjLhs.coeff(i, i);
+          EIGEN_IF_CONSTEXPR (!(Mode & UnitDiag)) rhs[i] /= cjLhs.coeff(i, i);
 
           Index r = actualPanelWidth - k - 1;  // remaining size
           Index s = IsLower ? i + 1 : i - r;

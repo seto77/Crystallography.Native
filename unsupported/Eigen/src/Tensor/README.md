@@ -28,9 +28,9 @@ int main() {
   b.setConstant(1.0f);
   Eigen::Tensor<float, 2> c = a + b;
 
-  // Reduce: compute the sum of all elements.
-  Eigen::Tensor<float, 0> total = c.sum();
-  std::cout << "Sum of all elements: " << total() << "\n";
+  // A full reduction can initialize its exact scalar result type.
+  const float total = c.sum();
+  std::cout << "Sum of all elements: " << total << "\n";
 
   // Reshape and broadcast.
   Eigen::Tensor<float, 2> d = c.reshape(Eigen::array<Eigen::Index, 2>{{1, 12}})
@@ -447,11 +447,14 @@ overloads for the `()` operator that let you access individual values in
 the expression.
 `TensorRef` is convenient, because the Operation themselves do
 not provide a way to access individual elements.
+A read-only expression must be wrapped in a `TensorRef<const Tensor<...>>`; the
+mutable `TensorRef<Tensor<...>>` statically requires an lvalue expression such
+as a `Tensor` or a slice.
 
 ```cpp
 // Create a TensorRef for the expression.  The expression is not
 // evaluated yet.
-TensorRef<Tensor<float, 3>> ref = ((t1 + t2) * 0.2f).exp();
+TensorRef<const Tensor<float, 3>> ref = ((t1 + t2) * 0.2f).exp();
 
 // Use "ref" to access individual elements.  The expression is evaluated
 // on the fly.
@@ -703,7 +706,7 @@ std::cout << "Size: " << a.size();
 ### Getting Dimensions From An Operation
 
 A few operations provide `dimensions()` directly,
-e.g. `TensorSlicingOp`.  Most operations defer calculating dimensions
+e.g. `TensorReshapingOp`.  Most operations defer calculating dimensions
 until the operation is being evaluated.  If you need access to the dimensions
 of a deferred operation, you can wrap it in a `TensorRef` (see
 **Assigning to a TensorRef** above), which provides
@@ -1496,9 +1499,12 @@ The following boolean operators are supported:
  * `operator|(const OtherDerived& other)`
  * `operator^(const OtherDerived& other)`
 
-The resulting tensor retains the input scalar type.
+The comparison operators (`<`, `<=`, `>`, `>=`, `==`, `!=`) produce a tensor
+whose scalar type is `bool`.  The boolean and bitwise operators retain the
+input scalar type.
 
-Scalar comparison variants are also available (e.g. `a < 0.5f`).
+Scalar comparison variants are also available (e.g. `a < 0.5f`), and likewise
+produce a `bool` tensor.
 
 ## Selection (select(const ThenDerived& thenTensor, const ElseDerived& elseTensor)
 
@@ -1627,9 +1633,12 @@ std::cout << "b" << endl << b << endl << endl;
 ```
 #### Reduction along all dimensions
 
-As a special case, if you pass no parameter to a reduction operation the
-original tensor is reduced along *all* its dimensions.  The result is a
-scalar, represented as a zero-dimension tensor.
+The no-argument overloads of `sum()`, `mean()`, `prod()`, `maximum()`,
+`minimum()`, `all()`, and `any()` reduce the original tensor along *all* its
+dimensions.  The result is a rank-0 `TensorReductionOp`, which can be assigned
+directly to its exact scalar result type.  The dimension-taking overloads of
+these operations, as well as `reduce()`, provide the same conversion when the
+reduction dimensions contain every dimension of the input.
 
 ```cpp
 Eigen::Tensor<float, 3> a(2, 3, 4);
@@ -1639,16 +1648,49 @@ a.setValues({{{0.0f, 1.0f, 2.0f, 3.0f},
               {{12.0f, 13.0f, 14.0f, 15.0f},
               {19.0f, 18.0f, 17.0f, 16.0f},
               {20.0f, 21.0f, 22.0f, 23.0f}}});
-// Reduce along all dimensions using the sum() operator.
-Eigen::Tensor<float, 0> b = a.sum();
+// An exact scalar target evaluates the rank-0 reduction immediately.
+const float b = a.sum();
 std::cout << "b\n" << b;
 
 // b
 // 276
 ```
-You can extract the scalar directly by casting the expression and extract the first and only coefficient:
+A scalar target of the reduction result's exact type must be supplied by the
+context.  A bare `auto` declaration supplies no target and therefore keeps the
+lazy reduction expression:
+
 ```cpp
-float sum = static_cast<Eigen::Tensor<float, 0>>(a.sum())();
+// auto preserves the expression type; the scalar cast forces evaluation.
+auto sum_expression = a.sum();
+const auto sum = static_cast<float>(a.sum());
+```
+
+For example, a reduction with a `float` result cannot convert directly to
+`double`.  First evaluate it as `float`, as in the `static_cast` above, and then
+convert the resulting scalar to `double`.  Reductions such as `all()` and
+`any()` have `bool` as their exact scalar result type, regardless of the input
+tensor's scalar type.
+
+The conversion is available only when the reduction removes every dimension;
+partial reductions remain tensor expressions.  It evaluates immediately on
+the default device, and each conversion evaluates the expression again.  Store
+the result when it will be used more than once.
+
+The conversion applies to the full reduction itself.  Expressions such as
+`2 * a.sum()` and `a.sum() > 0` remain lazy rank-0 tensor expressions.  For
+ordinary scalar arithmetic or comparisons, evaluate the reduction first:
+
+```cpp
+const float sum = a.sum();
+const float twice_sum = 2 * sum;
+const bool positive = sum > 0;
+```
+
+To evaluate on a specific device, retain a rank-0 tensor result:
+
+```cpp
+Eigen::Tensor<float, 0> result;
+result.device(device) = a.sum();
 ```
 
 ### (Operation) sum(const Dimensions& reduction_dims)
@@ -2054,6 +2096,9 @@ the reshape view of b.
 Returns a view of the input tensor whose dimensions have been
 reordered according to the specified permutation.
 
+Pass the permutation as a concrete array object. A braced initializer list such as
+`input.shuffle({1, 2, 0})` cannot be used directly because the template parameter cannot be deduced from it.
+
 The argument `shuffle` is an array of `Index` values:
 * Its size is the rank of the input tensor.
 * It must contain a permutation of `[0, 1, ..., rank - 1]`.
@@ -2063,7 +2108,8 @@ The argument `shuffle` is an array of `Index` values:
 // Shuffle all dimensions to the left by 1.
 Tensor<float, 3> input(20, 30, 50);
 // ... set some values in input.
-Tensor<float, 3> output = input.shuffle({1, 2, 0});
+Eigen::array<Eigen::Index, 3> shuffle{{1, 2, 0}};
+Tensor<float, 3> output = input.shuffle(shuffle);
 
 eigen_assert(output.dimension(0) == 30);
 eigen_assert(output.dimension(1) == 50);
@@ -2088,7 +2134,8 @@ Let's rewrite the previous example to take advantage of this feature:
 Tensor<float, 3> input(20, 30, 50);
 input.setRandom();
 Tensor<float, 3> output(30, 50, 20);
-output.shuffle({2, 0, 1}) = input;
+Eigen::array<Eigen::Index, 3> unshuffle{{2, 0, 1}};
+output.shuffle(unshuffle) = input;
 ```
 
 ### (Operation) stride(const Strides& strides)
@@ -2390,8 +2437,24 @@ std::cout << b << "\n";
 ### (Operation) concatenate(const OtherDerived& other, Axis axis)
 
 Returns a view of two tensors joined along a specified axis.
-The dimensions of the two tensors must match on all axes except the concatenation axis.
+Both operands must have the same static rank (i.e. the same `NumDimensions`
+template parameter). Eigen Tensor expressions are fully typed at compile time
+on a fixed rank, so a rank-`N` tensor cannot be concatenated directly with a
+rank-`M` tensor; reshape one of the operands explicitly if you want to mix
+ranks.
+The dimensions of the two tensors must match on all axes except the
+concatenation axis.
 The resulting tensor has the same rank as the inputs.
+
+For example, to join a rank-2 tensor of shape `(2, 3)` and a rank-3 tensor of
+shape `(2, 3, 1)` along axis 0, reshape the rank-2 operand to rank 3 first:
+
+```cpp
+Eigen::Tensor<int, 2> left(2, 3);
+Eigen::Tensor<int, 3> right(2, 3, 1);
+Eigen::Tensor<int, 3> result =
+    left.reshape(Eigen::Tensor<int, 3>::Dimensions(2, 3, 1)).concatenate(right, 0);
+```
 
 ```cpp
 Eigen::Tensor<int, 2> a(2, 3);
@@ -2573,7 +2636,7 @@ This code results in the following output when the data layout is RowMajor:
     6 7
     10 11
 
-### (Operation)  extract_image_patches(const Index patch_rows, const Index patch_cols, const Index row_stride, const Index col_stride, const PaddingType padding_type)
+### (Operation)  extract_image_patches(const Index patch_rows, const Index patch_cols, const Index row_stride, const Index col_stride, ...)
 
 Returns a tensor of coefficient image patches extracted from the input tensor,
 which is expected to have dimensions ordered as follows (depending on the data
@@ -2596,6 +2659,13 @@ used to index each patch. The patch index in the output tensor depends on the
 data layout of the input tensor: the patch index is the 4'th dimension in
 `ColMajor` layout, and the 4'th from the last dimension in `RowMajor` layout.
 
+All the arguments are optional and default to 1, except for the two trailing
+ones. `in_row_stride` and `in_col_stride` dilate the patch, so that it samples
+every `in_row_stride`'th input row and every `in_col_stride`'th input column.
+`padding_type` selects `PADDING_SAME` (the default) or `PADDING_VALID`, and
+`padding_value` (`Scalar(0)` by default) is used for the coefficients of a
+patch that fall outside the input.
+
 For example, given the following input tensor with the following dimension
 sizes:
 - depth:   2
@@ -2614,7 +2684,7 @@ Tensor<float, 4, RowMajor> tensor_row_major = tensor.swap_layout();
 
 ```cpp
 Tensor<float, 5> twod_patch;
-twod_patch = tensor.extract_image_patches<2, 2>();
+twod_patch = tensor.extract_image_patches(2, 2);
 // twod_patch.dimension(0) == 2
 // twod_patch.dimension(1) == 2
 // twod_patch.dimension(2) == 2
@@ -2626,7 +2696,7 @@ twod_patch = tensor.extract_image_patches<2, 2>();
 
 ```cpp
 Tensor<float, 5, RowMajor> twod_patch_row_major;
-twod_patch_row_major = tensor_row_major.extract_image_patches<2, 2>();
+twod_patch_row_major = tensor_row_major.extract_image_patches(2, 2);
 // twod_patch_row_major.dimension(0) == 7
 // twod_patch_row_major.dimension(1) == 3*5
 // twod_patch_row_major.dimension(2) == 2
@@ -2672,7 +2742,11 @@ than the input. Unlike `unaryExpr()` which is element-wise, `customOp()`
 gives full control over how the output is computed.
 
 The functor must implement:
-- `dimensions(const InputType& input)` — returns the output dimensions.
+- `dimensions(const InputType& input)` — returns the output dimensions. Its
+  return type (e.g. `DSizes<Index, Rank>`) determines the rank of the result;
+  its index type must be the expression's index type, or one that promotes to
+  it. Only the shape is functor-controlled: the scalar type and layout of the
+  result are inherited from the input expression(s).
 - `eval(const InputType& input, OutputType& output, const Device& device)` —
   computes the result.
 
@@ -2695,6 +2769,26 @@ Eigen::Tensor<float, 2> a(3, 4);
 a.setRandom();
 Eigen::Tensor<float, 1> row_sums = a.customOp(RowSumOp());
 ```
+
+`InputType` is whatever expression `customOp()` was applied to (both operands,
+in the binary form) and need not be a plain tensor or map. A lazy expression
+does not expose `dimension()`/`dimensions()`, so compute the sizes with a
+`TensorEvaluator`, whose constructor determines the dimensions without
+evaluating the expression:
+
+```cpp
+template <typename Input>
+Eigen::DSizes<Eigen::Index, 1> dimensions(const Input& input) const {
+  Eigen::DefaultDevice device;
+  Eigen::TensorEvaluator<const Input, Eigen::DefaultDevice> eval(input, device);
+  return Eigen::DSizes<Eigen::Index, 1>(eval.dimensions()[0]);
+}
+```
+
+Do not materialize the input (e.g. through a `TensorRef` or by converting it
+to a `Tensor`) just to read its size: that evaluates the whole expression on
+the host, and with a non-default device it would touch device memory from the
+host.
 
 A binary variant is also available:
 ```cpp
@@ -2842,11 +2936,14 @@ layout.
 
 Scalar values are often represented by tensors of size 1 and rank 0.
 
-For example `Tensor<T, N>::maximum()` returns a `Tensor<T, 0>`.
+For example, the no-argument `Tensor<T, N>::maximum()` returns a rank-0
+`TensorReductionOp`.  Such reduction expressions can be assigned directly to
+their exact scalar result type, as explained in **Reduction along all
+dimensions**.
 
-Similarly, the inner product of 2 1d tensors (through contractions) returns a 0d tensor.
-
-The scalar value can be extracted as explained in **Reduction along all dimensions**.
+Other rank-0 expressions, such as `argmax()` or the inner product of two rank-1
+tensors computed through contraction, must still be evaluated into a rank-0
+`Tensor` before accessing their scalar coefficient with `operator()`.
 
 
 ## Limitations

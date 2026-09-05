@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_RETURNBYVALUE_H
 #define EIGEN_RETURNBYVALUE_H
@@ -37,7 +38,7 @@ struct traits<ReturnByValue<Derived> > : public traits<typename traits<Derived>:
  */
 template <typename Derived, int n, typename PlainObject>
 struct nested_eval<ReturnByValue<Derived>, n, PlainObject> {
-  typedef typename traits<Derived>::ReturnType type;
+  using type = typename traits<Derived>::ReturnType;
 };
 
 }  // end namespace internal
@@ -49,9 +50,9 @@ struct nested_eval<ReturnByValue<Derived>, n, PlainObject> {
 template <typename Derived>
 class ReturnByValue : public internal::dense_xpr_base<ReturnByValue<Derived> >::type, internal::no_assignment_operator {
  public:
-  typedef typename internal::traits<Derived>::ReturnType ReturnType;
+  using ReturnType = typename internal::traits<Derived>::ReturnType;
 
-  typedef typename internal::dense_xpr_base<ReturnByValue>::type Base;
+  using Base = typename internal::dense_xpr_base<ReturnByValue>::type;
   EIGEN_DENSE_PUBLIC_INTERFACE(ReturnByValue)
 
   template <typename Dest>
@@ -91,9 +92,9 @@ namespace internal {
 
 template <typename Derived>
 struct evaluator<ReturnByValue<Derived> > : public evaluator<typename internal::traits<Derived>::ReturnType> {
-  typedef ReturnByValue<Derived> XprType;
-  typedef typename internal::traits<Derived>::ReturnType PlainObject;
-  typedef evaluator<PlainObject> Base;
+  using XprType = ReturnByValue<Derived>;
+  using PlainObject = typename internal::traits<Derived>::ReturnType;
+  using Base = evaluator<PlainObject>;
 
   EIGEN_DEVICE_FUNC explicit evaluator(const XprType& xpr) : m_result(xpr.rows(), xpr.cols()) {
     internal::construct_at<Base>(this, m_result);

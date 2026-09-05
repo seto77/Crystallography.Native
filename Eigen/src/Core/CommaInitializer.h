@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_COMMAINITIALIZER_H
 #define EIGEN_COMMAINITIALIZER_H
@@ -29,7 +30,7 @@ namespace Eigen {
  */
 template <typename XprType>
 struct CommaInitializer {
-  typedef typename XprType::Scalar Scalar;
+  using Scalar = typename XprType::Scalar;
 
   EIGEN_DEVICE_FUNC constexpr CommaInitializer(XprType& xpr, const Scalar& s)
       : m_xpr(xpr), m_row(0), m_col(1), m_currentBlockRows(1) {

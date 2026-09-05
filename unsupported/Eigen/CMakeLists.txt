@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: The Eigen Authors
+# SPDX-License-Identifier: MPL-2.0
+
 set(Eigen_HEADERS
   AdolcForward
   AlignedVector3
@@ -6,6 +9,7 @@ set(Eigen_HEADERS
   BVH
   EulerAngles
   FFT
+  GPU
   IterativeSolvers
   KroneckerProduct
   LevenbergMarquardt
@@ -19,16 +23,19 @@ set(Eigen_HEADERS
   SparseExtra
   SpecialFunctions
   Splines
+  StructuredMatrices
   Tensor
   TensorSymmetry
   ThreadPool
   )
 
-install(FILES
-  ${Eigen_HEADERS}
-  DESTINATION ${INCLUDE_INSTALL_DIR}/unsupported/Eigen COMPONENT Devel
-  )
+if(EIGEN_INSTALL)
+  install(FILES
+    ${Eigen_HEADERS}
+    DESTINATION ${INCLUDE_INSTALL_DIR}/unsupported/Eigen COMPONENT Devel
+    )
 
-install(DIRECTORY src DESTINATION ${INCLUDE_INSTALL_DIR}/unsupported/Eigen COMPONENT Devel FILES_MATCHING PATTERN "*.h")
+  install(DIRECTORY src DESTINATION ${INCLUDE_INSTALL_DIR}/unsupported/Eigen COMPONENT Devel FILES_MATCHING PATTERN "*.h")
+endif()
 
 add_subdirectory(CXX11)

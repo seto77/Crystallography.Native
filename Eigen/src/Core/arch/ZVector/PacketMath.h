@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_PACKET_MATH_ZVECTOR_H
 #define EIGEN_PACKET_MATH_ZVECTOR_H
@@ -129,16 +130,8 @@ static Packet16uc p16uc_PSET32_WODD =
             8);  //{ 0,1,2,3, 0,1,2,3, 8,9,10,11, 8,9,10,11 };
 static Packet16uc p16uc_PSET32_WEVEN = vec_sld(p16uc_DUPLICATE32_HI, (Packet16uc)vec_splat((Packet4ui)p16uc_FORWARD, 3),
                                                8);  //{ 4,5,6,7, 4,5,6,7, 12,13,14,15, 12,13,14,15 };
-/*static Packet16uc p16uc_HALF64_0_16 = vec_sld((Packet16uc)p4i_ZERO, vec_splat((Packet16uc) vec_abs(p4i_MINUS16), 3),
-8);      //{ 0,0,0,0, 0,0,0,0, 16,16,16,16, 16,16,16,16};
-
-static Packet16uc p16uc_PSET64_HI = (Packet16uc) vec_mergeh((Packet4ui)p16uc_PSET32_WODD,
-(Packet4ui)p16uc_PSET32_WEVEN);     //{ 0,1,2,3, 4,5,6,7, 0,1,2,3, 4,5,6,7 };*/
 static Packet16uc p16uc_PSET64_LO = (Packet16uc)vec_mergel(
     (Packet4ui)p16uc_PSET32_WODD, (Packet4ui)p16uc_PSET32_WEVEN);  //{ 8,9,10,11, 12,13,14,15, 8,9,10,11, 12,13,14,15 };
-/*static Packet16uc p16uc_TRANSPOSE64_HI = vec_add(p16uc_PSET64_HI, p16uc_HALF64_0_16); //{ 0,1,2,3, 4,5,6,7,
-16,17,18,19, 20,21,22,23}; static Packet16uc p16uc_TRANSPOSE64_LO = vec_add(p16uc_PSET64_LO, p16uc_HALF64_0_16); //{
-8,9,10,11, 12,13,14,15, 24,25,26,27, 28,29,30,31};*/
 static Packet16uc p16uc_TRANSPOSE64_HI = {0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23};
 static Packet16uc p16uc_TRANSPOSE64_LO = {8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31};
 

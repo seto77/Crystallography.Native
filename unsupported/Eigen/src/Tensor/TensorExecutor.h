@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_EXECUTOR_H
-#define EIGEN_CXX11_TENSOR_TENSOR_EXECUTOR_H
+#ifndef EIGEN_TENSOR_TENSOR_EXECUTOR_H
+#define EIGEN_TENSOR_TENSOR_EXECUTOR_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -18,46 +19,7 @@ namespace Eigen {
 namespace internal {
 
 /**
- * Evaluating TensorBroadcastingOp via coefficient of packet path is extremely
- * expensive. If expression has at least one broadcast op in it, and it supports
- * block based evaluation, we always prefer it, even for the small tensors. For
- * all other tileable ops, block evaluation overhead for small tensors (fits
- * into L1) is too large, and we fallback on vectorized evaluation.
- */
-
-// TODO(ezhulenev): Add specializations for all other types of Tensor ops.
-
-template <typename Expression>
-struct ExpressionHasTensorBroadcastingOp {
-  enum { value = false };
-};
-
-template <typename LhsXprType, typename RhsXprType>
-struct ExpressionHasTensorBroadcastingOp<const TensorAssignOp<LhsXprType, RhsXprType> > {
-  enum { value = ExpressionHasTensorBroadcastingOp<RhsXprType>::value };
-};
-
-template <typename UnaryOp, typename XprType>
-struct ExpressionHasTensorBroadcastingOp<const TensorCwiseUnaryOp<UnaryOp, XprType> > {
-  enum { value = ExpressionHasTensorBroadcastingOp<XprType>::value };
-};
-
-template <typename BinaryOp, typename LhsXprType, typename RhsXprType>
-struct ExpressionHasTensorBroadcastingOp<const TensorCwiseBinaryOp<BinaryOp, LhsXprType, RhsXprType> > {
-  enum {
-    value = ExpressionHasTensorBroadcastingOp<LhsXprType>::value || ExpressionHasTensorBroadcastingOp<RhsXprType>::value
-  };
-};
-
-template <typename Broadcast, typename XprType>
-struct ExpressionHasTensorBroadcastingOp<const TensorBroadcastingOp<Broadcast, XprType> > {
-  enum { value = true };
-};
-
-// -------------------------------------------------------------------------- //
-
-/**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief The tensor executor class.
  *
@@ -89,7 +51,7 @@ class TensorExecutor {
 
   static EIGEN_STRONG_INLINE void run(const Expression& expr, const Device& device = DefaultDevice()) {
     TensorEvaluator<Expression, Device> evaluator(expr, device);
-    const bool needs_assign = evaluator.evalSubExprsIfNeeded(NULL);
+    const bool needs_assign = evaluator.evalSubExprsIfNeeded(nullptr);
     if (needs_assign) {
       const StorageIndex size = static_cast<StorageIndex>(array_prod(evaluator.dimensions()));
       for (StorageIndex i = 0; i < size; ++i) {
@@ -118,7 +80,7 @@ class TensorExecutor<Expression, DefaultDevice, /*Vectorizable=*/true,
 
   static EIGEN_STRONG_INLINE void run(const Expression& expr, const DefaultDevice& device = DefaultDevice()) {
     TensorEvaluator<Expression, DefaultDevice> evaluator(expr, device);
-    const bool needs_assign = evaluator.evalSubExprsIfNeeded(NULL);
+    const bool needs_assign = evaluator.evalSubExprsIfNeeded(nullptr);
     if (needs_assign) {
       const StorageIndex size = static_cast<StorageIndex>(array_prod(evaluator.dimensions()));
       const int PacketSize =
@@ -171,7 +133,7 @@ class TensorExecutor<Expression, DefaultDevice, Vectorizable,
     Evaluator evaluator(expr, device);
 
     // TODO(ezhulenev): Do not use tiling for small tensors?
-    const bool needs_assign = evaluator.evalSubExprsIfNeeded(NULL);
+    const bool needs_assign = evaluator.evalSubExprsIfNeeded(nullptr);
 
     if (needs_assign) {
       // Query expression tree for desired block size/shape.
@@ -217,7 +179,7 @@ struct TensorExecutorTilingContext {
   size_t aligned_blocksize;        // block size after memory alignment
 };
 
-// Computes a block evaluation parameters, and allocates temporary memory buffer
+// Computes block evaluation parameters, and allocates temporary memory buffer
 // for blocks. See TensorExecutor/TensorAsyncExecutor (Tiling=On) below.
 template <typename Evaluator, typename TensorBlockMapper, bool Vectorizable>
 TensorExecutorTilingContext<TensorBlockMapper> GetTensorExecutorTilingContext(const Evaluator& evaluator) {
@@ -290,6 +252,27 @@ struct EvalRange<Evaluator, StorageIndex, /*Vectorizable*/ true> {
   }
 };
 
+// Evaluates a range of blocks for the tiled executors below. Each task copies
+// the evaluator so that concurrent tasks never share per-instance state (e.g.
+// stateful functors reached through coeff()), matching EvalRange for the
+// non-tiled path.
+template <typename Evaluator, typename BlockMapper, typename IndexType>
+struct EvalBlockRange {
+  static void run(Evaluator* evaluator_in, const BlockMapper& block_mapper, const ThreadPoolDevice& device,
+                  IndexType firstBlockIdx, IndexType lastBlockIdx) {
+    typedef TensorBlockScratchAllocator<ThreadPoolDevice> TensorBlockScratch;
+    Evaluator evaluator = *evaluator_in;
+    eigen_assert(lastBlockIdx >= firstBlockIdx);
+    TensorBlockScratch scratch(device);
+
+    for (IndexType block_idx = firstBlockIdx; block_idx < lastBlockIdx; ++block_idx) {
+      auto desc = block_mapper.blockDescriptor(block_idx);
+      evaluator.evalBlock(desc, scratch);
+      scratch.reset();
+    }
+  }
+};
+
 template <typename Expression, bool Vectorizable, TiledEvaluation Tiling>
 class TensorExecutor<Expression, ThreadPoolDevice, Vectorizable, Tiling> {
  public:
@@ -337,13 +320,8 @@ class TensorExecutor<Expression, ThreadPoolDevice, Vectorizable,
           internal::GetTensorExecutorTilingContext<Evaluator, BlockMapper, Vectorizable>(evaluator);
 
       auto eval_block = [&device, &evaluator, &tiling](IndexType firstBlockIdx, IndexType lastBlockIdx) {
-        TensorBlockScratch scratch(device);
-
-        for (IndexType block_idx = firstBlockIdx; block_idx < lastBlockIdx; ++block_idx) {
-          TensorBlockDesc desc = tiling.block_mapper.blockDescriptor(block_idx);
-          evaluator.evalBlock(desc, scratch);
-          scratch.reset();
-        }
+        EvalBlockRange<Evaluator, BlockMapper, IndexType>::run(&evaluator, tiling.block_mapper, device, firstBlockIdx,
+                                                               lastBlockIdx);
       };
 
       // Evaluate small expressions directly as a single block.
@@ -430,13 +408,8 @@ class TensorAsyncExecutor<Expression, ThreadPoolDevice, DoneCallback, Vectorizab
       ctx->tiling = internal::GetTensorExecutorTilingContext<Evaluator, BlockMapper, Vectorizable>(ctx->evaluator);
 
       auto eval_block = [ctx](IndexType firstBlockIdx, IndexType lastBlockIdx) {
-        TensorBlockScratch scratch(ctx->device);
-
-        for (IndexType block_idx = firstBlockIdx; block_idx < lastBlockIdx; ++block_idx) {
-          TensorBlockDesc desc = ctx->tiling.block_mapper.blockDescriptor(block_idx);
-          ctx->evaluator.evalBlock(desc, scratch);
-          scratch.reset();
-        }
+        EvalBlockRange<Evaluator, BlockMapper, IndexType>::run(&ctx->evaluator, ctx->tiling.block_mapper, ctx->device,
+                                                               firstBlockIdx, lastBlockIdx);
       };
 
       // Evaluate small expressions directly as a single block.
@@ -642,7 +615,7 @@ class TensorExecutor<Expression, Eigen::SyclDevice, Vectorizable, Tiling> {
   static EIGEN_STRONG_INLINE void run(const Expression& expr, const Eigen::SyclDevice& dev) {
     typedef Eigen::TensorEvaluator<Expression, Eigen::SyclDevice> Evaluator;
     Evaluator evaluator(expr, dev);
-    const bool needs_assign = evaluator.evalSubExprsIfNeeded(NULL);
+    const bool needs_assign = evaluator.evalSubExprsIfNeeded(nullptr);
     if (needs_assign) {
       Index range, GRange, tileSize;
       Index total_size = ::Eigen::internal::array_prod(evaluator.dimensions());
@@ -667,4 +640,4 @@ class TensorExecutor<Expression, Eigen::SyclDevice, Vectorizable, Tiling> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_EXECUTOR_H
+#endif  // EIGEN_TENSOR_TENSOR_EXECUTOR_H

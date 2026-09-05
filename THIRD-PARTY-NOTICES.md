@@ -14,7 +14,8 @@ are preserved here.
 | Field | Value |
 | --- | --- |
 | Component | Eigen |
-| Version | 3.5.0.1 (post-3.4 dev/master snapshot; from `Eigen/Version`: WORLD 3, MAJOR 5, MINOR 0, PATCH 1) |
+| Version | 5.0.1-dev+master snapshot, upstream commit `17d8ddbd22c277c6bd20e19e5b8d128b0135a9f4` (2026-09-03); from `Eigen/Version`: WORLD 3, MAJOR 5, MINOR 0, PATCH 1. Updated 2026-09-05 (260905Cl) from the previous master snapshot of 2026-03-21..04-05 |
+| Source archive | <https://gitlab.com/libeigen/eigen/-/archive/17d8ddbd22c277c6bd20e19e5b8d128b0135a9f4/eigen-17d8ddbd22c277c6bd20e19e5b8d128b0135a9f4.tar.gz> (sha256 `b059ec2590e12c9cc71377bd664e9093adb36eb3716edd8753e5cfd92fa07d8b`) |
 | Purpose | Linear algebra, compiled into `Crystallography.Native.dll` |
 | Form | Vendored header-only source, compiled in |
 | Trees | `Eigen/` (supported modules) and `unsupported/Eigen/` (used for `MatrixFunctions`, i.e. the matrix exponential) |
@@ -33,7 +34,11 @@ whose notices are preserved in their respective source files:
 - **Apache-2.0**: `Eigen/src/Core/arch/Default/BFloat16.h` is derived from TensorFlow,
   Copyright 2017 The TensorFlow Authors, licensed under the Apache License, Version 2.0
   (<https://www.apache.org/licenses/LICENSE-2.0>).
-- **BSD-style**: several internal algorithm files carry BSD attribution headers.
+- **BSD-3-Clause**: the optional BLAS / LAPACKE / MKL / Pardiso backend headers (e.g.
+  `Eigen/src/Core/products/*_BLAS.h`, `Eigen/src/*/*_LAPACKE.h`, `Eigen/src/misc/lapacke.h`),
+  which are inert here (see below). Upstream now tags every file with an SPDX identifier
+  (`MPL-2.0` / `BSD-3-Clause` / `Apache-2.0`); the MINPACK-derived `unsupported/Eigen/src/LevenbergMarquardt`
+  (`LicenseRef-MINPACK`, BSD-like) is present in the tree but not compiled in.
 
 All licenses involved (MPL-2.0, Apache-2.0, BSD) are permissive and compatible with
 redistribution under this repository's MIT license; per MPL-2.0 §3.3 the MPL-covered

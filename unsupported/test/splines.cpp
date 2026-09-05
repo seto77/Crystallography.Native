@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #include "main.h"
 
@@ -84,7 +85,8 @@ void eval_spline3d() {
 
   for (int i = 0; i < u.size(); ++i) {
     Vector3d pt = spline(u(i));
-    VERIFY((pt - pts.col(i)).norm() < 1e-14);
+    // The reference points are tabulated to 15 significant digits, so agreement is limited to a small multiple of eps.
+    VERIFY((pt - pts.col(i)).norm() < 64 * NumTraits<double>::epsilon());
   }
 }
 
@@ -105,7 +107,7 @@ void eval_spline3d_onbrks() {
 
   for (int i = 0; i < u.size(); ++i) {
     Vector3d pt = spline(u(i));
-    VERIFY((pt - pts.col(i)).norm() < 1e-14);
+    VERIFY((pt - pts.col(i)).norm() < 16 * NumTraits<double>::epsilon());
   }
 }
 
@@ -126,7 +128,7 @@ void eval_closed_spline2d() {
 
   for (int i = 0; i < u.size(); ++i) {
     Vector2d pt = spline(u(i));
-    VERIFY((pt - pts.col(i)).norm() < 1e-14);
+    VERIFY((pt - pts.col(i)).norm() < 16 * NumTraits<double>::epsilon());
   }
 }
 
@@ -147,7 +149,7 @@ void check_global_interpolation2d() {
     for (Eigen::DenseIndex i = 0; i < points.cols(); ++i) {
       PointType pt = spline(chord_lengths(i));
       PointType ref = points.col(i);
-      VERIFY((pt - ref).matrix().norm() < 1e-14);
+      VERIFY((pt - ref).matrix().norm() < 32 * NumTraits<double>::epsilon());
     }
   }
 
@@ -158,7 +160,44 @@ void check_global_interpolation2d() {
     for (Eigen::DenseIndex i = 0; i < points.cols(); ++i) {
       PointType pt = spline(chord_lengths(i));
       PointType ref = points.col(i);
-      VERIFY((pt - ref).matrix().norm() < 1e-14);
+      VERIFY((pt - ref).matrix().norm() < 32 * NumTraits<double>::epsilon());
+    }
+  }
+}
+
+// Regression test for issue #764: KnotAveraging hard-coded 0/1 boundary knots,
+// producing a non-monotone knot vector for parameters outside [0, 1].
+void check_global_interpolation2d_arbitrary_range() {
+  typedef Spline2d::PointType PointType;
+  typedef Spline2d::KnotVectorType KnotVectorType;
+  typedef Spline2d::ControlPointVectorType ControlPointVectorType;
+
+  // The issue's example: parameters [2,3,4,5] with degree 1 must yield the
+  // clamped knot vector [2,2,3,4,5,5], not [0,0,3,4,1,1].
+  {
+    KnotVectorType parameters(4), knots, expected(6);
+    parameters << 2, 3, 4, 5;
+    expected << 2, 2, 3, 4, 5, 5;
+    Eigen::KnotAveraging(parameters, 1, knots);
+    VERIFY_IS_EQUAL(knots.size(), expected.size());
+    VERIFY((knots - expected).matrix().norm() == 0.0);
+  }
+
+  // Interpolation with knot parameters spanning [2, 5] must pass through the
+  // data points, exactly like the normalized [0, 1] parameterization.
+  {
+    ControlPointVectorType points = ControlPointVectorType::Random(2, 100);
+
+    KnotVectorType chord_lengths;
+    Eigen::ChordLengths(points, chord_lengths);
+    KnotVectorType parameters = 2.0 + 3.0 * chord_lengths;
+
+    const Spline2d spline = SplineFitting<Spline2d>::Interpolate(points, 3, parameters);
+
+    for (Eigen::DenseIndex i = 0; i < points.cols(); ++i) {
+      PointType pt = spline(parameters(i));
+      PointType ref = points.col(i);
+      VERIFY((pt - ref).matrix().norm() < 32 * NumTraits<double>::epsilon());
     }
   }
 }
@@ -200,6 +239,7 @@ EIGEN_DECLARE_TEST(splines) {
     CALL_SUBTEST(eval_spline3d_onbrks());
     CALL_SUBTEST(eval_closed_spline2d());
     CALL_SUBTEST(check_global_interpolation2d());
+    CALL_SUBTEST(check_global_interpolation2d_arbitrary_range());
     CALL_SUBTEST(check_global_interpolation_with_derivatives2d());
   }
 }

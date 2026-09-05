@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BVALGORITHMS_H
 #define EIGEN_BVALGORITHMS_H
@@ -52,7 +53,7 @@ struct intersector_helper1 {
   Intersector &intersector;
 
  private:
-  intersector_helper1 &operator=(const intersector_helper1 &);
+  intersector_helper1 &operator=(const intersector_helper1 &) = delete;
 };
 
 template <typename Volume2, typename Object2, typename Object1, typename Intersector>
@@ -64,7 +65,7 @@ struct intersector_helper2 {
   Intersector &intersector;
 
  private:
-  intersector_helper2 &operator=(const intersector_helper2 &);
+  intersector_helper2 &operator=(const intersector_helper2 &) = delete;
 };
 
 }  // end namespace internal
@@ -189,7 +190,7 @@ struct minimizer_helper1 {
   Minimizer &minimizer;
 
  private:
-  minimizer_helper1 &operator=(const minimizer_helper1 &);
+  minimizer_helper1 &operator=(const minimizer_helper1 &) = delete;
 };
 
 template <typename Volume2, typename Object2, typename Object1, typename Minimizer>
@@ -202,7 +203,7 @@ struct minimizer_helper2 {
   Minimizer &minimizer;
 
  private:
-  minimizer_helper2 &operator=(const minimizer_helper2 &);
+  minimizer_helper2 &operator=(const minimizer_helper2 &) = delete;
 };
 
 }  // end namespace internal
@@ -219,7 +220,7 @@ typename Minimizer::Scalar BVMinimize(const BVH &tree, Minimizer &minimizer) {
                                    (std::numeric_limits<typename Minimizer::Scalar>::max)());
 }
 
-/**  Given two BVH's, runs the query on their cartesian product encapsulated by \a minimizer.
+/**  Given two BVH's, runs the query on their Cartesian product encapsulated by \a minimizer.
   *  \returns the minimum value.
   *  The Minimizer type must provide the following members: \code
      typedef Scalar //the numeric type of what is being minimized--not necessarily the Scalar type of the BVH (if it has

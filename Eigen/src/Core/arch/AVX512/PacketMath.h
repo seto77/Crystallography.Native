@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_PACKET_MATH_AVX512_H
 #define EIGEN_PACKET_MATH_AVX512_H
@@ -43,6 +44,12 @@ typedef eigen_packet_wrapper<__m256i, 2> Packet16bf;
 typedef eigen_packet_wrapper<__m512i, 6> Packet32s;
 typedef eigen_packet_wrapper<__m256i, 6> Packet16s;
 typedef eigen_packet_wrapper<__m128i, 6> Packet8s;
+
+#if EIGEN_COMP_NVHPC
+#define EIGEN_AVX512_SHUFFLE_PS(A, B, M) ((__m512)_mm512_shuffle_ps(A, B, M))
+#else
+#define EIGEN_AVX512_SHUFFLE_PS(A, B, M) _mm512_shuffle_ps(A, B, M)
+#endif
 
 EIGEN_STRONG_INLINE Packet16i _eigen_mm512_loadu_epi32(const int* from) {
 #if EIGEN_COMP_GNUC && (EIGEN_COMP_CLANG < 1000 || EIGEN_COMP_GNUC < 1010)
@@ -93,27 +100,17 @@ EIGEN_STRONG_INLINE void _eigen_mm_storeu_epi32(void* to, const __m128i& from) {
 }
 
 template <>
-struct is_arithmetic<__m512> {
-  enum { value = true };
-};
+struct is_arithmetic<__m512> : std::true_type {};
 template <>
-struct is_arithmetic<__m512i> {
-  enum { value = true };
-};
+struct is_arithmetic<__m512i> : std::true_type {};
 template <>
-struct is_arithmetic<__m512d> {
-  enum { value = true };
-};
+struct is_arithmetic<__m512d> : std::true_type {};
 template <>
-struct is_arithmetic<Packet8l> {
-  enum { value = true };
-};
+struct is_arithmetic<Packet8l> : std::true_type {};
 
 #ifndef EIGEN_VECTORIZE_AVX512FP16
 template <>
-struct is_arithmetic<Packet16h> {
-  enum { value = true };
-};
+struct is_arithmetic<Packet16h> : std::true_type {};
 
 template <>
 struct packet_traits<half> : default_packet_traits {
@@ -394,7 +391,9 @@ EIGEN_STRONG_INLINE Packet8l pzero(const Packet8l& /*a*/) {
 
 template <>
 EIGEN_STRONG_INLINE Packet16f peven_mask(const Packet16f& /*a*/) {
-  return _mm512_castsi512_ps(_mm512_set_epi32(0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1));
+  Packet16f r = _mm512_castsi512_ps(_mm512_set_epi32(0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1));
+  EIGEN_FAST_MATH_CONSTANT_BARRIER(r);
+  return r;
 }
 template <>
 EIGEN_STRONG_INLINE Packet16i peven_mask(const Packet16i& /*a*/) {
@@ -402,7 +401,9 @@ EIGEN_STRONG_INLINE Packet16i peven_mask(const Packet16i& /*a*/) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet8d peven_mask(const Packet8d& /*a*/) {
-  return _mm512_castsi512_pd(_mm512_set_epi32(0, 0, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1));
+  Packet8d r = _mm512_castsi512_pd(_mm512_set_epi32(0, 0, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1, 0, 0, -1, -1));
+  EIGEN_FAST_MATH_CONSTANT_BARRIER(r);
+  return r;
 }
 template <>
 EIGEN_STRONG_INLINE Packet8l peven_mask(const Packet8l& /*a*/) {
@@ -712,44 +713,44 @@ EIGEN_STRONG_INLINE Packet8d pmax<PropagateNaN, Packet8d>(const Packet8d& a, con
 
 #ifdef EIGEN_VECTORIZE_AVX512DQ
 template <int I_>
-EIGEN_STRONG_INLINE Packet8f extract256(Packet16f x) {
+EIGEN_STRONG_INLINE Packet8f extract256(const Packet16f& x) {
   return _mm512_extractf32x8_ps(x, I_);
 }
 template <int I_>
-EIGEN_STRONG_INLINE Packet2d extract128(Packet8d x) {
+EIGEN_STRONG_INLINE Packet2d extract128(const Packet8d& x) {
   return _mm512_extractf64x2_pd(x, I_);
 }
-EIGEN_STRONG_INLINE Packet16f cat256(Packet8f a, Packet8f b) {
+EIGEN_STRONG_INLINE Packet16f cat256(const Packet8f& a, const Packet8f& b) {
   return _mm512_insertf32x8(_mm512_castps256_ps512(a), b, 1);
 }
-EIGEN_STRONG_INLINE Packet16i cat256i(Packet8i a, Packet8i b) {
+EIGEN_STRONG_INLINE Packet16i cat256i(const Packet8i& a, const Packet8i& b) {
   return _mm512_inserti32x8(_mm512_castsi256_si512(a), b, 1);
 }
 #else
 // AVX512F does not define _mm512_extractf32x8_ps to extract _m256 from _m512
 template <int I_>
-EIGEN_STRONG_INLINE Packet8f extract256(Packet16f x) {
+EIGEN_STRONG_INLINE Packet8f extract256(const Packet16f& x) {
   return _mm256_castsi256_ps(_mm512_extracti64x4_epi64(_mm512_castps_si512(x), I_));
 }
 
 // AVX512F does not define _mm512_extractf64x2_pd to extract _m128 from _m512
 template <int I_>
-EIGEN_STRONG_INLINE Packet2d extract128(Packet8d x) {
+EIGEN_STRONG_INLINE Packet2d extract128(const Packet8d& x) {
   return _mm_castsi128_pd(_mm512_extracti32x4_epi32(_mm512_castpd_si512(x), I_));
 }
 
-EIGEN_STRONG_INLINE Packet16f cat256(Packet8f a, Packet8f b) {
+EIGEN_STRONG_INLINE Packet16f cat256(const Packet8f& a, const Packet8f& b) {
   return _mm512_castsi512_ps(
       _mm512_inserti64x4(_mm512_castsi256_si512(_mm256_castps_si256(a)), _mm256_castps_si256(b), 1));
 }
-EIGEN_STRONG_INLINE Packet16i cat256i(Packet8i a, Packet8i b) {
+EIGEN_STRONG_INLINE Packet16i cat256i(const Packet8i& a, const Packet8i& b) {
   return _mm512_inserti64x4(_mm512_castsi256_si512(a), b, 1);
 }
 #endif
 
 // Helper function for bit packing snippet of low precision comparison.
 // It packs the flags from 32x16 to 16x16.
-EIGEN_STRONG_INLINE __m256i Pack32To16(Packet16f rf) {
+EIGEN_STRONG_INLINE __m256i Pack32To16(const Packet16f& rf) {
   // Split data into small pieces and handle with AVX instructions
   // to guarantee internal order of vector.
   // Operation:
@@ -894,12 +895,16 @@ EIGEN_STRONG_INLINE Packet8l ptrue<Packet8l>(const Packet8l& /*a*/) {
 
 template <>
 EIGEN_STRONG_INLINE Packet16f ptrue<Packet16f>(const Packet16f& a) {
-  return _mm512_castsi512_ps(ptrue<Packet16i>(_mm512_castps_si512(a)));
+  Packet16f r = _mm512_castsi512_ps(ptrue<Packet16i>(_mm512_castps_si512(a)));
+  EIGEN_FAST_MATH_CONSTANT_BARRIER(r);
+  return r;
 }
 
 template <>
 EIGEN_STRONG_INLINE Packet8d ptrue<Packet8d>(const Packet8d& a) {
-  return _mm512_castsi512_pd(ptrue<Packet16i>(_mm512_castpd_si512(a)));
+  Packet8d r = _mm512_castsi512_pd(ptrue<Packet16i>(_mm512_castpd_si512(a)));
+  EIGEN_FAST_MATH_CONSTANT_BARRIER(r);
+  return r;
 }
 
 template <>
@@ -1035,32 +1040,32 @@ EIGEN_STRONG_INLINE Packet8d pround<Packet8d>(const Packet8d& a) {
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16i parithmetic_shift_right(Packet16i a) {
+EIGEN_STRONG_INLINE Packet16i parithmetic_shift_right(const Packet16i& a) {
   return _mm512_srai_epi32(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16i plogical_shift_right(Packet16i a) {
+EIGEN_STRONG_INLINE Packet16i plogical_shift_right(const Packet16i& a) {
   return _mm512_srli_epi32(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16i plogical_shift_left(Packet16i a) {
+EIGEN_STRONG_INLINE Packet16i plogical_shift_left(const Packet16i& a) {
   return _mm512_slli_epi32(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8l parithmetic_shift_right(Packet8l a) {
+EIGEN_STRONG_INLINE Packet8l parithmetic_shift_right(const Packet8l& a) {
   return _mm512_srai_epi64(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8l plogical_shift_right(Packet8l a) {
+EIGEN_STRONG_INLINE Packet8l plogical_shift_right(const Packet8l& a) {
   return _mm512_srli_epi64(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8l plogical_shift_left(Packet8l a) {
+EIGEN_STRONG_INLINE Packet8l plogical_shift_left(const Packet8l& a) {
   return _mm512_slli_epi64(a, N);
 }
 
@@ -1109,7 +1114,7 @@ EIGEN_STRONG_INLINE Packet8d ploadu<Packet8d>(const double* from, uint8_t umask)
   EIGEN_DEBUG_UNALIGNED_LOAD return _mm512_maskz_loadu_pd(mask, from);
 }
 
-// Loads 8 floats from memory a returns the packet
+// Loads 8 floats from memory and returns the packet
 // {a0, a0  a1, a1, a2, a2, a3, a3, a4, a4, a5, a5, a6, a6, a7, a7}
 template <>
 EIGEN_STRONG_INLINE Packet16f ploaddup<Packet16f>(const float* from) {
@@ -1121,7 +1126,7 @@ EIGEN_STRONG_INLINE Packet16f ploaddup<Packet16f>(const float* from) {
   return pairs;
 }
 
-// Loads 4 doubles from memory a returns the packet {a0, a0,  a1, a1, a2, a2, a3,
+// Loads 4 doubles from memory and returns the packet {a0, a0,  a1, a1, a2, a2, a3,
 // a3}
 template <>
 EIGEN_STRONG_INLINE Packet8d ploaddup<Packet8d>(const double* from) {
@@ -1130,7 +1135,7 @@ EIGEN_STRONG_INLINE Packet8d ploaddup<Packet8d>(const double* from) {
   return _mm512_permutexvar_pd(scatter_mask, tmp);
 }
 
-// Loads 4 int64_t from memory a returns the packet {a0, a0,  a1, a1, a2, a2, a3,
+// Loads 4 int64_t from memory and returns the packet {a0, a0,  a1, a1, a2, a2, a3,
 // a3}
 template <>
 EIGEN_STRONG_INLINE Packet8l ploaddup<Packet8l>(const int64_t* from) {
@@ -1149,7 +1154,7 @@ EIGEN_STRONG_INLINE Packet16i ploaddup<Packet16i>(const int* from) {
   return _mm512_castps_si512(pairs);
 }
 
-// Loads 4 floats from memory a returns the packet
+// Loads 4 floats from memory and returns the packet
 // {a0, a0  a0, a0, a1, a1, a1, a1, a2, a2, a2, a2, a3, a3, a3, a3}
 template <>
 EIGEN_STRONG_INLINE Packet16f ploadquad<Packet16f>(const float* from) {
@@ -1158,7 +1163,7 @@ EIGEN_STRONG_INLINE Packet16f ploadquad<Packet16f>(const float* from) {
   return _mm512_permutexvar_ps(scatter_mask, tmp);
 }
 
-// Loads 2 doubles from memory a returns the packet
+// Loads 2 doubles from memory and returns the packet
 // {a0, a0  a0, a0, a1, a1, a1, a1}
 template <>
 EIGEN_STRONG_INLINE Packet8d ploadquad<Packet8d>(const double* from) {
@@ -1169,7 +1174,7 @@ EIGEN_STRONG_INLINE Packet8d ploadquad<Packet8d>(const double* from) {
   return _mm512_insertf64x4(tmp, lane1, 1);
 }
 
-// Loads 2 int64_t from memory a returns the packet
+// Loads 2 int64_t from memory and returns the packet
 // {a0, a0  a0, a0, a1, a1, a1, a1}
 template <>
 EIGEN_STRONG_INLINE Packet8l ploadquad<Packet8l>(const int64_t* from) {
@@ -1486,26 +1491,17 @@ EIGEN_STRONG_INLINE Packet8d pldexp<Packet8d>(const Packet8d& a, const Packet8d&
   const Packet8d max_exponent = pset1<Packet8d>(2099.0);
   const Packet8i e = _mm512_cvtpd_epi32(pmin(pmax(exponent, pnegate(max_exponent)), max_exponent));
 
-  // Split 2^e into four factors and multiply.
+  // Preserve the sequential 4-way split; see pldexp_generic.
+  // 2^b and 2^(e-3b) are built by widening the biased int32 exponent to int64
+  // with vpmovsxdq and shifting into the double exponent field with vpsllq.
   const Packet8i bias = pset1<Packet8i>(1023);
-  Packet8i b = parithmetic_shift_right<2>(e);  // floor(e/4)
+  const Packet8i b = parithmetic_shift_right<2>(e);           // floor(e/4)
+  const Packet8i b_remainder = psub(psub(e, b), padd(b, b));  // e - 3b (depth 2)
+  const Packet8d c1 = _mm512_castsi512_pd(_mm512_slli_epi64(_mm512_cvtepi32_epi64(padd(b, bias)), 52));  // 2^b
+  const Packet8d c2 =
+      _mm512_castsi512_pd(_mm512_slli_epi64(_mm512_cvtepi32_epi64(padd(b_remainder, bias)), 52));  // 2^(e-3b)
 
-  // 2^b
-  const Packet8i permute_idx = _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7);
-  Packet8i hi = _mm256_permutevar8x32_epi32(padd(b, bias), permute_idx);
-  Packet8i lo = _mm256_slli_epi64(hi, 52);
-  hi = _mm256_slli_epi64(_mm256_srli_epi64(hi, 32), 52);
-  Packet8d c = _mm512_castsi512_pd(_mm512_inserti64x4(_mm512_castsi256_si512(lo), hi, 1));
-  Packet8d out = pmul(pmul(pmul(a, c), c), c);  // a * 2^(3b)
-
-  // 2^(e - 3b)
-  b = psub(psub(psub(e, b), b), b);  // e - 3b
-  hi = _mm256_permutevar8x32_epi32(padd(b, bias), permute_idx);
-  lo = _mm256_slli_epi64(hi, 52);
-  hi = _mm256_slli_epi64(_mm256_srli_epi64(hi, 32), 52);
-  c = _mm512_castsi512_pd(_mm512_inserti64x4(_mm512_castsi256_si512(lo), hi, 1));
-  out = pmul(out, c);  // a * 2^e
-  return out;
+  return pmul(pmul(pmul(pmul(a, c1), c1), c1), c2);  // a * 2^e
 }
 
 #ifdef EIGEN_VECTORIZE_AVX512DQ
@@ -1620,22 +1616,22 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet16f, 16>& kernel) {
   __m512 T13 = _mm512_unpackhi_ps(kernel.packet[12], kernel.packet[13]);
   __m512 T14 = _mm512_unpacklo_ps(kernel.packet[14], kernel.packet[15]);
   __m512 T15 = _mm512_unpackhi_ps(kernel.packet[14], kernel.packet[15]);
-  __m512 S0 = _mm512_shuffle_ps(T0, T2, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S1 = _mm512_shuffle_ps(T0, T2, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S2 = _mm512_shuffle_ps(T1, T3, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S3 = _mm512_shuffle_ps(T1, T3, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S4 = _mm512_shuffle_ps(T4, T6, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S5 = _mm512_shuffle_ps(T4, T6, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S6 = _mm512_shuffle_ps(T5, T7, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S7 = _mm512_shuffle_ps(T5, T7, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S8 = _mm512_shuffle_ps(T8, T10, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S9 = _mm512_shuffle_ps(T8, T10, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S10 = _mm512_shuffle_ps(T9, T11, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S11 = _mm512_shuffle_ps(T9, T11, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S12 = _mm512_shuffle_ps(T12, T14, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S13 = _mm512_shuffle_ps(T12, T14, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S14 = _mm512_shuffle_ps(T13, T15, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S15 = _mm512_shuffle_ps(T13, T15, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S0 = EIGEN_AVX512_SHUFFLE_PS(T0, T2, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S1 = EIGEN_AVX512_SHUFFLE_PS(T0, T2, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S2 = EIGEN_AVX512_SHUFFLE_PS(T1, T3, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S3 = EIGEN_AVX512_SHUFFLE_PS(T1, T3, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S4 = EIGEN_AVX512_SHUFFLE_PS(T4, T6, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S5 = EIGEN_AVX512_SHUFFLE_PS(T4, T6, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S6 = EIGEN_AVX512_SHUFFLE_PS(T5, T7, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S7 = EIGEN_AVX512_SHUFFLE_PS(T5, T7, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S8 = EIGEN_AVX512_SHUFFLE_PS(T8, T10, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S9 = EIGEN_AVX512_SHUFFLE_PS(T8, T10, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S10 = EIGEN_AVX512_SHUFFLE_PS(T9, T11, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S11 = EIGEN_AVX512_SHUFFLE_PS(T9, T11, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S12 = EIGEN_AVX512_SHUFFLE_PS(T12, T14, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S13 = EIGEN_AVX512_SHUFFLE_PS(T12, T14, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S14 = EIGEN_AVX512_SHUFFLE_PS(T13, T15, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S15 = EIGEN_AVX512_SHUFFLE_PS(T13, T15, _MM_SHUFFLE(3, 2, 3, 2));
 
   EIGEN_EXTRACT_8f_FROM_16f(S0, S0);
   EIGEN_EXTRACT_8f_FROM_16f(S1, S1);
@@ -1761,10 +1757,10 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet16f, 4>& kernel) {
   __m512 T2 = _mm512_unpacklo_ps(kernel.packet[2], kernel.packet[3]);
   __m512 T3 = _mm512_unpackhi_ps(kernel.packet[2], kernel.packet[3]);
 
-  __m512 S0 = _mm512_shuffle_ps(T0, T2, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S1 = _mm512_shuffle_ps(T0, T2, _MM_SHUFFLE(3, 2, 3, 2));
-  __m512 S2 = _mm512_shuffle_ps(T1, T3, _MM_SHUFFLE(1, 0, 1, 0));
-  __m512 S3 = _mm512_shuffle_ps(T1, T3, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S0 = EIGEN_AVX512_SHUFFLE_PS(T0, T2, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S1 = EIGEN_AVX512_SHUFFLE_PS(T0, T2, _MM_SHUFFLE(3, 2, 3, 2));
+  __m512 S2 = EIGEN_AVX512_SHUFFLE_PS(T1, T3, _MM_SHUFFLE(1, 0, 1, 0));
+  __m512 S3 = EIGEN_AVX512_SHUFFLE_PS(T1, T3, _MM_SHUFFLE(3, 2, 3, 2));
 
   EIGEN_EXTRACT_8f_FROM_16f(S0, S0);
   EIGEN_EXTRACT_8f_FROM_16f(S1, S1);
@@ -1967,7 +1963,8 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet8l, 8>& kernel) {
 #define PACK_OUTPUT_I32_2(OUTPUT, INPUT, INDEX, STRIDE) \
   EIGEN_INSERT_8i_INTO_16i(OUTPUT[INDEX], INPUT[2 * INDEX], INPUT[2 * INDEX + STRIDE]);
 
-#define SHUFFLE_EPI32(A, B, M) _mm512_castps_si512(_mm512_shuffle_ps(_mm512_castsi512_ps(A), _mm512_castsi512_ps(B), M))
+#define SHUFFLE_EPI32(A, B, M) \
+  _mm512_castps_si512(EIGEN_AVX512_SHUFFLE_PS(_mm512_castsi512_ps(A), _mm512_castsi512_ps(B), M))
 
 EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet16i, 16>& kernel) {
   __m512i T0 = _mm512_unpacklo_epi32(kernel.packet[0], kernel.packet[1]);
@@ -2557,9 +2554,7 @@ EIGEN_STRONG_INLINE void ptranspose(PacketBlock<Packet16h, 4>& kernel) {
 #endif  // EIGEN_VECTORIZE_AVX512FP16
 
 template <>
-struct is_arithmetic<Packet16bf> {
-  enum { value = true };
-};
+struct is_arithmetic<Packet16bf> : std::true_type {};
 
 template <>
 struct packet_traits<bfloat16> : default_packet_traits {
@@ -3131,47 +3126,47 @@ EIGEN_STRONG_INLINE Packet8s pnegate(const Packet8s& a) {
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet32s parithmetic_shift_right(Packet32s a) {
+EIGEN_STRONG_INLINE Packet32s parithmetic_shift_right(const Packet32s& a) {
   return _mm512_srai_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16s parithmetic_shift_right(Packet16s a) {
+EIGEN_STRONG_INLINE Packet16s parithmetic_shift_right(const Packet16s& a) {
   return _mm256_srai_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8s parithmetic_shift_right(Packet8s a) {
+EIGEN_STRONG_INLINE Packet8s parithmetic_shift_right(const Packet8s& a) {
   return _mm_srai_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet32s plogical_shift_left(Packet32s a) {
+EIGEN_STRONG_INLINE Packet32s plogical_shift_left(const Packet32s& a) {
   return _mm512_slli_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16s plogical_shift_left(Packet16s a) {
+EIGEN_STRONG_INLINE Packet16s plogical_shift_left(const Packet16s& a) {
   return _mm256_slli_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8s plogical_shift_left(Packet8s a) {
+EIGEN_STRONG_INLINE Packet8s plogical_shift_left(const Packet8s& a) {
   return _mm_slli_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet32s plogical_shift_right(Packet32s a) {
+EIGEN_STRONG_INLINE Packet32s plogical_shift_right(const Packet32s& a) {
   return _mm512_srli_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet16s plogical_shift_right(Packet16s a) {
+EIGEN_STRONG_INLINE Packet16s plogical_shift_right(const Packet16s& a) {
   return _mm256_srli_epi16(a, N);
 }
 
 template <int N>
-EIGEN_STRONG_INLINE Packet8s plogical_shift_right(Packet8s a) {
+EIGEN_STRONG_INLINE Packet8s plogical_shift_right(const Packet8s& a) {
   return _mm_srli_epi16(a, N);
 }
 

@@ -4,6 +4,8 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_ORDERINGMETHODS_MODULE_H
 #define EIGEN_ORDERINGMETHODS_MODULE_H
@@ -53,7 +55,7 @@
  *
  * \note Some of these methods (like AMD or METIS), need the sparsity pattern
  * of the input matrix to be symmetric. When the matrix is structurally unsymmetric,
- * Eigen computes internally the pattern of \f$A^T*A\f$ before calling the method.
+ * Eigen computes internally the pattern of \f$A^T+A\f$ before calling the method.
  * If your matrix is already symmetric (at least in structure), you can avoid that
  * by calling the method with a SelfAdjointView type.
  *

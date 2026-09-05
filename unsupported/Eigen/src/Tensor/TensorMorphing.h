@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_MORPHING_H
-#define EIGEN_CXX11_TENSOR_TENSOR_MORPHING_H
+#ifndef EIGEN_TENSOR_TENSOR_MORPHING_H
+#define EIGEN_TENSOR_TENSOR_MORPHING_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,8 +23,6 @@ struct traits<TensorReshapingOp<NewDimensions, XprType>> : public traits<XprType
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = array_size<NewDimensions>::value;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -34,16 +33,10 @@ struct eval<TensorReshapingOp<NewDimensions, XprType>, Eigen::Dense> {
   typedef const TensorReshapingOp<NewDimensions, XprType> EIGEN_DEVICE_REF type;
 };
 
-template <typename NewDimensions, typename XprType>
-struct nested<TensorReshapingOp<NewDimensions, XprType>, 1,
-              typename eval<TensorReshapingOp<NewDimensions, XprType>>::type> {
-  typedef TensorReshapingOp<NewDimensions, XprType> type;
-};
-
 }  // end namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor reshaping class.
  */
@@ -53,7 +46,7 @@ class TensorReshapingOp : public TensorBase<TensorReshapingOp<NewDimensions, Xpr
   typedef TensorBase<TensorReshapingOp<NewDimensions, XprType>, WriteAccessors> Base;
   typedef typename Eigen::internal::traits<TensorReshapingOp>::Scalar Scalar;
   typedef std::remove_const_t<typename XprType::CoeffReturnType> CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorReshapingOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorReshapingOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorReshapingOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorReshapingOp>::Index Index;
 
@@ -64,7 +57,7 @@ class TensorReshapingOp : public TensorBase<TensorReshapingOp<NewDimensions, Xpr
 
   EIGEN_DEVICE_FUNC const internal::remove_all_t<typename XprType::Nested>& expression() const { return m_xpr; }
 
-  EIGEN_TENSOR_INHERIT_ASSIGNMENT_OPERATORS(TensorReshapingOp)
+  EIGEN_INHERIT_ASSIGNMENT_OPERATORS(TensorReshapingOp)
 
  protected:
   typename XprType::Nested m_xpr;
@@ -169,7 +162,7 @@ struct TensorEvaluator<const TensorReshapingOp<NewDimensions, ArgType>, Device> 
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
                                                           bool /*root_of_expr_ast*/ = false) const {
-    eigen_assert(m_impl.data() != NULL);
+    eigen_assert(m_impl.data() != nullptr);
     eigen_assert((kind == Runtime) || (kind == OneByN && desc.dimensions()[0] == 1) ||
                  (kind == NByOne && desc.dimensions()[1] == 1));
 
@@ -235,7 +228,7 @@ struct TensorEvaluator<TensorReshapingOp<NewDimensions, ArgType>, Device>
 
   template <typename TensorBlock>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writeBlock(const TensorBlockDesc& desc, const TensorBlock& block) {
-    eigen_assert(this->m_impl.data() != NULL);
+    eigen_assert(this->m_impl.data() != nullptr);
 
     typedef typename TensorBlock::XprType TensorBlockExpr;
     typedef internal::TensorBlockAssignment<Scalar, TensorEvaluator::NumOutputDims, TensorBlockExpr, Index>
@@ -248,7 +241,7 @@ struct TensorEvaluator<TensorReshapingOp<NewDimensions, ArgType>, Device>
 };
 
 /** \class TensorSlicing
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor slicing class.
  *
@@ -261,8 +254,6 @@ struct traits<TensorSlicingOp<StartIndices, Sizes, XprType>> : public traits<Xpr
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = array_size<StartIndices>::value;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -273,12 +264,6 @@ struct eval<TensorSlicingOp<StartIndices, Sizes, XprType>, Eigen::Dense> {
   typedef const TensorSlicingOp<StartIndices, Sizes, XprType> EIGEN_DEVICE_REF type;
 };
 
-template <typename StartIndices, typename Sizes, typename XprType>
-struct nested<TensorSlicingOp<StartIndices, Sizes, XprType>, 1,
-              typename eval<TensorSlicingOp<StartIndices, Sizes, XprType>>::type> {
-  typedef TensorSlicingOp<StartIndices, Sizes, XprType> type;
-};
-
 }  // end namespace internal
 
 template <typename StartIndices, typename Sizes, typename XprType>
@@ -287,7 +272,7 @@ class TensorSlicingOp : public TensorBase<TensorSlicingOp<StartIndices, Sizes, X
   typedef TensorBase<TensorSlicingOp<StartIndices, Sizes, XprType>> Base;
   typedef typename Eigen::internal::traits<TensorSlicingOp>::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorSlicingOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorSlicingOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorSlicingOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorSlicingOp>::Index Index;
 
@@ -300,7 +285,7 @@ class TensorSlicingOp : public TensorBase<TensorSlicingOp<StartIndices, Sizes, X
 
   EIGEN_DEVICE_FUNC const internal::remove_all_t<typename XprType::Nested>& expression() const { return m_xpr; }
 
-  EIGEN_TENSOR_INHERIT_ASSIGNMENT_OPERATORS(TensorSlicingOp)
+  EIGEN_INHERIT_ASSIGNMENT_OPERATORS(TensorSlicingOp)
 
  protected:
   typename XprType::Nested m_xpr;
@@ -367,9 +352,7 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
     // slice offsets and sizes.
     IsAligned = false,
     PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
-    BlockAccess = TensorEvaluator<ArgType, Device>::BlockAccess &&
-                  // FIXME: Temporary workaround for bug in slicing of bool tensors.
-                  !internal::is_same<std::remove_const_t<Scalar>, bool>::value,
+    BlockAccess = TensorEvaluator<ArgType, Device>::BlockAccess,
     PreferBlockAccess = true,
     CoordAccess = false,
     RawAccess = false
@@ -395,32 +378,37 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
       }
     }
 
-    // No strides for scalars.
-    if (NumDims == 0) return;
+    initStrides(m_impl.dimensions(), op.sizes());
+  }
 
-    const typename TensorEvaluator<ArgType, Device>::Dimensions& input_dims = m_impl.dimensions();
-    const Sizes& output_dims = op.sizes();
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+  template <int ND = NumDims>
+  EIGEN_STRONG_INLINE std::enable_if_t<ND == 0, void> initStrides(
+      const typename TensorEvaluator<ArgType, Device>::Dimensions& /*input_dims*/, const Sizes& /*output_dims*/) {}
+
+  template <int ND = NumDims>
+  EIGEN_STRONG_INLINE std::enable_if_t<(ND > 0), void> initStrides(
+      const typename TensorEvaluator<ArgType, Device>::Dimensions& input_dims, const Sizes& output_dims) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_inputStrides[0] = 1;
-      for (int i = 1; i < NumDims; ++i) {
+      for (int i = 1; i < ND; ++i) {
         m_inputStrides[i] = m_inputStrides[i - 1] * input_dims[i - 1];
       }
 
       // Don't initialize m_fastOutputStrides[0] since it won't ever be accessed.
       m_outputStrides[0] = 1;
-      for (int i = 1; i < NumDims; ++i) {
+      for (int i = 1; i < ND; ++i) {
         m_outputStrides[i] = m_outputStrides[i - 1] * output_dims[i - 1];
         m_fastOutputStrides[i] = internal::TensorIntDivisor<Index>(m_outputStrides[i] > 0 ? m_outputStrides[i] : 1);
       }
     } else {
-      m_inputStrides[NumDims - 1] = 1;
-      for (int i = NumDims - 2; i >= 0; --i) {
+      m_inputStrides[ND - 1] = 1;
+      for (int i = ND - 2; i >= 0; --i) {
         m_inputStrides[i] = m_inputStrides[i + 1] * input_dims[i + 1];
       }
 
       // Don't initialize m_fastOutputStrides[NumDims-1] since it won't ever be accessed.
-      m_outputStrides[NumDims - 1] = 1;
-      for (int i = NumDims - 2; i >= 0; --i) {
+      m_outputStrides[ND - 1] = 1;
+      for (int i = ND - 2; i >= 0; --i) {
         m_outputStrides[i] = m_outputStrides[i + 1] * output_dims[i + 1];
         m_fastOutputStrides[i] = internal::TensorIntDivisor<Index>(m_outputStrides[i] > 0 ? m_outputStrides[i] : 1);
       }
@@ -430,34 +418,36 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
-    m_impl.evalSubExprsIfNeeded(NULL);
-    if (!NumTraits<std::remove_const_t<Scalar>>::RequireInitialization && data && m_impl.data()) {
-      Index contiguous_values = 1;
-      if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
-        for (int i = 0; i < NumDims; ++i) {
-          contiguous_values *= dimensions()[i];
-          if (dimensions()[i] != m_impl.dimensions()[i]) {
-            break;
+    m_impl.evalSubExprsIfNeeded(nullptr);
+    EIGEN_IF_CONSTEXPR (!NumTraits<std::remove_const_t<Scalar>>::RequireInitialization) {
+      if (data && m_impl.data()) {
+        Index contiguous_values = 1;
+        EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+          for (int i = 0; i < NumDims; ++i) {
+            contiguous_values *= dimensions()[i];
+            if (dimensions()[i] != m_impl.dimensions()[i]) {
+              break;
+            }
+          }
+        } else {
+          for (int i = NumDims - 1; i >= 0; --i) {
+            contiguous_values *= dimensions()[i];
+            if (dimensions()[i] != m_impl.dimensions()[i]) {
+              break;
+            }
           }
         }
-      } else {
-        for (int i = NumDims - 1; i >= 0; --i) {
-          contiguous_values *= dimensions()[i];
-          if (dimensions()[i] != m_impl.dimensions()[i]) {
-            break;
+        // Use memcpy if it's going to be faster than using the regular evaluation.
+        const internal::MemcpyTriggerForSlicing<Index, Device, BlockAccess> trigger(m_device);
+        if (trigger(internal::array_prod(dimensions()), contiguous_values)) {
+          EvaluatorPointerType src = (EvaluatorPointerType)m_impl.data();
+          for (Index i = 0; i < internal::array_prod(dimensions()); i += contiguous_values) {
+            Index offset = srcCoeff(i);
+            m_device.memcpy((void*)(m_device.get(data + i)), m_device.get(src + offset),
+                            contiguous_values * sizeof(Scalar));
           }
+          return false;
         }
-      }
-      // Use memcpy if it's going to be faster than using the regular evaluation.
-      const internal::MemcpyTriggerForSlicing<Index, Device, BlockAccess> trigger(m_device);
-      if (trigger(internal::array_prod(dimensions()), contiguous_values)) {
-        EvaluatorPointerType src = (EvaluatorPointerType)m_impl.data();
-        for (Index i = 0; i < internal::array_prod(dimensions()); i += contiguous_values) {
-          Index offset = srcCoeff(i);
-          m_device.memcpy((void*)(m_device.get(data + i)), m_device.get(src + offset),
-                          contiguous_values * sizeof(Scalar));
-        }
-        return false;
       }
     }
     return true;
@@ -492,7 +482,7 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
 
     Index inputIndices[] = {0, 0};
     Index indices[] = {index, index + packetSize - 1};
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       EIGEN_UNROLL_LOOP
       for (int i = NumDims - 1; i > 0; --i) {
         const Index idx0 = indices[0] / m_fastOutputStrides[i];
@@ -521,7 +511,8 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
       PacketReturnType rslt = m_impl.template packet<Unaligned>(inputIndices[0]);
       return rslt;
     } else {
-      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[packetSize];
+      EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+      std::remove_const_t<CoeffReturnType> values[packetSize];
       values[0] = m_impl.coeff(inputIndices[0]);
       values[packetSize - 1] = m_impl.coeff(inputIndices[1]);
       EIGEN_UNROLL_LOOP
@@ -555,13 +546,13 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
     typename Storage::Type result = constCast(m_impl.data());
     if (result) {
       Index offset = 0;
-      if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+      EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
         for (int i = 0; i < NumDims; ++i) {
           if (m_dimensions[i] != m_impl.dimensions()[i]) {
             offset += m_offsets[i] * m_inputStrides[i];
             for (int j = i + 1; j < NumDims; ++j) {
               if (m_dimensions[j] > 1) {
-                return NULL;
+                return nullptr;
               }
               offset += m_offsets[j] * m_inputStrides[j];
             }
@@ -574,7 +565,7 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
             offset += m_offsets[i] * m_inputStrides[i];
             for (int j = i - 1; j >= 0; --j) {
               if (m_dimensions[j] > 1) {
-                return NULL;
+                return nullptr;
               }
               offset += m_offsets[j] * m_inputStrides[j];
             }
@@ -584,15 +575,23 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
       }
       return result + offset;
     }
-    return NULL;
+    return nullptr;
   }
 
  protected:
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeff(Index index) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeff(Index index) const { return srcCoeffImpl(index); }
+
+  template <int ND = NumDims>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE std::enable_if_t<ND == 0, Index> srcCoeffImpl(Index /*index*/) const {
+    return 0;
+  }
+
+  template <int ND = NumDims>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE std::enable_if_t<(ND > 0), Index> srcCoeffImpl(Index index) const {
     Index inputIndex = 0;
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       EIGEN_UNROLL_LOOP
-      for (int i = NumDims - 1; i > 0; --i) {
+      for (int i = ND - 1; i > 0; --i) {
         const Index idx = index / m_fastOutputStrides[i];
         inputIndex += (idx + m_offsets[i]) * m_inputStrides[i];
         index -= idx * m_outputStrides[i];
@@ -600,12 +599,12 @@ struct TensorEvaluator<const TensorSlicingOp<StartIndices, Sizes, ArgType>, Devi
       inputIndex += (index + m_offsets[0]);
     } else {
       EIGEN_UNROLL_LOOP
-      for (int i = 0; i < NumDims - 1; ++i) {
+      for (int i = 0; i < ND - 1; ++i) {
         const Index idx = index / m_fastOutputStrides[i];
         inputIndex += (idx + m_offsets[i]) * m_inputStrides[i];
         index -= idx * m_outputStrides[i];
       }
-      inputIndex += (index + m_offsets[NumDims - 1]);
+      inputIndex += (index + m_offsets[ND - 1]);
     }
     return inputIndex;
   }
@@ -671,7 +670,7 @@ struct TensorEvaluator<TensorSlicingOp<StartIndices, Sizes, ArgType>, Device>
     const int packetSize = PacketType<CoeffReturnType, Device>::size;
     Index inputIndices[] = {0, 0};
     Index indices[] = {index, index + packetSize - 1};
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       EIGEN_UNROLL_LOOP
       for (int i = NumDims - 1; i > 0; --i) {
         const Index idx0 = indices[0] / this->m_fastOutputStrides[i];
@@ -699,7 +698,8 @@ struct TensorEvaluator<TensorSlicingOp<StartIndices, Sizes, ArgType>, Device>
     if (inputIndices[1] - inputIndices[0] == packetSize - 1) {
       this->m_impl.template writePacket<StoreMode>(inputIndices[0], x);
     } else {
-      EIGEN_ALIGN_MAX CoeffReturnType values[packetSize];
+      EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+      CoeffReturnType values[packetSize];
       internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
       this->m_impl.coeffRef(inputIndices[0]) = values[0];
       this->m_impl.coeffRef(inputIndices[1]) = values[packetSize - 1];
@@ -724,8 +724,6 @@ struct traits<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprTyp
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = array_size<StartIndices>::value;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -734,12 +732,6 @@ struct traits<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprTyp
 template <typename StartIndices, typename StopIndices, typename Strides, typename XprType>
 struct eval<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType>, Eigen::Dense> {
   typedef const TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType> EIGEN_DEVICE_REF type;
-};
-
-template <typename StartIndices, typename StopIndices, typename Strides, typename XprType>
-struct nested<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType>, 1,
-              typename eval<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType>>::type> {
-  typedef TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType> type;
 };
 
 }  // end namespace internal
@@ -751,7 +743,7 @@ class TensorStridingSlicingOp
   typedef TensorBase<TensorStridingSlicingOp<StartIndices, StopIndices, Strides, XprType>> Base;
   typedef typename internal::traits<TensorStridingSlicingOp>::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename internal::nested<TensorStridingSlicingOp>::type Nested;
+  typedef typename internal::ref_selector<TensorStridingSlicingOp>::type Nested;
   typedef typename internal::traits<TensorStridingSlicingOp>::StorageKind StorageKind;
   typedef typename internal::traits<TensorStridingSlicingOp>::Index Index;
 
@@ -765,7 +757,7 @@ class TensorStridingSlicingOp
 
   EIGEN_DEVICE_FUNC const internal::remove_all_t<typename XprType::Nested>& expression() const { return m_xpr; }
 
-  EIGEN_TENSOR_INHERIT_ASSIGNMENT_OPERATORS(TensorStridingSlicingOp)
+  EIGEN_INHERIT_ASSIGNMENT_OPERATORS(TensorStridingSlicingOp)
 
  protected:
   typename XprType::Nested m_xpr;
@@ -783,6 +775,7 @@ struct TensorEvaluator<const TensorStridingSlicingOp<StartIndices, StopIndices, 
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
   typedef StorageMemory<CoeffReturnType, Device> Storage;
   typedef typename Storage::Type EvaluatorPointerType;
   typedef Strides Dimensions;
@@ -792,14 +785,21 @@ struct TensorEvaluator<const TensorStridingSlicingOp<StartIndices, StopIndices, 
     // Alignment can't be guaranteed at compile time since it depends on the
     // slice offsets and sizes.
     IsAligned = false,
-    PacketAccess = false,
-    BlockAccess = false,
-    PreferBlockAccess = TensorEvaluator<ArgType, Device>::PreferBlockAccess,
+    PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
+    // Blocks are materialized from the nested evaluator's raw buffer with one
+    // (possibly strided or reversed) line copy per inner run.
+    BlockAccess = TensorEvaluator<ArgType, Device>::RawAccess,
+    PreferBlockAccess = true,
     RawAccess = false
   };
 
+  typedef std::remove_const_t<Scalar> ScalarNoConst;
+
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  typedef internal::TensorBlockScratchAllocator<Device> TensorBlockScratch;
+
+  typedef typename internal::TensorMaterializedBlock<ScalarNoConst, NumDims, Layout, Index> TensorBlock;
   //===--------------------------------------------------------------------===//
 
   EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
@@ -839,7 +839,7 @@ struct TensorEvaluator<const TensorStridingSlicingOp<StartIndices, StopIndices, 
 
     Strides output_dims = m_dimensions;
 
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       m_inputStrides[0] = m_strides[0];
       m_offsets[0] = startIndicesClamped[0];
       Index previousDimProduct = 1;
@@ -876,7 +876,7 @@ struct TensorEvaluator<const TensorStridingSlicingOp<StartIndices, StopIndices, 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType) {
-    m_impl.evalSubExprsIfNeeded(NULL);
+    m_impl.evalSubExprsIfNeeded(nullptr);
     return true;
   }
 
@@ -890,31 +890,143 @@ struct TensorEvaluator<const TensorStridingSlicingOp<StartIndices, StopIndices, 
     }
   }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
-    return m_impl.costPerCoeff(vectorized) + TensorOpCost(0, 0, m_is_identity ? 1 : NumDims);
+  template <int LoadMode>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnType packet(Index index) const {
+    EIGEN_STATIC_ASSERT((PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
+    eigen_assert(index + PacketSize - 1 < internal::array_prod(dimensions()));
+
+    if (m_is_identity) {
+      return m_impl.template packet<LoadMode>(index);
+    }
+
+    // A packet that stays inside one inner-most slice is an arithmetic
+    // progression in the input: compute the index mapping once per packet and
+    // step by the inner stride, instead of once per coefficient. With inner
+    // stride +/-1 the progression is a contiguous run served by a single
+    // packet load. The two-endpoint distance test used by TensorSlicingOp and
+    // TensorStridingOp is unsound here: with a negative inner stride the
+    // interior of a packet can be permuted even though the endpoints are
+    // PacketSize-1 apart.
+    constexpr int inner_dim = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ? 0 : NumDims - 1;
+    const Index inner_size = m_dimensions[inner_dim];
+    Index inner_pos;
+    const Index base = srcCoeffInner(index, inner_pos);
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+    std::remove_const_t<CoeffReturnType> values[PacketSize];
+    if (inner_pos + PacketSize <= inner_size) {
+      const Index inner_stride = m_inputStrides[inner_dim];
+      if (inner_stride == 1) {
+        return m_impl.template packet<Unaligned>(base);
+      } else EIGEN_IF_CONSTEXPR (!std::is_same<internal::remove_all_t<Device>, SyclDevice>::value) {
+        // SYCL packets do not implement preverse; use the scalar gather below.
+        if (inner_stride == -1) {
+          return internal::preverse(m_impl.template packet<Unaligned>(base - (PacketSize - 1)));
+        }
+      }
+      EIGEN_UNROLL_LOOP
+      for (int i = 0; i < PacketSize; ++i) {
+        values[i] = m_impl.coeff(base + i * inner_stride);
+      }
+      return internal::pload<PacketReturnType>(values);
+    }
+
+    // The packet crosses an inner-slice boundary: assemble it scalar by
+    // scalar.
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < PacketSize; ++i) {
+      values[i] = coeff(index + i);
+    }
+    return internal::pload<PacketReturnType>(values);
   }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename Storage::Type data() const { return NULL; }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
+    constexpr int inner_dim = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ? 0 : NumDims - 1;
+    const bool packets_stay_in_inner =
+        m_is_identity || (m_dimensions[inner_dim] >= PacketSize && m_dimensions[inner_dim] % PacketSize == 0);
+    const Index inner_stride = m_inputStrides[inner_dim];
+    const bool packetizes_arg =
+        m_is_identity || (packets_stay_in_inner &&
+                          (inner_stride == 1 ||
+                           (inner_stride == -1 && !std::is_same<internal::remove_all_t<Device>, SyclDevice>::value)));
+    return m_impl.costPerCoeff(vectorized && packetizes_arg) +
+           TensorOpCost(0, 0, m_is_identity ? 1 : NumDims, vectorized && packets_stay_in_inner, PacketSize);
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    // Blocks materialize into scratch and are then re-read by the consumer, so
+    // the round trip must stay cache-resident: L1-sized blocks (as in
+    // TensorShuffling) make the extra pass nearly free, while LLC-sized blocks
+    // cost a measured ~40% on cheap coefficient-wise consumers of a
+    // larger-than-cache slice.
+    const size_t target_size = m_device.firstLevelCacheSize();
+    constexpr int inner_dim = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ? 0 : NumDims - 1;
+    // A non-unit (or negative) inner stride turns the per-line copies into
+    // gathers or reversed reads the default cost model does not see in bytes
+    // loaded and stored; surface that like TensorReverse does.
+    const double gather_cost = m_inputStrides[inner_dim] == 1 ? 0.0 : 24.0;
+    return internal::TensorBlockResourceRequirements::skewed<Scalar>(target_size).addCostPerCoeff({0, 0, gather_cost});
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool root_of_expr_ast = false) const {
+    eigen_assert(m_impl.data() != nullptr);
+
+    if (m_is_identity) {
+      return TensorBlock::materialize(m_impl.data(), m_impl.dimensions(), desc, scratch);
+    }
+
+    typedef internal::TensorBlockIO<ScalarNoConst, Index, NumDims, Layout> TensorBlockIO;
+    typedef typename TensorBlockIO::Dst TensorBlockIODst;
+    typedef typename TensorBlockIO::Src TensorBlockIOSrc;
+
+    const typename TensorBlock::Storage block_storage =
+        TensorBlock::prepareStorage(desc, scratch, /*allow_strided_storage=*/root_of_expr_ast);
+
+    // Per output dimension, one step moves the input by the (possibly
+    // negative) dilated stride; the block's first element sits at the mapped
+    // offset of the block descriptor's origin.
+    typename TensorBlockIO::Dimensions input_strides(m_inputStrides);
+    TensorBlockIOSrc src(input_strides, m_impl.data(), srcCoeff(desc.offset()));
+
+    TensorBlockIODst dst(block_storage.dimensions(), block_storage.strides(), block_storage.data());
+
+    TensorBlockIO::Copy(dst, src);
+    return block_storage.AsTensorMaterializedBlock();
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename Storage::Type data() const { return nullptr; }
 
  protected:
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeff(Index index) const {
+  // Computes the input index of output index `index` and, as a by-product of
+  // the same fast-divisor walk, the output's inner-dimension coordinate. The
+  // packet paths use the latter to test whether a whole packet stays inside
+  // one inner-most slice without spending an extra division on it.
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeffInner(Index index, Index& inner_pos) const {
     Index inputIndex = 0;
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       EIGEN_UNROLL_LOOP
-      for (int i = NumDims - 1; i >= 0; --i) {
+      for (int i = NumDims - 1; i > 0; --i) {
         const Index idx = index / m_fastOutputStrides[i];
         inputIndex += idx * m_inputStrides[i] + m_offsets[i];
         index -= idx * m_outputStrides[i];
       }
+      inputIndex += index * m_inputStrides[0] + m_offsets[0];
     } else {
       EIGEN_UNROLL_LOOP
-      for (int i = 0; i < NumDims; ++i) {
+      for (int i = 0; i < NumDims - 1; ++i) {
         const Index idx = index / m_fastOutputStrides[i];
         inputIndex += idx * m_inputStrides[i] + m_offsets[i];
         index -= idx * m_outputStrides[i];
       }
+      inputIndex += index * m_inputStrides[NumDims - 1] + m_offsets[NumDims - 1];
     }
+    inner_pos = index;
     return inputIndex;
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeff(Index index) const {
+    Index inner_pos;
+    return srcCoeffInner(index, inner_pos);
   }
 
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index clamp(Index value, Index min, Index max) {
@@ -948,24 +1060,27 @@ struct TensorEvaluator<TensorStridingSlicingOp<StartIndices, StopIndices, Stride
 
   enum {
     IsAligned = false,
-    PacketAccess = false,
-    BlockAccess = false,
-    PreferBlockAccess = TensorEvaluator<ArgType, Device>::PreferBlockAccess,
+    PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
+    // Blocks are scattered into the nested evaluator's raw buffer with one
+    // (possibly strided or reversed) line copy per inner run.
+    BlockAccess = TensorEvaluator<ArgType, Device>::RawAccess,
+    PreferBlockAccess = true,
     CoordAccess = TensorEvaluator<ArgType, Device>::CoordAccess,
     RawAccess = false
   };
-
-  //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
-  //===--------------------------------------------------------------------===//
-
-  EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device) : Base(op, device) {}
 
   typedef typename XprType::Index Index;
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
   typedef Strides Dimensions;
+  typedef std::remove_const_t<Scalar> ScalarNoConst;
+
+  //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  //===--------------------------------------------------------------------===//
+
+  EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device) : Base(op, device) {}
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType& coeffRef(Index index) const {
     if (this->m_is_identity) {
@@ -974,8 +1089,107 @@ struct TensorEvaluator<TensorStridingSlicingOp<StartIndices, StopIndices, Stride
       return this->m_impl.coeffRef(this->srcCoeff(index));
     }
   }
+
+  template <int StoreMode>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacket(Index index, const PacketReturnType& x) const {
+    EIGEN_STATIC_ASSERT((Base::PacketSize > 1), YOU_MADE_A_PROGRAMMING_MISTAKE)
+    eigen_assert(index + Base::PacketSize - 1 < internal::array_prod(this->dimensions()));
+
+    if (this->m_is_identity) {
+      this->m_impl.template writePacket<StoreMode>(index, x);
+      return;
+    }
+
+    // Mirrors packet() in the rvalue evaluator above: within one inner-most
+    // slice the packet is an arithmetic progression in the input, so the
+    // index mapping is computed once per packet; inner stride +/-1 becomes a
+    // single (possibly reversed) packet store.
+    constexpr int inner_dim = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ? 0 : NumDims - 1;
+    const Index inner_size = this->m_dimensions[inner_dim];
+    Index inner_pos;
+    const Index base = this->srcCoeffInner(index, inner_pos);
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+    CoeffReturnType values[Base::PacketSize];
+    if (inner_pos + Base::PacketSize <= inner_size) {
+      const Index inner_stride = this->m_inputStrides[inner_dim];
+      if (inner_stride == 1) {
+        this->m_impl.template writePacket<Unaligned>(base, x);
+        return;
+      } else EIGEN_IF_CONSTEXPR (!std::is_same<internal::remove_all_t<Device>, SyclDevice>::value) {
+        // SYCL packets do not implement preverse; use the scalar scatter below.
+        if (inner_stride == -1) {
+          this->m_impl.template writePacket<Unaligned>(base - (Base::PacketSize - 1), internal::preverse(x));
+          return;
+        }
+      }
+      internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
+      EIGEN_UNROLL_LOOP
+      for (int i = 0; i < Base::PacketSize; ++i) {
+        this->m_impl.coeffRef(base + i * inner_stride) = values[i];
+      }
+      return;
+    }
+
+    internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < Base::PacketSize; ++i) {
+      this->coeffRef(index + i) = values[i];
+    }
+  }
+
+  template <typename TensorBlock>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writeBlock(const TensorBlockDesc& desc, const TensorBlock& block) {
+    eigen_assert(this->m_impl.data() != nullptr);
+
+    typedef internal::TensorBlockIO<ScalarNoConst, Index, NumDims, Layout> TensorBlockIO;
+    typedef typename TensorBlockIO::Dst TensorBlockIODst;
+    typedef typename TensorBlockIO::Src TensorBlockIOSrc;
+    typedef internal::TensorBlockAssignment<ScalarNoConst, NumDims, typename TensorBlock::XprType, Index>
+        TensorBlockAssignment;
+
+    const Scalar* block_buffer = block.data();
+
+    // Unlike TensorShuffling this op preserves dimension order, so with a unit
+    // inner stride a block expression can be assigned straight into the
+    // destination through the dilated outer strides, skipping the
+    // materialize-into-temp pass below. TensorBlockAssignment requires exactly
+    // that unit inner stride.
+    constexpr int inner_dim = (static_cast<int>(Layout) == static_cast<int>(ColMajor)) ? 0 : NumDims - 1;
+    if (block_buffer == nullptr && this->m_inputStrides[inner_dim] == 1) {
+      const typename TensorBlockIO::Dimensions output_strides(this->m_inputStrides);
+      TensorBlockAssignment::Run(TensorBlockAssignment::target(desc.dimensions(), output_strides, this->m_impl.data(),
+                                                               this->srcCoeff(desc.offset())),
+                                 block.expr());
+      return;
+    }
+
+    const typename TensorBlockIO::Dimensions block_strides = internal::strides<Layout>(desc.dimensions());
+
+    // TODO(ezhulenev): TensorBlockIO should be able to read from any Eigen
+    // expression with coefficient and packet access as `src`.
+    void* mem = nullptr;
+    if (block_buffer == nullptr) {
+      mem = this->m_device.allocate(desc.size() * sizeof(Scalar));
+      ScalarNoConst* buf = static_cast<ScalarNoConst*>(mem);
+
+      TensorBlockAssignment::Run(TensorBlockAssignment::target(desc.dimensions(), block_strides, buf), block.expr());
+
+      block_buffer = buf;
+    }
+
+    TensorBlockIOSrc src(block_strides, block_buffer);
+
+    // Write through the (possibly negative) dilated strides.
+    typename TensorBlockIO::Dimensions output_strides(this->m_inputStrides);
+    TensorBlockIODst dst(desc.dimensions(), output_strides, this->m_impl.data(), this->srcCoeff(desc.offset()));
+
+    TensorBlockIO::Copy(dst, src);
+
+    // Deallocate temporary buffer used for the block materialization.
+    if (mem != nullptr) this->m_device.deallocate(mem);
+  }
 };
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_MORPHING_H
+#endif  // EIGEN_TENSOR_TENSOR_MORPHING_H

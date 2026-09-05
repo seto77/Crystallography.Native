@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_META_H
-#define EIGEN_CXX11_TENSOR_TENSOR_META_H
+#ifndef EIGEN_TENSOR_TENSOR_META_H
+#define EIGEN_TENSOR_TENSOR_META_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -49,7 +50,7 @@ struct PacketType : internal::packet_traits<Scalar> {
 };
 
 // For CUDA packet types when using a GpuDevice
-#if defined(EIGEN_USE_GPU) && defined(EIGEN_HAS_GPU_FP16) && defined(EIGEN_GPU_COMPILE_PHASE)
+#if defined(EIGEN_USE_GPU) && defined(EIGEN_GPU_COMPILE_PHASE)
 
 typedef ulonglong2 Packet4h2;
 template <>
@@ -206,13 +207,13 @@ struct Pair {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  U first;
-  V second;
+  U first{};
+  V second{};
 
   typedef U first_type;
   typedef V second_type;
 
-  constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Pair() : first(), second() {}
+  constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Pair() = default;
 
   constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Pair(const U& f, const V& s) : first(f), second(s) {}
 
@@ -225,7 +226,7 @@ struct Pair {
 
 template <typename U, typename V>
 constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool operator==(const Pair<U, V>& x, const Pair<U, V>& y) {
-  return (x.first == y.first && x.second == y.second);
+  return x.first == y.first && x.second == y.second;
 }
 
 template <typename U, typename V>
@@ -236,7 +237,7 @@ constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool operator!=(const Pair<U, V>
 // Can't use std::pairs on cuda devices
 template <typename Idx>
 struct IndexPair {
-  constexpr EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE IndexPair() : first(0), second(0) {}
+  constexpr EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE IndexPair() = default;
   constexpr EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE IndexPair(Idx f, Idx s) : first(f), second(s) {}
 
   EIGEN_DEVICE_FUNC void set(IndexPair<Idx> val) {
@@ -244,48 +245,57 @@ struct IndexPair {
     second = val.second;
   }
 
-  Idx first;
-  Idx second;
+  Idx first = Idx(0);
+  Idx second = Idx(0);
 };
 
 namespace internal {
 
 template <typename IndexType, typename Index, Index First, Index... Is>
 constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE array<Index, 1 + sizeof...(Is)> customIndices2Array(
-    IndexType& idx, numeric_list<Index, First, Is...>) {
+    IndexType& idx, std::integer_sequence<Index, First, Is...>) {
   return {static_cast<Index>(idx[First]), static_cast<Index>(idx[Is])...};
 }
 template <typename IndexType, typename Index>
-constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE array<Index, 0> customIndices2Array(IndexType&, numeric_list<Index>) {
+constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE array<Index, 0> customIndices2Array(IndexType&,
+                                                                                    std::integer_sequence<Index>) {
   return array<Index, 0>();
 }
 
 /** Make an array (for index/dimensions) out of a custom index */
 template <typename Index, std::size_t NumIndices, typename IndexType>
 constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE array<Index, NumIndices> customIndices2Array(IndexType& idx) {
-  return customIndices2Array(idx, typename gen_numeric_list<Index, NumIndices>::type{});
+  return customIndices2Array(idx, std::make_integer_sequence<Index, NumIndices>{});
 }
 
-template <typename B, typename D>
-struct is_base_of {
-  typedef char (&yes)[1];
-  typedef char (&no)[2];
+/** \internal Whether converting \a index to \a Index preserves its value.
+ *
+ * The round trip catches truncation and the sign comparison catches a same-width unsigned value reinterpreted as
+ * negative, which round trips exactly. Both tests compare operands of one type, unlike a bound check against
+ * NumTraits<Index>::highest(), which mixes signedness whenever \a T is unsigned. Types that are not built-in
+ * integers reach \a Index through their own conversion operator and are left unchecked.
+ */
+template <typename Index, typename T,
+          std::enable_if_t<std::is_integral<T>::value && std::is_integral<Index>::value, bool> = true>
+constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool index_fits(T index) {
+  return static_cast<T>(static_cast<Index>(index)) == index &&
+         (numext::signbit(static_cast<Index>(index)) == Index(0)) == (numext::signbit(index) == T(0));
+}
 
-  template <typename BB, typename DD>
-  struct Host {
-    operator BB*() const;
-    operator DD*();
-  };
+template <typename Index, typename T,
+          std::enable_if_t<!(std::is_integral<T>::value && std::is_integral<Index>::value), bool> = true>
+constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool index_fits(const T&) {
+  return true;
+}
 
-  template <typename T>
-  static yes check(D*, T);
-  static no check(B*, int);
-
-  static constexpr bool value = sizeof(check(Host<B, D>(), int())) == sizeof(yes);
-};
+/** \internal Whether every index in the pack converts to \a Index without changing value. */
+template <typename Index, typename... IndexTypes>
+constexpr EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool indices_fit(IndexTypes... indices) {
+  return all(index_fits<Index>(indices)...);
+}
 
 }  // namespace internal
 
 }  // namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_META_H
+#endif  // EIGEN_TENSOR_TENSOR_META_H

@@ -6,9 +6,10 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
-#ifndef EIGEN_CXX11_TENSOR_TENSOR_SCAN_H
-#define EIGEN_CXX11_TENSOR_TENSOR_SCAN_H
+#ifndef EIGEN_TENSOR_TENSOR_SCAN_H
+#define EIGEN_TENSOR_TENSOR_SCAN_H
 
 // IWYU pragma: private
 #include "./InternalHeaderCheck.h"
@@ -22,8 +23,6 @@ struct traits<TensorScanOp<Op, XprType> > : public traits<XprType> {
   typedef typename XprType::Scalar Scalar;
   typedef traits<XprType> XprTraits;
   typedef typename XprTraits::StorageKind StorageKind;
-  typedef typename XprType::Nested Nested;
-  typedef std::remove_reference_t<Nested> Nested_;
   static constexpr int NumDimensions = XprTraits::NumDimensions;
   static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
@@ -34,14 +33,10 @@ struct eval<TensorScanOp<Op, XprType>, Eigen::Dense> {
   typedef const TensorScanOp<Op, XprType>& type;
 };
 
-template <typename Op, typename XprType>
-struct nested<TensorScanOp<Op, XprType>, 1, typename eval<TensorScanOp<Op, XprType> >::type> {
-  typedef TensorScanOp<Op, XprType> type;
-};
 }  // end namespace internal
 
 /**
- * \ingroup CXX11_Tensor_Module
+ * \ingroup Tensor_Module
  *
  * \brief Tensor scan class.
  */
@@ -51,7 +46,7 @@ class TensorScanOp : public TensorBase<TensorScanOp<Op, XprType>, ReadOnlyAccess
   typedef typename Eigen::internal::traits<TensorScanOp>::Scalar Scalar;
   typedef typename Eigen::NumTraits<Scalar>::Real RealScalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
-  typedef typename Eigen::internal::nested<TensorScanOp>::type Nested;
+  typedef typename Eigen::internal::ref_selector<TensorScanOp>::type Nested;
   typedef typename Eigen::internal::traits<TensorScanOp>::StorageKind StorageKind;
   typedef typename Eigen::internal::traits<TensorScanOp>::Index Index;
 
@@ -285,14 +280,14 @@ struct ScanLauncher<Self, Reducer, ThreadPoolDevice, Vectorize> {
           [=](Index blk_size) { return AdjustBlockSize(inner_block_size * sizeof(Scalar), blk_size); },
           [&](Index first, Index last) {
             for (Index idx1 = first; idx1 < last; ++idx1) {
-              ReduceBlock<Self, Vectorize, /*Parallelize=*/false> block_reducer;
+              ReduceBlock<Self, Vectorize, /*Parallel=*/false> block_reducer;
               block_reducer(self, idx1 * inner_block_size, data);
             }
           });
     } else {
       // Parallelize over inner packets/scalars dimensions when the reduction
       // axis is not an inner dimension.
-      ReduceBlock<Self, Vectorize, /*Parallelize=*/true> block_reducer;
+      ReduceBlock<Self, Vectorize, /*Parallel=*/true> block_reducer;
       for (Index idx1 = 0; idx1 < total_size; idx1 += self.stride() * self.size()) {
         block_reducer(self, idx1, data);
       }
@@ -365,14 +360,21 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
   enum {
     IsAligned = false,
     PacketAccess = (PacketType<CoeffReturnType, Device>::size > 1),
-    BlockAccess = false,
+    // Scan eagerly materializes its result into m_output; once that buffer
+    // exists, exposing block access is just a wrapper around it. Leave
+    // PreferBlockAccess false so the executor still uses the cheaper
+    // raw/packet paths by default; the flag matters only when an outer
+    // expression calls block() directly.
+    BlockAccess = (NumDims > 0),
     PreferBlockAccess = false,
     CoordAccess = false,
     RawAccess = true
   };
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
-  typedef internal::TensorBlockNotImplemented TensorBlock;
+  typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
+  typedef internal::TensorBlockScratchAllocator<Device> TensorBlockScratch;
+  typedef typename internal::TensorMaterializedBlock<Scalar, NumDims, Layout, Index> TensorBlock;
   //===--------------------------------------------------------------------===//
 
   EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
@@ -383,14 +385,14 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
         m_size(m_impl.dimensions()[op.axis()]),
         m_stride(1),
         m_consume_dim(op.axis()),
-        m_output(NULL) {
+        m_output(nullptr) {
     // Accumulating a scalar isn't supported.
     EIGEN_STATIC_ASSERT((NumDims > 0), YOU_MADE_A_PROGRAMMING_MISTAKE);
     eigen_assert(op.axis() >= 0 && op.axis() < NumDims);
 
     // Compute stride of scan axis
     const Dimensions& dims = m_impl.dimensions();
-    if (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
       for (int i = 0; i < op.axis(); ++i) {
         m_stride = m_stride * dims[i];
       }
@@ -423,7 +425,7 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Device& device() const { return m_device; }
 
   EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
-    m_impl.evalSubExprsIfNeeded(NULL);
+    m_impl.evalSubExprsIfNeeded(nullptr);
     internal::ScanLauncher<Self, Op, Device> launcher;
     if (data) {
       launcher(*this, data);
@@ -442,6 +444,16 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
     return internal::ploadt<PacketReturnType, LoadMode>(m_output + index);
   }
 
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    return internal::TensorBlockResourceRequirements::any();
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool /*root_of_expr_ast*/ = false) const {
+    eigen_assert(m_output != nullptr);
+    return TensorBlock::materialize(m_output, m_impl.dimensions(), desc, scratch);
+  }
+
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE EvaluatorPointerType data() const { return m_output; }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType coeff(Index index) const { return m_output[index]; }
@@ -453,7 +465,7 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
   EIGEN_STRONG_INLINE void cleanup() {
     if (m_output) {
       m_device.deallocate_temp(m_output);
-      m_output = NULL;
+      m_output = nullptr;
     }
     m_impl.cleanup();
   }
@@ -471,4 +483,4 @@ struct TensorEvaluator<const TensorScanOp<Op, ArgType>, Device> {
 
 }  // end namespace Eigen
 
-#endif  // EIGEN_CXX11_TENSOR_TENSOR_SCAN_H
+#endif  // EIGEN_TENSOR_TENSOR_SCAN_H

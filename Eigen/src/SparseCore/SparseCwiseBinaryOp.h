@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_SPARSE_CWISE_BINARY_OP_H
 #define EIGEN_SPARSE_CWISE_BINARY_OP_H
@@ -38,11 +39,11 @@ namespace Eigen {
 template <typename BinaryOp, typename Lhs, typename Rhs>
 class CwiseBinaryOpImpl<BinaryOp, Lhs, Rhs, Sparse> : public SparseMatrixBase<CwiseBinaryOp<BinaryOp, Lhs, Rhs> > {
  public:
-  typedef CwiseBinaryOp<BinaryOp, Lhs, Rhs> Derived;
-  typedef SparseMatrixBase<Derived> Base;
+  using Derived = CwiseBinaryOp<BinaryOp, Lhs, Rhs>;
+  using Base = SparseMatrixBase<Derived>;
   EIGEN_SPARSE_PUBLIC_INTERFACE(Derived)
-  EIGEN_STATIC_ASSERT(((!internal::is_same<typename internal::traits<Lhs>::StorageKind,
-                                           typename internal::traits<Rhs>::StorageKind>::value) ||
+  EIGEN_STATIC_ASSERT(((!std::is_same<typename internal::traits<Lhs>::StorageKind,
+                                      typename internal::traits<Rhs>::StorageKind>::value) ||
                        ((internal::evaluator<Lhs>::Flags & RowMajorBit) ==
                         (internal::evaluator<Rhs>::Flags & RowMajorBit))),
                       THE_STORAGE_ORDER_OF_BOTH_SIDES_MUST_MATCH)
@@ -58,18 +59,15 @@ namespace internal {
 //   if lhs(i,j) is null and rhs(i,j) is present, dst(i,j) = func(0, rhs(i,j))
 
 // Generic "sparse OP sparse"
-template <typename XprType>
-struct binary_sparse_evaluator;
-
 template <typename BinaryOp, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<BinaryOp, Lhs, Rhs>, IteratorBased, IteratorBased>
     : evaluator_base<CwiseBinaryOp<BinaryOp, Lhs, Rhs> > {
  protected:
-  typedef typename evaluator<Lhs>::InnerIterator LhsIterator;
-  typedef typename evaluator<Rhs>::InnerIterator RhsIterator;
-  typedef CwiseBinaryOp<BinaryOp, Lhs, Rhs> XprType;
-  typedef typename traits<XprType>::Scalar Scalar;
-  typedef typename XprType::StorageIndex StorageIndex;
+  using LhsIterator = typename evaluator<Lhs>::InnerIterator;
+  using RhsIterator = typename evaluator<Rhs>::InnerIterator;
+  using XprType = CwiseBinaryOp<BinaryOp, Lhs, Rhs>;
+  using Scalar = typename traits<XprType>::Scalar;
+  using StorageIndex = typename XprType::StorageIndex;
 
  public:
   class InnerIterator {
@@ -143,10 +141,10 @@ template <typename BinaryOp, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<BinaryOp, Lhs, Rhs>, IndexBased, IteratorBased>
     : evaluator_base<CwiseBinaryOp<BinaryOp, Lhs, Rhs> > {
  protected:
-  typedef typename evaluator<Rhs>::InnerIterator RhsIterator;
-  typedef CwiseBinaryOp<BinaryOp, Lhs, Rhs> XprType;
-  typedef typename traits<XprType>::Scalar Scalar;
-  typedef typename XprType::StorageIndex StorageIndex;
+  using RhsIterator = typename evaluator<Rhs>::InnerIterator;
+  using XprType = CwiseBinaryOp<BinaryOp, Lhs, Rhs>;
+  using Scalar = typename traits<XprType>::Scalar;
+  using StorageIndex = typename XprType::StorageIndex;
 
  public:
   class InnerIterator {
@@ -224,10 +222,10 @@ template <typename BinaryOp, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<BinaryOp, Lhs, Rhs>, IteratorBased, IndexBased>
     : evaluator_base<CwiseBinaryOp<BinaryOp, Lhs, Rhs> > {
  protected:
-  typedef typename evaluator<Lhs>::InnerIterator LhsIterator;
-  typedef CwiseBinaryOp<BinaryOp, Lhs, Rhs> XprType;
-  typedef typename traits<XprType>::Scalar Scalar;
-  typedef typename XprType::StorageIndex StorageIndex;
+  using LhsIterator = typename evaluator<Lhs>::InnerIterator;
+  using XprType = CwiseBinaryOp<BinaryOp, Lhs, Rhs>;
+  using Scalar = typename traits<XprType>::Scalar;
+  using StorageIndex = typename XprType::StorageIndex;
 
  public:
   class InnerIterator {
@@ -310,24 +308,24 @@ struct sparse_conjunction_evaluator;
 template <typename T1, typename T2, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>, IteratorBased, IteratorBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 // "dense .* sparse"
 template <typename T1, typename T2, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>, IndexBased, IteratorBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 // "sparse .* dense"
 template <typename T1, typename T2, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>, IteratorBased, IndexBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 
@@ -335,8 +333,8 @@ struct binary_evaluator<CwiseBinaryOp<scalar_product_op<T1, T2>, Lhs, Rhs>, Iter
 template <typename T1, typename T2, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_quotient_op<T1, T2>, Lhs, Rhs>, IteratorBased, IndexBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_quotient_op<T1, T2>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_quotient_op<T1, T2>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_quotient_op<T1, T2>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 
@@ -344,24 +342,24 @@ struct binary_evaluator<CwiseBinaryOp<scalar_quotient_op<T1, T2>, Lhs, Rhs>, Ite
 template <typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>, IteratorBased, IteratorBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 // "dense && sparse"
 template <typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>, IndexBased, IteratorBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 // "sparse && dense"
 template <typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>, IteratorBased, IndexBased>
     : sparse_conjunction_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs> XprType;
-  typedef sparse_conjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>;
+  using Base = sparse_conjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 
@@ -376,13 +374,13 @@ struct binary_evaluator<CwiseBinaryOp<scalar_boolean_and_op<bool>, Lhs, Rhs>, It
 template <typename XprType>
 struct sparse_conjunction_evaluator<XprType, IteratorBased, IteratorBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef typename evaluator<LhsArg>::InnerIterator LhsIterator;
-  typedef typename evaluator<RhsArg>::InnerIterator RhsIterator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using LhsIterator = typename evaluator<LhsArg>::InnerIterator;
+  using RhsIterator = typename evaluator<RhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -416,7 +414,7 @@ struct sparse_conjunction_evaluator<XprType, IteratorBased, IteratorBased> : eva
     EIGEN_STRONG_INLINE Index row() const { return m_lhsIter.row(); }
     EIGEN_STRONG_INLINE Index col() const { return m_lhsIter.col(); }
 
-    EIGEN_STRONG_INLINE operator bool() const { return (m_lhsIter && m_rhsIter); }
+    EIGEN_STRONG_INLINE operator bool() const { return m_lhsIter && m_rhsIter; }
 
    protected:
     LhsIterator m_lhsIter;
@@ -450,13 +448,13 @@ struct sparse_conjunction_evaluator<XprType, IteratorBased, IteratorBased> : eva
 template <typename XprType>
 struct sparse_conjunction_evaluator<XprType, IndexBased, IteratorBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef evaluator<LhsArg> LhsEvaluator;
-  typedef typename evaluator<RhsArg>::InnerIterator RhsIterator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using LhsEvaluator = evaluator<LhsArg>;
+  using RhsIterator = typename evaluator<RhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -515,13 +513,12 @@ struct sparse_conjunction_evaluator<XprType, IndexBased, IteratorBased> : evalua
 template <typename XprType>
 struct sparse_conjunction_evaluator<XprType, IteratorBased, IndexBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef typename evaluator<LhsArg>::InnerIterator LhsIterator;
-  typedef evaluator<RhsArg> RhsEvaluator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using LhsIterator = typename evaluator<LhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -592,13 +589,13 @@ struct sparse_disjunction_evaluator;
 template <typename XprType>
 struct sparse_disjunction_evaluator<XprType, IteratorBased, IteratorBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef typename evaluator<LhsArg>::InnerIterator LhsIterator;
-  typedef typename evaluator<RhsArg>::InnerIterator RhsIterator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using LhsIterator = typename evaluator<LhsArg>::InnerIterator;
+  using RhsIterator = typename evaluator<RhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -672,13 +669,12 @@ struct sparse_disjunction_evaluator<XprType, IteratorBased, IteratorBased> : eva
 template <typename XprType>
 struct sparse_disjunction_evaluator<XprType, IndexBased, IteratorBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef evaluator<LhsArg> LhsEvaluator;
-  typedef typename evaluator<RhsArg>::InnerIterator RhsIterator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using RhsIterator = typename evaluator<RhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -755,13 +751,12 @@ struct sparse_disjunction_evaluator<XprType, IndexBased, IteratorBased> : evalua
 template <typename XprType>
 struct sparse_disjunction_evaluator<XprType, IteratorBased, IndexBased> : evaluator_base<XprType> {
  protected:
-  typedef typename XprType::Functor BinaryOp;
-  typedef typename XprType::Lhs LhsArg;
-  typedef typename XprType::Rhs RhsArg;
-  typedef typename evaluator<LhsArg>::InnerIterator LhsIterator;
-  typedef evaluator<RhsArg> RhsEvaluator;
-  typedef typename XprType::StorageIndex StorageIndex;
-  typedef typename traits<XprType>::Scalar Scalar;
+  using BinaryOp = typename XprType::Functor;
+  using LhsArg = typename XprType::Lhs;
+  using RhsArg = typename XprType::Rhs;
+  using LhsIterator = typename evaluator<LhsArg>::InnerIterator;
+  using StorageIndex = typename XprType::StorageIndex;
+  using Scalar = typename traits<XprType>::Scalar;
 
  public:
   class InnerIterator {
@@ -838,8 +833,8 @@ struct sparse_disjunction_evaluator<XprType, IteratorBased, IndexBased> : evalua
 template <typename T1, typename T2, typename DupFunc, typename Lhs, typename Rhs>
 struct binary_evaluator<CwiseBinaryOp<scalar_disjunction_op<DupFunc, T1, T2>, Lhs, Rhs>, IteratorBased, IteratorBased>
     : sparse_disjunction_evaluator<CwiseBinaryOp<scalar_disjunction_op<DupFunc, T1, T2>, Lhs, Rhs> > {
-  typedef CwiseBinaryOp<scalar_disjunction_op<DupFunc, T1, T2>, Lhs, Rhs> XprType;
-  typedef sparse_disjunction_evaluator<XprType> Base;
+  using XprType = CwiseBinaryOp<scalar_disjunction_op<DupFunc, T1, T2>, Lhs, Rhs>;
+  using Base = sparse_disjunction_evaluator<XprType>;
   explicit binary_evaluator(const XprType& xpr) : Base(xpr) {}
 };
 }  // namespace internal

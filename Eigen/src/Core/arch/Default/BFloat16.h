@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+// SPDX-License-Identifier: Apache-2.0
 
 #ifndef EIGEN_BFLOAT16_H
 #define EIGEN_BFLOAT16_H
@@ -138,7 +139,7 @@ struct bfloat16_base : public __bfloat16_raw {
 
 // Class definition.
 struct bfloat16 : public bfloat16_impl::bfloat16_base {
-  typedef bfloat16_impl::__bfloat16_raw __bfloat16_raw;
+  using __bfloat16_raw = bfloat16_impl::__bfloat16_raw;
 
   EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR bfloat16() {}
 
@@ -150,7 +151,7 @@ struct bfloat16 : public bfloat16_impl::bfloat16_base {
   template <class T>
   explicit EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR bfloat16(T val)
       : bfloat16_impl::bfloat16_base(
-            bfloat16_impl::float_to_bfloat16_rtne<internal::is_integral<T>::value>(static_cast<float>(val))) {}
+            bfloat16_impl::float_to_bfloat16_rtne<std::is_integral<T>::value>(static_cast<float>(val))) {}
 
   explicit EIGEN_DEVICE_FUNC bfloat16(float f)
       : bfloat16_impl::bfloat16_base(bfloat16_impl::float_to_bfloat16_rtne<false>(f)) {}
@@ -166,7 +167,7 @@ struct bfloat16 : public bfloat16_impl::bfloat16_base {
   }
 };
 
-// TODO(majnemer): Get rid of this once we can rely on C++17 inline variables do
+// TODO(majnemer): Get rid of this once we can rely on C++17 inline variables to
 // solve the ODR issue.
 namespace bfloat16_impl {
 template <typename = void>
@@ -294,7 +295,7 @@ namespace bfloat16_impl {
 // of the functions, while the latter can only deal with one of them.
 #if !defined(EIGEN_HAS_NATIVE_BF16) || (EIGEN_COMP_CLANG && !EIGEN_COMP_NVCC)  // Emulate support for bfloat16 floats
 
-#if EIGEN_COMP_CLANG && defined(EIGEN_CUDACC)
+#if EIGEN_COMP_CLANG && defined(EIGEN_GPUCC)
 // We need to provide emulated *host-side* BF16 operators for clang.
 #pragma push_macro("EIGEN_DEVICE_FUNC")
 #undef EIGEN_DEVICE_FUNC
@@ -330,6 +331,15 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 operator-(const bfloat16& a) {
   numext::uint16_t x = numext::bit_cast<uint16_t>(a) ^ 0x8000;
   return numext::bit_cast<bfloat16>(x);
 }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC int16_t bfloat16_map_to_signed(numext::uint16_t bits) {
+  constexpr numext::uint16_t kAbsMask = 0x7fff;
+  return (bits >> 15) ? -(bits & kAbsMask) : bits;
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool bfloat16_is_ordered(numext::uint16_t a, numext::uint16_t b) {
+  constexpr numext::uint16_t kAbsMask = 0x7fff;
+  constexpr numext::uint16_t kInf = 0x7f80;
+  return numext::maxi(a & kAbsMask, b & kAbsMask) <= kInf;
+}
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16& operator+=(bfloat16& a, const bfloat16& b) {
   a = bfloat16(float(a) + float(b));
   return a;
@@ -364,23 +374,38 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 operator--(bfloat16& a, int) {
   --a;
   return original_value;
 }
+// Evaluate both predicates to keep comparison loops branch-free. Integer operands avoid Clang's
+// -Wbitwise-instead-of-logical warning.
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator==(const bfloat16& a, const bfloat16& b) {
-  return numext::equal_strict(float(a), float(b));
+  const numext::uint16_t a_bits = numext::bit_cast<numext::uint16_t>(a);
+  const numext::uint16_t b_bits = numext::bit_cast<numext::uint16_t>(b);
+  return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) == bfloat16_map_to_signed(b_bits)) &
+         static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator!=(const bfloat16& a, const bfloat16& b) {
-  return numext::not_equal_strict(float(a), float(b));
-}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator!=(const bfloat16& a, const bfloat16& b) { return !(a == b); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator<(const bfloat16& a, const bfloat16& b) {
-  return float(a) < float(b);
+  const numext::uint16_t a_bits = numext::bit_cast<numext::uint16_t>(a);
+  const numext::uint16_t b_bits = numext::bit_cast<numext::uint16_t>(b);
+  return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) < bfloat16_map_to_signed(b_bits)) &
+         static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator<=(const bfloat16& a, const bfloat16& b) {
-  return float(a) <= float(b);
+  const numext::uint16_t a_bits = numext::bit_cast<numext::uint16_t>(a);
+  const numext::uint16_t b_bits = numext::bit_cast<numext::uint16_t>(b);
+  return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) <= bfloat16_map_to_signed(b_bits)) &
+         static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator>(const bfloat16& a, const bfloat16& b) {
-  return float(a) > float(b);
+  const numext::uint16_t a_bits = numext::bit_cast<numext::uint16_t>(a);
+  const numext::uint16_t b_bits = numext::bit_cast<numext::uint16_t>(b);
+  return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) > bfloat16_map_to_signed(b_bits)) &
+         static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator>=(const bfloat16& a, const bfloat16& b) {
-  return float(a) >= float(b);
+  const numext::uint16_t a_bits = numext::bit_cast<numext::uint16_t>(a);
+  const numext::uint16_t b_bits = numext::bit_cast<numext::uint16_t>(b);
+  return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) >= bfloat16_map_to_signed(b_bits)) &
+         static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
 
 #if EIGEN_COMP_CLANG && defined(EIGEN_CUDACC)
@@ -657,6 +682,10 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 abs(const bfloat16& a) {
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp(const bfloat16& a) { return bfloat16(::expf(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp2(const bfloat16& a) { return bfloat16(::exp2f(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 expm1(const bfloat16& a) { return bfloat16(numext::expm1(float(a))); }
+// float covers the bfloat16 range, so the single conversion back rounds correctly.
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 ldexp(const bfloat16& a, int exponent) {
+  return bfloat16(numext::ldexp(float(a), exponent));
+}
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log(const bfloat16& a) { return bfloat16(::logf(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log1p(const bfloat16& a) { return bfloat16(numext::log1p(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log10(const bfloat16& a) { return bfloat16(::log10f(float(a))); }
@@ -733,9 +762,7 @@ EIGEN_ALWAYS_INLINE std::ostream& operator<<(std::ostream& os, const bfloat16& v
 namespace internal {
 
 template <>
-struct is_arithmetic<bfloat16> {
-  enum { value = true };
-};
+struct is_arithmetic<bfloat16> : std::true_type {};
 
 template <>
 struct random_impl<bfloat16> {
@@ -823,13 +850,13 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 nextafter(const bfloat16& from, c
   }
   uint16_t from_bits = numext::bit_cast<uint16_t>(from);
   bool from_sign = from_bits >> 15;
-  // Whether we are adjusting toward the infinity with the same sign as from.
-  bool toward_inf = (to > from) == !from_sign;
-  if (toward_inf) {
+  if ((from_bits & 0x7fff) == 0) {
+    // From ±0 toward a nonzero value: the neighbor is the smallest subnormal
+    // carrying the sign of the direction (IEEE-754 nextUp/nextDown of zero).
+    from_bits = (to > from) ? uint16_t(0x0001) : uint16_t(0x8001);
+  } else if ((to > from) != from_sign) {
+    // Toward the infinity with the same sign as from: increase the magnitude.
     ++from_bits;
-  } else if ((from_bits & 0x7fff) == 0) {
-    // Adjusting away from inf, but from is zero, so just toggle the sign.
-    from_bits ^= 0x8000;
   } else {
     --from_bits;
   }
@@ -858,16 +885,8 @@ struct hash<Eigen::bfloat16> {
 }  // namespace std
 #endif
 
-// Add the missing shfl* intrinsics.
-// The __shfl* functions are only valid on HIP or _CUDA_ARCH_ >= 300.
-//   CUDA defines them for (__CUDA_ARCH__ >= 300 || !defined(__CUDA_ARCH__))
-//
-// HIP and CUDA prior to SDK 9.0 define
-//    __shfl, __shfl_up, __shfl_down, __shfl_xor for int and float
-// CUDA since 9.0 deprecates those and instead defines
-//    __shfl_sync, __shfl_up_sync, __shfl_down_sync, __shfl_xor_sync,
-//    with native support for __half and __nv_bfloat16
-//
+// Warp shuffle overloads for Eigen::bfloat16.
+// HIP uses non-sync __shfl variants; CUDA has native __nv_bfloat16 support in __shfl_sync.
 // Note that the following are __device__ - only functions.
 #if defined(EIGEN_HIPCC)
 

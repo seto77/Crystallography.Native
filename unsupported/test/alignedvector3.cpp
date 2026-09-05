@@ -6,6 +6,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #define EIGEN_NO_STATIC_ASSERT
 
@@ -72,6 +73,26 @@ void alignedvector3() {
 
   FastType f8, f9(0, 0, 0);
   VERIFY_IS_APPROX(f9 - f1, -f1);
+
+  {
+    // Compound assignment must return *this by reference so that the result can be
+    // chained or bound to a reference (regression test for !2684).
+    FastType f10(r1);
+    RefType r10(r1);
+    VERIFY_IS_APPROX((f10 += f2) += f3, (r10 += r2) += r3);
+    VERIFY_IS_APPROX(f10, r10);
+    VERIFY_IS_APPROX((f10 -= f2) -= f3, (r10 -= r2) -= r3);
+    VERIFY_IS_APPROX(f10, r10);
+    VERIFY_IS_APPROX((f10 *= s1) *= s2, (r10 *= s1) *= s2);
+    VERIFY_IS_APPROX(f10, r10);
+    VERIFY_IS_APPROX((f10 /= s1) /= s2, (r10 /= s1) /= s2);
+    VERIFY_IS_APPROX(f10, r10);
+    // This file defines EIGEN_NO_STATIC_ASSERT, so check the return types at runtime.
+    VERIFY((std::is_same<decltype(f10 += f2), FastType &>::value));
+    VERIFY((std::is_same<decltype(f10 -= f2), FastType &>::value));
+    VERIFY((std::is_same<decltype(f10 *= s1), FastType &>::value));
+    VERIFY((std::is_same<decltype(f10 /= s1), FastType &>::value));
+  }
 
   std::stringstream ss1, ss2;
   ss1 << f1;

@@ -1,4 +1,10 @@
 // IWYU pragma: private
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_NONLINEAROPTIMIZATION_DOGLEG_H
+#define EIGEN_NONLINEAROPTIMIZATION_DOGLEG_H
+
 #include "./InternalHeaderCheck.h"
 
 namespace Eigen {
@@ -65,7 +71,7 @@ void dogleg(const Matrix<Scalar, Dynamic, Dynamic> &qrfac, const Matrix<Scalar, 
   /* calculate the point along the scaled gradient */
   /* at which the quadratic is minimized. */
   wa1.array() /= (diag * gnorm).array();
-  // TODO : once unit tests cover this part,:
+  // TODO : once unit tests cover this part:
   // wa2 = qrfac.template triangularView<Upper>() * wa1;
   for (j = 0; j < n; ++j) {
     sum = 0.;
@@ -101,3 +107,5 @@ algo_end:
 }  // end namespace internal
 
 }  // end namespace Eigen
+
+#endif  // EIGEN_NONLINEAROPTIMIZATION_DOGLEG_H

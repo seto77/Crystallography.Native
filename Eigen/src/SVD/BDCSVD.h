@@ -16,6 +16,7 @@
 // Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_BDCSVD_H
 #define EIGEN_BDCSVD_H
@@ -35,7 +36,7 @@ namespace internal {
 
 template <typename MatrixType_, int Options>
 struct traits<BDCSVD<MatrixType_, Options> > : svd_traits<MatrixType_, Options> {
-  typedef MatrixType_ MatrixType;
+  using MatrixType = MatrixType_;
 };
 
 }  // end namespace internal
@@ -53,14 +54,14 @@ struct traits<BDCSVD<MatrixType_, Options> > : svd_traits<MatrixType_, Options> 
  *                  Possible values are #ComputeThinU, #ComputeThinV, #ComputeFullU, #ComputeFullV, and
  *                  #DisableQRDecomposition. It is not possible to request both the thin and full version of \a U or
  *                  \a V. By default, unitaries are not computed. BDCSVD uses R-Bidiagonalization to improve
- *                  performance on tall and wide matrices. For backwards compatility, the option
+ *                  performance on tall and wide matrices. For backwards compatibility, the option
  *                  #DisableQRDecomposition can be used to disable this optimization.
  *
  * This class first reduces the input matrix to bi-diagonal form using class UpperBidiagonalization,
  * and then performs a divide-and-conquer diagonalization. Small blocks are diagonalized using class JacobiSVD.
  * You can control the switching size with the setSwitchSize() method, default is 16.
- * For small matrice (<16), it is thus preferable to directly use JacobiSVD. For larger ones, BDCSVD is highly
- * recommended and can several order of magnitude faster.
+ * For small matrices (<16), it is thus preferable to directly use JacobiSVD. For larger ones, BDCSVD is highly
+ * recommended and can be several orders of magnitude faster.
  *
  * \warning this algorithm is unlikely to provide accurate result when compiled with unsafe math optimizations.
  * For instance, this concerns Intel's compiler (ICC), which performs such optimization by default unless
@@ -71,7 +72,7 @@ struct traits<BDCSVD<MatrixType_, Options> > : svd_traits<MatrixType_, Options> 
  */
 template <typename MatrixType_, int Options_>
 class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
-  typedef SVDBase<BDCSVD> Base;
+  using Base = SVDBase<BDCSVD>;
 
  public:
   using Base::cols;
@@ -80,15 +81,15 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
   using Base::diagSize;
   using Base::rows;
 
-  typedef MatrixType_ MatrixType;
-  typedef typename Base::Scalar Scalar;
-  typedef typename Base::RealScalar RealScalar;
-  typedef typename NumTraits<RealScalar>::Literal Literal;
-  typedef typename Base::Index Index;
+  using MatrixType = MatrixType_;
+  using Scalar = typename Base::Scalar;
+  using RealScalar = typename Base::RealScalar;
+  using Literal = typename NumTraits<RealScalar>::Literal;
+  using Index = typename Base::Index;
   enum {
     Options = Options_,
-    QRDecomposition = Options & internal::QRPreconditionerBits,
-    ComputationOptions = Options & internal::ComputationOptionsBits,
+    QRDecomposition = internal::get_qr_preconditioner(Options),
+    ComputationOptions = internal::get_computation_options(Options),
     RowsAtCompileTime = Base::RowsAtCompileTime,
     ColsAtCompileTime = Base::ColsAtCompileTime,
     DiagSizeAtCompileTime = Base::DiagSizeAtCompileTime,
@@ -98,17 +99,17 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
     MatrixOptions = Base::MatrixOptions
   };
 
-  typedef typename Base::MatrixUType MatrixUType;
-  typedef typename Base::MatrixVType MatrixVType;
-  typedef typename Base::SingularValuesType SingularValuesType;
+  using MatrixUType = typename Base::MatrixUType;
+  using MatrixVType = typename Base::MatrixVType;
+  using SingularValuesType = typename Base::SingularValuesType;
 
-  typedef Matrix<Scalar, Dynamic, Dynamic, ColMajor> MatrixX;
-  typedef Matrix<RealScalar, Dynamic, Dynamic, ColMajor> MatrixXr;
-  typedef Matrix<RealScalar, Dynamic, 1> VectorType;
-  typedef Array<RealScalar, Dynamic, 1> ArrayXr;
-  typedef Array<Index, 1, Dynamic> ArrayXi;
-  typedef Ref<ArrayXr> ArrayRef;
-  typedef Ref<ArrayXi> IndicesRef;
+  using MatrixX = Matrix<Scalar, Dynamic, Dynamic, ColMajor>;
+  using MatrixXr = Matrix<RealScalar, Dynamic, Dynamic, ColMajor>;
+  using VectorType = Matrix<RealScalar, Dynamic, 1>;
+  using ArrayXr = Array<RealScalar, Dynamic, 1>;
+  using ArrayXi = Array<Index, 1, Dynamic>;
+  using ArrayRef = Ref<ArrayXr>;
+  using IndicesRef = Ref<ArrayXi>;
 
   /** \brief Default Constructor.
    *
@@ -190,8 +191,6 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
     compute_impl(matrix, computationOptions);
   }
 
-  ~BDCSVD() {}
-
   /** \brief Method performing the decomposition of given matrix. Computes Thin/Full unitaries U/V if specified
    *         using the \a Options template parameter or the class constructor.
    *
@@ -240,6 +239,10 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
  private:
   template <typename Derived>
   BDCSVD& compute_impl(const MatrixBase<Derived>& matrix, unsigned int computationOptions);
+  template <typename Derived>
+  BDCSVD& compute_impl(const MatrixBase<Derived>& matrix, unsigned int computationOptions, internal::true_type);
+  template <typename Derived>
+  BDCSVD& compute_impl(const MatrixBase<Derived>& matrix, unsigned int computationOptions, internal::false_type);
   template <typename DerivedD, typename DerivedE>
   BDCSVD& compute_bidiagonal_impl(const MatrixBase<DerivedD>& diagonal, const MatrixBase<DerivedE>& superdiagonal,
                                   unsigned int computationOptions);
@@ -249,6 +252,7 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
 
  protected:
   void allocate(Index rows, Index cols, unsigned int computationOptions);
+  void allocate_small(Index rows, Index cols, unsigned int computationOptions);
   internal::bdcsvd_impl<RealScalar> m_impl;
   bool m_isTranspose, m_useQrDecomp;
   JacobiSVD<MatrixX> smallSvd;
@@ -256,6 +260,9 @@ class BDCSVD : public SVDBase<BDCSVD<MatrixType_, Options_> > {
   internal::UpperBidiagonalization<MatrixX> bid;
   MatrixX copyWorkspace;
   MatrixX reducedTriangle;
+  // Reused workspace for HouseholderSequence::applyThisOnTheLeft in copyUV().
+  // Without this, each apply allocates a fresh row vector.
+  Matrix<Scalar, 1, Dynamic, RowMajor> m_householderWorkspace;
 
   using Base::m_computationOptions;
   using Base::m_computeThinU;
@@ -305,13 +312,48 @@ void BDCSVD<MatrixType, Options>::allocate(Index rows, Index cols, unsigned int 
 }  // end allocate
 
 template <typename MatrixType, int Options>
+void BDCSVD<MatrixType, Options>::allocate_small(Index rows, Index cols, unsigned int computationOptions) {
+  if (Base::allocate(rows, cols, computationOptions)) return;
+
+  smallSvd.allocate(rows, cols, Options == 0 ? computationOptions : internal::get_computation_options(Options));
+  m_isTranspose = (cols > rows);
+}
+
+template <typename MatrixType, int Options>
 template <typename Derived>
-EIGEN_DONT_INLINE BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(
-    const MatrixBase<Derived>& matrix, unsigned int computationOptions) {
+BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(const MatrixBase<Derived>& matrix,
+                                                                       unsigned int computationOptions) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(Derived, MatrixType);
   EIGEN_STATIC_ASSERT((std::is_same<typename Derived::Scalar, typename MatrixType::Scalar>::value),
                       Input matrix must have the same Scalar type as the BDCSVD object.);
 
+  // setSwitchSize() enforces a minimum of 3, so these types can only use the JacobiSVD fallback.
+  typedef internal::bool_constant<(MaxColsAtCompileTime != Dynamic && MaxColsAtCompileTime < 3)> AlwaysUseSmallSvd;
+  return compute_impl(matrix, computationOptions, AlwaysUseSmallSvd());
+}
+
+template <typename MatrixType, int Options>
+template <typename Derived>
+EIGEN_DONT_INLINE BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(
+    const MatrixBase<Derived>& matrix, unsigned int computationOptions, internal::true_type) {
+  allocate_small(matrix.rows(), matrix.cols(), computationOptions);
+
+  smallSvd.compute(matrix);
+  m_isInitialized = true;
+  m_info = smallSvd.info();
+  if (m_info == Success || m_info == NoConvergence) {
+    if (computeU()) m_matrixU = smallSvd.matrixU();
+    if (computeV()) m_matrixV = smallSvd.matrixV();
+    m_singularValues = smallSvd.singularValues();
+    m_nonzeroSingularValues = smallSvd.nonzeroSingularValues();
+  }
+  return *this;
+}
+
+template <typename MatrixType, int Options>
+template <typename Derived>
+EIGEN_DONT_INLINE BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(
+    const MatrixBase<Derived>& matrix, unsigned int computationOptions, internal::false_type) {
   using std::abs;
 
   allocate(matrix.rows(), matrix.cols(), computationOptions);
@@ -363,9 +405,15 @@ EIGEN_DONT_INLINE BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::comp
   //**** step 2 - Divide & Conquer
   m_impl.naiveU().setZero();
   m_impl.naiveV().setZero();
-  // FIXME: this line involves a temporary matrix.
-  m_impl.computed().topRows(diagSize()) = bid.bidiagonal().toDenseMatrix().transpose();
-  m_impl.computed().template bottomRows<1>().setZero();
+  // The transposed bidiagonal has only the main diagonal and one sub-diagonal;
+  // fill those directly instead of materializing a dense temporary.
+  // Note: BandMatrix::diagonal<N>() const has a latent type bug (returns
+  // Block<CoefficientsType, ...> instead of Block<const CoefficientsType, ...>),
+  // so use the index-based overload which is correctly const-qualified.
+  m_impl.computed().setZero();
+  m_impl.computed().topRows(diagSize()).diagonal() = bid.bidiagonal().diagonal();
+  m_impl.computed().topRows(diagSize()).template diagonal<-1>() = bid.bidiagonal().diagonal(1);
+  m_impl.splitNegligibleSuperdiagonal(diagSize());
   m_impl.divide(0, diagSize() - 1, 0, 0, 0);
   m_info = m_impl.info();
   m_numIters = m_impl.numIters();
@@ -410,28 +458,33 @@ template <typename HouseholderU, typename HouseholderV, typename NaiveU, typenam
 EIGEN_DONT_INLINE void BDCSVD<MatrixType, Options>::copyUV(const HouseholderU& householderU,
                                                            const HouseholderV& householderV, const NaiveU& naiveU,
                                                            const NaiveV& naiveV) {
-  // Note exchange of U and V: m_matrixU is set from m_naiveV and vice versa
+  // Note exchange of U and V: m_matrixU is set from m_naiveV and vice versa.
+  // Cast the diagSize x diagSize block (rather than the full naive matrix) to avoid materializing
+  // a full-size temporary when Scalar != RealScalar; reuse m_householderWorkspace across the two
+  // applyThisOnTheLeft calls so each does not allocate a fresh row vector.
   if (computeU()) {
     Index Ucols = m_computeThinU ? diagSize() : rows();
     m_matrixU = MatrixX::Identity(rows(), Ucols);
     m_matrixU.topLeftCorner(diagSize(), diagSize()) =
-        naiveV.template cast<Scalar>().topLeftCorner(diagSize(), diagSize());
-    // FIXME: the following conditionals involve temporary buffers.
-    if (m_useQrDecomp)
-      m_matrixU.topLeftCorner(householderU.cols(), diagSize()).applyOnTheLeft(householderU);
-    else
-      m_matrixU.applyOnTheLeft(householderU);
+        naiveV.topLeftCorner(diagSize(), diagSize()).template cast<Scalar>();
+    if (m_useQrDecomp) {
+      auto sub = m_matrixU.topLeftCorner(householderU.cols(), diagSize());
+      householderU.applyThisOnTheLeft(sub, m_householderWorkspace);
+    } else {
+      householderU.applyThisOnTheLeft(m_matrixU, m_householderWorkspace);
+    }
   }
   if (computeV()) {
     Index Vcols = m_computeThinV ? diagSize() : cols();
     m_matrixV = MatrixX::Identity(cols(), Vcols);
     m_matrixV.topLeftCorner(diagSize(), diagSize()) =
-        naiveU.template cast<Scalar>().topLeftCorner(diagSize(), diagSize());
-    // FIXME: the following conditionals involve temporary buffers.
-    if (m_useQrDecomp)
-      m_matrixV.topLeftCorner(householderV.cols(), diagSize()).applyOnTheLeft(householderV);
-    else
-      m_matrixV.applyOnTheLeft(householderV);
+        naiveU.topLeftCorner(diagSize(), diagSize()).template cast<Scalar>();
+    if (m_useQrDecomp) {
+      auto sub = m_matrixV.topLeftCorner(householderV.cols(), diagSize());
+      householderV.applyThisOnTheLeft(sub, m_householderWorkspace);
+    } else {
+      householderV.applyThisOnTheLeft(m_matrixV, m_householderWorkspace);
+    }
   }
 }
 
@@ -506,6 +559,7 @@ EIGEN_DONT_INLINE BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::comp
   m_isTranspose = false;
 
   //**** Run D&C.
+  m_impl.splitNegligibleSuperdiagonal(n);
   m_impl.divide(0, n - 1, 0, 0, 0);
   m_info = m_impl.info();
   m_numIters = m_impl.numIters();

@@ -7,6 +7,7 @@
 // This Source Code Form is subject to the terms of the Mozilla
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
 
 #ifndef EIGEN_ORTHOMETHODS_H
 #define EIGEN_ORTHOMETHODS_H
@@ -21,9 +22,9 @@ namespace internal {
 // Vector3 version (default)
 template <typename Derived, typename OtherDerived, int Size>
 struct cross_impl {
-  typedef typename ScalarBinaryOpTraits<typename internal::traits<Derived>::Scalar,
-                                        typename internal::traits<OtherDerived>::Scalar>::ReturnType Scalar;
-  typedef Matrix<Scalar, MatrixBase<Derived>::RowsAtCompileTime, MatrixBase<Derived>::ColsAtCompileTime> return_type;
+  using Scalar = typename ScalarBinaryOpTraits<typename internal::traits<Derived>::Scalar,
+                                               typename internal::traits<OtherDerived>::Scalar>::ReturnType;
+  using return_type = Matrix<Scalar, MatrixBase<Derived>::RowsAtCompileTime, MatrixBase<Derived>::ColsAtCompileTime>;
 
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE return_type run(const MatrixBase<Derived>& first,
                                                                const MatrixBase<OtherDerived>& second) {
@@ -31,7 +32,7 @@ struct cross_impl {
     EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 3)
 
     // Note that there is no need for an expression here since the compiler
-    // optimize such a small temporary very well (even within a complex expression)
+    // optimizes such a small temporary very well (even within a complex expression)
     typename internal::nested_eval<Derived, 2>::type lhs(first.derived());
     typename internal::nested_eval<OtherDerived, 2>::type rhs(second.derived());
     return return_type(numext::conj(lhs.coeff(1) * rhs.coeff(2) - lhs.coeff(2) * rhs.coeff(1)),
@@ -43,14 +44,14 @@ struct cross_impl {
 // Vector2 version
 template <typename Derived, typename OtherDerived>
 struct cross_impl<Derived, OtherDerived, 2> {
-  typedef typename ScalarBinaryOpTraits<typename internal::traits<Derived>::Scalar,
-                                        typename internal::traits<OtherDerived>::Scalar>::ReturnType Scalar;
-  typedef Scalar return_type;
+  using Scalar = typename ScalarBinaryOpTraits<typename internal::traits<Derived>::Scalar,
+                                               typename internal::traits<OtherDerived>::Scalar>::ReturnType;
+  using return_type = Scalar;
 
   static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE return_type run(const MatrixBase<Derived>& first,
                                                                const MatrixBase<OtherDerived>& second) {
-    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived, 2);
-    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 2);
+    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived, 2)
+    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 2)
     typename internal::nested_eval<Derived, 2>::type lhs(first.derived());
     typename internal::nested_eval<OtherDerived, 2>::type rhs(second.derived());
     return numext::conj(lhs.coeff(0) * rhs.coeff(1) - lhs.coeff(1) * rhs.coeff(0));
@@ -125,8 +126,8 @@ EIGEN_DEVICE_FUNC inline typename MatrixBase<Derived>::PlainObject MatrixBase<De
   EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived, 4)
   EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 4)
 
-  typedef typename internal::nested_eval<Derived, 2>::type DerivedNested;
-  typedef typename internal::nested_eval<OtherDerived, 2>::type OtherDerivedNested;
+  using DerivedNested = typename internal::nested_eval<Derived, 2>::type;
+  using OtherDerivedNested = typename internal::nested_eval<OtherDerived, 2>::type;
   DerivedNested lhs(derived());
   OtherDerivedNested rhs(other.derived());
 
@@ -140,7 +141,7 @@ EIGEN_DEVICE_FUNC inline typename MatrixBase<Derived>::PlainObject MatrixBase<De
  * of the referenced expression with the \a other vector.
  *
  * The referenced matrix must have one dimension equal to 3.
- * The result matrix has the same dimensions than the referenced one.
+ * The result matrix has the same dimensions as the referenced one.
  *
  * \sa MatrixBase::cross() */
 template <typename ExpressionType, int Direction>
@@ -149,14 +150,14 @@ EIGEN_DEVICE_FUNC const typename VectorwiseOp<ExpressionType, Direction>::CrossR
 VectorwiseOp<ExpressionType, Direction>::cross(const MatrixBase<OtherDerived>& other) const {
   EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 3)
   EIGEN_STATIC_ASSERT(
-      (internal::is_same<Scalar, typename OtherDerived::Scalar>::value),
+      (std::is_same<Scalar, typename OtherDerived::Scalar>::value),
       YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
 
   typename internal::nested_eval<ExpressionType, 2>::type mat(_expression());
   typename internal::nested_eval<OtherDerived, 2>::type vec(other.derived());
 
   CrossReturnType res(_expression().rows(), _expression().cols());
-  if (Direction == Vertical) {
+  EIGEN_IF_CONSTEXPR (Direction == Vertical) {
     eigen_assert(CrossReturnType::RowsAtCompileTime == 3 && "the matrix must have exactly 3 rows");
     res.row(0) = (mat.row(1) * vec.coeff(2) - mat.row(2) * vec.coeff(1)).conjugate();
     res.row(1) = (mat.row(2) * vec.coeff(0) - mat.row(0) * vec.coeff(2)).conjugate();
@@ -174,10 +175,10 @@ namespace internal {
 
 template <typename Derived, int Size = Derived::SizeAtCompileTime>
 struct unitOrthogonal_selector {
-  typedef typename plain_matrix_type<Derived>::type VectorType;
-  typedef typename traits<Derived>::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
-  typedef Matrix<Scalar, 2, 1> Vector2;
+  using VectorType = typename plain_matrix_type<Derived>::type;
+  using Scalar = typename traits<Derived>::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using Vector2 = Matrix<Scalar, 2, 1>;
   EIGEN_DEVICE_FUNC static inline VectorType run(const Derived& src) {
     VectorType perp = VectorType::Zero(src.size());
     Index maxi = 0;
@@ -194,9 +195,9 @@ struct unitOrthogonal_selector {
 
 template <typename Derived>
 struct unitOrthogonal_selector<Derived, 3> {
-  typedef typename plain_matrix_type<Derived>::type VectorType;
-  typedef typename traits<Derived>::Scalar Scalar;
-  typedef typename NumTraits<Scalar>::Real RealScalar;
+  using VectorType = typename plain_matrix_type<Derived>::type;
+  using Scalar = typename traits<Derived>::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC static inline VectorType run(const Derived& src) {
     VectorType perp;
     /* Let us compute the crossed product of *this with a vector
@@ -229,7 +230,7 @@ struct unitOrthogonal_selector<Derived, 3> {
 
 template <typename Derived>
 struct unitOrthogonal_selector<Derived, 2> {
-  typedef typename plain_matrix_type<Derived>::type VectorType;
+  using VectorType = typename plain_matrix_type<Derived>::type;
   EIGEN_DEVICE_FUNC static inline VectorType run(const Derived& src) {
     return VectorType(-numext::conj(src.y()), numext::conj(src.x())).normalized();
   }
@@ -241,8 +242,10 @@ struct unitOrthogonal_selector<Derived, 2> {
  *
  * \returns a unit vector which is orthogonal to \c *this
  *
- * The size of \c *this must be at least 2. If the size is exactly 2,
+ * The size of \c *this must be at least 2. If the size is exactly 2 at compile time,
  * then the returned vector is a counter-clockwise rotation of \c *this, i.e., (-y,x).normalized().
+ * A vector whose size is only known at runtime takes the generic code path even when its size is 2,
+ * and then returns the clockwise rotation (y,-x).normalized() if |y| > |x|.
  *
  * \sa cross()
  */
