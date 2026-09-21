@@ -583,7 +583,9 @@ extern "C" {
 		for (int n = 0; n < nAtoms; ++n)
 			sigB.row(n).noalias() = sigma[n] * B.row(n);
 		Mat S(bLen, bLen);
-		S.noalias() = B.adjoint() * sigB;
+		// S.noalias() = B.adjoint() * sigB; // 260922Cl 変更前: S(j,j') = Σ σ conj(B_nj) B_nj' は正しい S の複素共役 (= 転置) で、λ_jj' の F と組むと Tr(S·F) の代わりに Tr(S·Fᵀ) になっていた
+		// 260922Cl 修正: |Σ_j B_nj e^{2πiγ_j z}|² = Σ_jj' B_nj conj(B_nj') e^{λ_jj' z} なので S_jj' = Σ_n σ_n B_nj conj(B_nj') (managed の EBSDSolverManaged と同じ)
+		S.noalias() = sigB.transpose() * B.conjugate();
 
 		// λ_{jj'} = 2πi(γ_j - conj(γ_j'))
 		Mat lam(bLen, bLen);
@@ -594,7 +596,10 @@ extern "C" {
 		// 260420Cl S, F, lam, expAccum は全て Hermitian → sum = diag の real 和 + 上三角の 2·Re 和 で内側ループを半減
 
 		// 等間隔判定
-		bool isUniform = (tLen >= 2) && (abs(thicknesses[1] - 2.0 * thicknesses[0]) < 1e-10);
+		// bool isUniform = (tLen >= 2) && (abs(thicknesses[1] - 2.0 * thicknesses[0]) < 1e-10); // 260922Cl 変更前: 先頭 2 点しか見ておらず、[1, 2, 4] のような入力でも累積指数 (t_k = (k+1)·t_0 を仮定) に入っていた
+		bool isUniform = tLen >= 2; // 260922Cl 修正: 全点で t_k = (k+1)·t_0 を確認する
+		for (int t = 1; isUniform && t < tLen; ++t)
+			isUniform = abs(thicknesses[t] - (t + 1) * thicknesses[0]) <= 1e-9 * (t + 1) * abs(thicknesses[0]);
 
 		if (isUniform && tLen > 1)
 		{
@@ -683,6 +688,7 @@ extern "C" {
 		auto U = Map<Mat>((dcomplex*)muBack, bLen, bLen);
 
 		// --- 弾性: S = B† diag(σ) B ---
+		// 260922Cl 修正: S = Bᵀ diag(σ) conj(B) (S_jj' = Σ_n σ_n B_nj conj(B_nj')。_EBSDSolver と同じ)
 		Mat B(nAtoms, bLen);
 		B.noalias() = P * C * a.asDiagonal();
 
@@ -690,14 +696,19 @@ extern "C" {
 		for (int n = 0; n < nAtoms; ++n)
 			sigB.row(n).noalias() = sigma[n] * B.row(n);
 		Mat S(bLen, bLen);
-		S.noalias() = B.adjoint() * sigB;
+		// S.noalias() = B.adjoint() * sigB; // 260922Cl 変更前 (正しい S の複素共役 = 転置。_EBSDSolver の注記参照)
+		S.noalias() = sigB.transpose() * B.conjugate();
 
 		// --- TDS: M = tdsCoeff × diag(α†) × C† × U × C × diag(α) ---
+		// 260922Cl 修正: ψ†Uψ = Σ_jj' M_jj' e^{2πi(γ_j' − conj γ_j) z} = Σ_jj' M_jj' e^{λ_j'j z} なので、λ_jj' の F と組むのは Mᵀ。
+		//   Mᵀ_jj' = tdsCoeff × α_j × [(C†UC)ᵀ]_jj' × conj(α_j')、(C†UC)ᵀ = Cᵀ Uᵀ conj(C)。U が Hermitian なら Mᵀ も Hermitian (下の上三角 2·Re はそのまま有効)
 		Mat CUC(bLen, bLen);
-		CUC.noalias() = C.adjoint() * U * C;
+		// CUC.noalias() = C.adjoint() * U * C; // 260922Cl 変更前
+		CUC.noalias() = C.transpose() * U.transpose() * C.conjugate();
 		for (int j = 0; j < bLen; ++j)
 			for (int jp = 0; jp < bLen; ++jp)
-				CUC(j, jp) *= tdsCoeff * conj(a[j]) * a[jp];
+				// CUC(j, jp) *= tdsCoeff * conj(a[j]) * a[jp]; // 260922Cl 変更前
+				CUC(j, jp) *= tdsCoeff * a[j] * conj(a[jp]);
 
 		// --- λ_{jj'} 事前計算 ---
 		Mat lam(bLen, bLen);
@@ -708,7 +719,10 @@ extern "C" {
 		// 260420Cl S, CUC, lam, expAccum, F はいずれも Hermitian → 対角 + 上三角 2·Re で sumS/sumM を半減。CUC の a[j]a[jp] 係数も Hermitian 性を保存
 
 		// 等間隔判定
-		bool isUniform = (tLen >= 2) && (abs(thicknesses[1] - 2.0 * thicknesses[0]) < 1e-10);
+		// bool isUniform = (tLen >= 2) && (abs(thicknesses[1] - 2.0 * thicknesses[0]) < 1e-10); // 260922Cl 変更前 (先頭 2 点のみ。_EBSDSolver の注記参照)
+		bool isUniform = tLen >= 2; // 260922Cl 修正: 全点で t_k = (k+1)·t_0 を確認する
+		for (int t = 1; isUniform && t < tLen; ++t)
+			isUniform = abs(thicknesses[t] - (t + 1) * thicknesses[0]) <= 1e-9 * (t + 1) * abs(thicknesses[0]);
 
 		if (isUniform && tLen > 1)
 		{
