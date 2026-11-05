@@ -243,7 +243,11 @@
       </EnableFiberSafeOptimizations>
       <OmitFramePointers>true</OmitFramePointers>
       <LlvmTransitionalOption>NextGenNone</LlvmTransitionalOption>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <!-- <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary> 261105Cl 変更前 -->
+      <!-- 261105Cl 変更: x64 も ARM64 と同じく CRT を静的リンク (/MT)。/MD だと MSVCP140.dll・VCRUNTIME140.dll が要り、
+           配布物・インストーラは VC++ 再頒布可能パッケージを入れないので、無い PC では native が読めず managed に落ちていた。
+           generic/avx2/avx512 の 3 flavor ともこの ItemDefinitionGroup を使う。CRT ヒープを跨ぐ API を足さないこと (ARM64 と同じ方針) -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <MinimalRebuild>
       </MinimalRebuild>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
