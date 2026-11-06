@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <bit> // 261106Ch: /fp:fast 下でも有効な非有限値判定
+#include <cstdint> // 261106Ch
 #include "math.h"
 
 #include <../Eigen/Core>
@@ -25,9 +27,11 @@
 #include <../Eigen/Geometry>
 #include <../Eigen/LU>
 #include <../Eigen/Eigenvalues>
-#include <../unsupported/Eigen/MatrixFunctions>
+// #include <../unsupported/Eigen/MatrixFunctions> // 261106Ch: upstream renamed this tree.
+#include <../contrib/Eigen/MatrixFunctions> // 261106Ch: pinned current Eigen snapshot.
 
 #include "EigenFuncs.h"
+#include "BlochWaveIntegral.h" // 261106Ch: 弱吸収・近縮退の厚さ積分
 
 using namespace Eigen;
 using namespace std;
@@ -41,6 +45,25 @@ const std::complex<double> two_pi_i = complex<double>(0, 2 * 3.14159265358979323
 //横ベクトル
 #define VecR RowVectorXcd
 
+
+// 261106Ch 追加: bounded factorization avoids extra overflow/underflow and
+// large independent trig range-reduction errors. Bit tests survive /fp:fast.
+static bool TryBuildEbsdModalPhases(int count, const dcomplex* values, double thickness, dcomplex* modal)
+{
+    if (count == 0) return false;
+    const double origin = values[0].real();
+    for (int j = 0; j < count; ++j)
+    {
+        const auto exponent = two_pi_i * dcomplex(values[j].real() - origin, values[j].imag()) * thickness;
+        const auto realBits = bit_cast<uint64_t>(exponent.real()) & UINT64_C(0x7ff0000000000000);
+        const auto imagBits = bit_cast<uint64_t>(exponent.imag()) & UINT64_C(0x7ff0000000000000);
+        if (realBits == UINT64_C(0x7ff0000000000000) || imagBits == UINT64_C(0x7ff0000000000000)
+            || !(abs(exponent.real()) <= 350) || !(abs(exponent.imag()) <= 1000))
+            return false;
+        modal[j] = exp(exponent);
+    }
+    return true;
+}
 
 extern "C" {
 	//行列c0~c3をr0~r3の割合でブレンドする
@@ -570,6 +593,8 @@ extern "C" {
 		double thicknesses[],
 		double intensity[])
 	{
+		if (tLen == 0) return; // 261106Ch: 空出力ポインタに算術を行わない
+		if (nAtoms == 0) { fill(intensity, intensity + tLen, 0.0); return; } // 261106Ch: 局所源なし
 		auto vals = Map<Vec>((dcomplex*)eigenValues, bLen);
 		auto C = Map<Mat>((dcomplex*)eigenVectors, bLen, bLen);
 		auto a = Map<Vec>((dcomplex*)alpha, bLen);
@@ -626,14 +651,16 @@ extern "C" {
 				for (int j = 0; j < bLen; ++j)
 				{
 					auto l = lam(j, j);
-					dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, j) - 1.0) / l;
+					// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, j) - 1.0) / l; // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, expAccum(j, j)); // 261106Ch
 					sumReal += (S(j, j) * F).real();
 				}
 				for (int j = 0; j < bLen; ++j)
 					for (int jp = j + 1; jp < bLen; ++jp)
 					{
 						auto l = lam(j, jp);
-						dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, jp) - 1.0) / l;
+						// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, jp) - 1.0) / l; // 261106Ch 変更前
+						dcomplex F = IntegrateBlochExponential(l, thick, expAccum(j, jp)); // 261106Ch
 						sumReal += 2.0 * (S(j, jp) * F).real();
 					}
 				intensity[t] = max(0.0, sumReal);
@@ -644,21 +671,27 @@ extern "C" {
 		}
 		else
 		{
+			vector<dcomplex> modal(bLen); // 261106Ch: 非等間隔深さの指数を O(N) 回へ。関数内バッファのみ
 			for (int t = 0; t < tLen; ++t)
 			{
 				double thick = thicknesses[t];
+				const bool factored = TryBuildEbsdModalPhases(bLen, vals.data(), thick, modal.data()); // 261106Ch
 				double sumReal = 0;
 				for (int j = 0; j < bLen; ++j)
 				{
 					auto l = lam(j, j);
-					dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l;
+					// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l; // 261106Ch 変更前
+					// dcomplex F = IntegrateBlochExponential(l, thick, exp(l * thick)); // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, factored ? modal[j] * conj(modal[j]) : exp(l * thick)); // 261106Ch
 					sumReal += (S(j, j) * F).real();
 				}
 				for (int j = 0; j < bLen; ++j)
 					for (int jp = j + 1; jp < bLen; ++jp)
 					{
 						auto l = lam(j, jp);
-						dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l;
+						// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l; // 261106Ch 変更前
+					// dcomplex F = IntegrateBlochExponential(l, thick, exp(l * thick)); // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, factored ? modal[j] * conj(modal[jp]) : exp(l * thick)); // 261106Ch
 						sumReal += 2.0 * (S(j, jp) * F).real();
 					}
 				intensity[t] = max(0.0, sumReal);
@@ -681,6 +714,7 @@ extern "C" {
 		double intensity[],
 		double tdsIntensity[])
 	{
+		if (tLen == 0) return; // 261106Ch: 空出力ポインタに算術を行わない
 		auto vals = Map<Vec>((dcomplex*)eigenValues, bLen);
 		auto C = Map<Mat>((dcomplex*)eigenVectors, bLen, bLen);
 		auto a = Map<Vec>((dcomplex*)alpha, bLen);
@@ -689,6 +723,7 @@ extern "C" {
 
 		// --- 弾性: S = B† diag(σ) B ---
 		// 260922Cl 修正: S = Bᵀ diag(σ) conj(B) (S_jj' = Σ_n σ_n B_nj conj(B_nj')。_EBSDSolver と同じ)
+		/* 261106Ch 変更前: 非局所源のみの呼出しでも捨てる局所源を計算していた。
 		Mat B(nAtoms, bLen);
 		B.noalias() = P * C * a.asDiagonal();
 
@@ -698,6 +733,20 @@ extern "C" {
 		Mat S(bLen, bLen);
 		// S.noalias() = B.adjoint() * sigB; // 260922Cl 変更前 (正しい S の複素共役 = 転置。_EBSDSolver の注記参照)
 		S.noalias() = sigB.transpose() * B.conjugate();
+		*/
+		Mat S; // 261106Ch: nAtoms=0 は既存ABIで局所源なしを表す
+		if (nAtoms > 0)
+		{
+			Mat B(nAtoms, bLen);
+			B.noalias() = P * C * a.asDiagonal();
+
+			Mat sigB(nAtoms, bLen);
+			for (int n = 0; n < nAtoms; ++n)
+				sigB.row(n).noalias() = sigma[n] * B.row(n);
+			S.resize(bLen, bLen);
+			// S.noalias() = B.adjoint() * sigB; // 260922Cl 変更前 (正しい S の複素共役 = 転置。_EBSDSolver の注記参照)
+			S.noalias() = sigB.transpose() * B.conjugate();
+		}
 
 		// --- TDS: M = tdsCoeff × diag(α†) × C† × U × C × diag(α) ---
 		// 260922Cl 修正: ψ†Uψ = Σ_jj' M_jj' e^{2πi(γ_j' − conj γ_j) z} = Σ_jj' M_jj' e^{λ_j'j z} なので、λ_jj' の F と組むのは Mᵀ。
@@ -749,16 +798,20 @@ extern "C" {
 				for (int j = 0; j < bLen; ++j)
 				{
 					auto l = lam(j, j);
-					dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, j) - 1.0) / l;
-					sumSReal += (S(j, j) * F).real();
+					// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, j) - 1.0) / l; // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, expAccum(j, j)); // 261106Ch
+					// sumSReal += (S(j, j) * F).real(); // 261106Ch 変更前
+					if (nAtoms > 0) sumSReal += (S(j, j) * F).real(); // 261106Ch
 					sumMReal += (CUC(j, j) * F).real();
 				}
 				for (int j = 0; j < bLen; ++j)
 					for (int jp = j + 1; jp < bLen; ++jp)
 					{
 						auto l = lam(j, jp);
-						dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, jp) - 1.0) / l;
-						sumSReal += 2.0 * (S(j, jp) * F).real();
+						// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (expAccum(j, jp) - 1.0) / l; // 261106Ch 変更前
+						dcomplex F = IntegrateBlochExponential(l, thick, expAccum(j, jp)); // 261106Ch
+						// sumSReal += 2.0 * (S(j, jp) * F).real(); // 261106Ch 変更前
+						if (nAtoms > 0) sumSReal += 2.0 * (S(j, jp) * F).real(); // 261106Ch
 						sumMReal += 2.0 * (CUC(j, jp) * F).real();
 					}
 				intensity[t] = max(0.0, sumSReal);
@@ -770,23 +823,31 @@ extern "C" {
 		}
 		else
 		{
+			vector<dcomplex> modal(bLen); // 261106Ch: 非等間隔深さの指数を O(N) 回へ。関数内バッファのみ
 			for (int t = 0; t < tLen; ++t)
 			{
 				double thick = thicknesses[t];
+				const bool factored = TryBuildEbsdModalPhases(bLen, vals.data(), thick, modal.data()); // 261106Ch
 				double sumSReal = 0, sumMReal = 0;
 				for (int j = 0; j < bLen; ++j)
 				{
 					auto l = lam(j, j);
-					dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l;
-					sumSReal += (S(j, j) * F).real();
+					// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l; // 261106Ch 変更前
+					// dcomplex F = IntegrateBlochExponential(l, thick, exp(l * thick)); // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, factored ? modal[j] * conj(modal[j]) : exp(l * thick)); // 261106Ch
+					// sumSReal += (S(j, j) * F).real(); // 261106Ch 変更前
+					if (nAtoms > 0) sumSReal += (S(j, j) * F).real(); // 261106Ch
 					sumMReal += (CUC(j, j) * F).real();
 				}
 				for (int j = 0; j < bLen; ++j)
 					for (int jp = j + 1; jp < bLen; ++jp)
 					{
 						auto l = lam(j, jp);
-						dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l;
-						sumSReal += 2.0 * (S(j, jp) * F).real();
+						// dcomplex F = (abs(l) < 1e-15) ? dcomplex(thick, 0) : (exp(l * thick) - 1.0) / l; // 261106Ch 変更前
+					// dcomplex F = IntegrateBlochExponential(l, thick, exp(l * thick)); // 261106Ch 変更前
+					dcomplex F = IntegrateBlochExponential(l, thick, factored ? modal[j] * conj(modal[jp]) : exp(l * thick)); // 261106Ch
+						// sumSReal += 2.0 * (S(j, jp) * F).real(); // 261106Ch 変更前
+						if (nAtoms > 0) sumSReal += 2.0 * (S(j, jp) * F).real(); // 261106Ch
 						sumMReal += 2.0 * (CUC(j, jp) * F).real();
 					}
 				intensity[t] = max(0.0, sumSReal);

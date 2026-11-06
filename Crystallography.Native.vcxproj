@@ -308,6 +308,8 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <!-- 261106Ch: shared stable Bloch thickness integral -->
+    <ClInclude Include="BlochWaveIntegral.h" />
     <ClInclude Include="EigenFuncs.h" />
     <ClInclude Include="HRTEM.h" />
     <ClInclude Include="PseudoVoigt.h" />
