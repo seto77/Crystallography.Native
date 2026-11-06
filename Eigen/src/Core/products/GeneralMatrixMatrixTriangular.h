@@ -95,8 +95,9 @@ struct general_matrix_matrix_triangular_product<Index, LhsScalar, LhsStorageOrde
     std::size_t sizeA = kc * mc;
     std::size_t sizeB = kc * size;
 
-    ei_declare_aligned_stack_constructed_variable(LhsScalar, blockA, sizeA, blocking.blockA());
-    ei_declare_aligned_stack_constructed_variable(RhsScalar, blockB, sizeB, blocking.blockB());
+    gemm_packing_space<LhsScalar, RhsScalar> packing(sizeA, sizeB, blocking.blockA(), blocking.blockB());
+    ei_declare_aligned_stack_constructed_variable(LhsScalar, blockA, sizeA, packing.blockA());
+    ei_declare_aligned_stack_constructed_variable(RhsScalar, blockB, sizeB, packing.blockB());
 
     gemm_pack_lhs<LhsScalar, Index, LhsMapper, Traits::mr, Traits::LhsProgress, typename Traits::LhsPacket4Packing,
                   LhsStorageOrder>
@@ -163,7 +164,11 @@ struct tribb_kernel {
     gebp_kernel<LhsScalar, RhsScalar, Index, ResMapper, mr, nr, ConjLhs, ConjRhs> gebp_kernel1;
     gebp_kernel<LhsScalar, RhsScalar, Index, BufferMapper, mr, nr, ConjLhs, ConjRhs> gebp_kernel2;
 
-    Matrix<ResScalar, BlockSize, BlockSize, ColMajor> buffer;
+    static constexpr int BufferCapacity =
+        (EIGEN_STACK_ALLOCATION_LIMIT == 0 || BlockSize * BlockSize * sizeof(ResScalar) <= EIGEN_STACK_ALLOCATION_LIMIT)
+            ? int(BlockSize)
+            : Dynamic;
+    Matrix<ResScalar, BufferCapacity, BufferCapacity, ColMajor> buffer(BlockSize, BlockSize);
 
     // let's process the block per panel of actual_mc x BlockSize,
     // again, each is split into three parts, etc.
@@ -229,6 +234,12 @@ struct general_product_to_triangular_selector<MatrixType, ProductType, UpLo, tru
 
     if (!beta) mat.template triangularView<UpLo>().setZero();
 
+    // The rank-1 kernel below addresses mat with a unit inner stride.
+    if (MatrixType::InnerStrideAtCompileTime != 1 && mat.innerStride() != 1) {
+      mat.template triangularView<UpLo>() += typename ProductType::PlainObject(alpha * prod);
+      return;
+    }
+
     enum {
       StorageOrder = (internal::traits<MatrixType>::Flags & RowMajorBit) ? RowMajor : ColMajor,
       UseLhsDirectly = ActualLhs_::InnerStrideAtCompileTime == 1,
@@ -253,11 +264,17 @@ struct general_product_to_triangular_selector<MatrixType, ProductType, UpLo, tru
       Map<typename ActualRhs_::PlainObject>(actualRhsPtr, actualRhs.size()) = actualRhs;
     }
 
-    selfadjoint_rank1_update<
-        Scalar, Index, StorageOrder, UpLo, LhsBlasTraits::NeedToConjugate && NumTraits<Scalar>::IsComplex,
-        RhsBlasTraits::NeedToConjugate && NumTraits<Scalar>::IsComplex>::run(actualLhs.size(), mat.data(),
-                                                                             mat.outerStride(), actualLhsPtr,
-                                                                             actualRhsPtr, actualAlpha);
+    // A strictly triangular part is the triangle of the trailing (size-1) block one step off the diagonal.
+    const bool skipDiag = (UpLo & ZeroDiag) != 0, isLower = (UpLo & Lower) != 0;
+    const Index size = actualLhs.size() - skipDiag;
+    if (size <= 0) return;
+    Scalar* res = mat.data() + (!skipDiag ? 0 : (int(StorageOrder) == RowMajor) != isLower ? 1 : mat.outerStride());
+    selfadjoint_rank1_update<Scalar, Index, StorageOrder, UpLo&(Lower | Upper),
+                             LhsBlasTraits::NeedToConjugate && NumTraits<Scalar>::IsComplex,
+                             RhsBlasTraits::NeedToConjugate &&
+                                 NumTraits<Scalar>::IsComplex>::run(size, res, mat.outerStride(),
+                                                                    actualLhsPtr + (skipDiag && isLower),
+                                                                    actualRhsPtr + (skipDiag && !isLower), actualAlpha);
   }
 };
 
@@ -291,8 +308,9 @@ struct general_product_to_triangular_selector<MatrixType, ProductType, UpLo, fal
     Index size = mat.cols();
     EIGEN_IF_CONSTEXPR (SkipDiag) size--;
     Index depth = actualLhs.cols();
-    eigen_assert(actualLhs.rows() == mat.rows() && actualRhs.cols() == mat.cols() &&
-                 actualLhs.cols() == actualRhs.rows());
+    EIGEN_INTERNAL_ASSERT_SAME_ROWS(actualLhs, mat);
+    EIGEN_INTERNAL_ASSERT_SAME_COLS(actualRhs, mat);
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE(actualLhs, actualRhs);
     if (size <= 0 || depth == 0) return;
 
     using BlockingType =
@@ -324,7 +342,17 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename TriangularViewImpl<MatrixType_, M
 TriangularViewImpl<MatrixType_, Mode_, Dense>::_assignProduct(
     const ProductType& prod, const typename TriangularViewImpl<MatrixType_, Mode_, Dense>::Scalar& alpha, bool beta) {
   EIGEN_STATIC_ASSERT((Mode_ & UnitDiag) == 0, WRITING_TO_TRIANGULAR_PART_WITH_UNIT_DIAGONAL_IS_NOT_SUPPORTED);
-  eigen_assert(derived().nestedExpression().rows() == prod.rows() && derived().cols() == prod.cols());
+  EIGEN_INTERNAL_ASSERT_SAME_SHAPE(derived(), prod);
+
+  // The rank-k and rank-1 kernels below update a square triangle.
+  if (derived().rows() != derived().cols()) {
+    typename ProductType::PlainObject tmp(alpha * prod);
+    if (beta)
+      derived() += tmp;
+    else
+      derived() = tmp;
+    return derived();
+  }
 
   general_product_to_triangular_selector<MatrixType_, ProductType, Mode_,
                                          internal::traits<ProductType>::InnerSize == 1>::run(derived()

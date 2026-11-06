@@ -132,6 +132,41 @@ inline void manage_caching_sizes(Action action, std::ptrdiff_t* l1, std::ptrdiff
  *
  * \sa setCpuCacheSizes */
 
+// GCC clones a function for constant arguments (IPA-CP, IPA-SRA), which would compile a runtime overwrite flag's
+// body twice again; clang 18 and Apple clang 21 did not in our builds.
+#if EIGEN_COMP_GNUC_STRICT
+#define EIGEN_GEMM_NO_CLONE __attribute__((noclone))
+#else
+#define EIGEN_GEMM_NO_CLONE
+#endif
+
+// Tag for the gebp_kernel call that assigns C = alpha * A' * B' over the block instead of accumulating into it,
+// independently of C's prior contents. A kernel offers it by declaring `static constexpr bool CanOverwrite = true`
+// next to that overload; every other kernel, including user specializations, keeps the accumulate-only contract and
+// the GEMM driver zeroes the result before calling it. A specialization inheriting a true CanOverwrite while hiding
+// the tagged overload must declare it false.
+struct gebp_overwrite_t {};
+template <typename Gebp, typename = void>
+struct gebp_kernel_overwrites : std::false_type {};
+template <typename Gebp>
+struct gebp_kernel_overwrites<Gebp, std::enable_if_t<Gebp::CanOverwrite>> : std::true_type {};
+
+// Whether an overwriting kernel should overwrite a rows x cols x depth product rather than have the driver zero the
+// result first: Gebp::overwrite_pays where the kernel declares it, true otherwise.
+template <typename Gebp, typename Index>
+EIGEN_ALWAYS_INLINE bool gebp_overwrite_pays_impl(int, Index rows, Index cols, Index depth,
+                                                  decltype(Gebp::overwrite_pays(rows, cols, depth))* = nullptr) {
+  return Gebp::overwrite_pays(rows, cols, depth);
+}
+template <typename Gebp, typename Index>
+EIGEN_ALWAYS_INLINE bool gebp_overwrite_pays_impl(long, Index, Index, Index) {
+  return true;
+}
+template <typename Gebp, typename Index>
+EIGEN_ALWAYS_INLINE bool gebp_overwrite_pays(Index rows, Index cols, Index depth) {
+  return gebp_overwrite_pays_impl<Gebp>(0, rows, cols, depth);
+}
+
 #ifdef EIGEN_VECTORIZE_SME
 // True for the scalar pairs the SME gebp_kernel specializes (see
 // arch/SME/GeneralBlockPanelKernel.h, which static_asserts that it agrees with
@@ -163,6 +198,9 @@ struct sme_has_gebp_kernel<std::complex<RealScalar>, std::complex<RealScalar>>
 #ifndef EIGEN_SME_LHS_WORKING_SET_BUDGET_BYTES
 #define EIGEN_SME_LHS_WORKING_SET_BUDGET_BYTES (7 * 1024 * 1024)
 #endif
+#ifndef EIGEN_SME_SINGLE_PASS_RHS_BUDGET_BYTES
+#define EIGEN_SME_SINGLE_PASS_RHS_BUDGET_BYTES (4 * 1024 * 1024)
+#endif
 
 template <typename LhsScalar, typename RhsScalar, typename Index>
 void evaluateProductBlockingSizesHeuristicForSme(Index& k, Index& m, Index& n) {
@@ -179,10 +217,12 @@ void evaluateProductBlockingSizesHeuristicForSme(Index& k, Index& m, Index& n) {
   constexpr Index sme_max_kc = static_cast<Index>(128);
   constexpr Index sme_packed_rhs_budget_bytes = static_cast<Index>(128 * 1024);
   constexpr Index sme_lhs_working_set_budget_bytes = static_cast<Index>(128 * 1024);
+  constexpr Index sme_single_pass_rhs_budget_bytes = static_cast<Index>(128 * 1024);
 #else
   constexpr Index sme_max_kc = static_cast<Index>(EIGEN_SME_MAX_KC);
   constexpr Index sme_packed_rhs_budget_bytes = static_cast<Index>(EIGEN_SME_PACKED_RHS_BUDGET_BYTES);
   constexpr Index sme_lhs_working_set_budget_bytes = static_cast<Index>(EIGEN_SME_LHS_WORKING_SET_BUDGET_BYTES);
+  constexpr Index sme_single_pass_rhs_budget_bytes = static_cast<Index>(EIGEN_SME_SINGLE_PASS_RHS_BUDGET_BYTES);
 #endif
 
   // Keep kc large enough to amortize SME setup and accumulation, but cap very
@@ -192,12 +232,6 @@ void evaluateProductBlockingSizesHeuristicForSme(Index& k, Index& m, Index& n) {
   const Index max_kc = (numext::maxi)(Index(1), sme_max_kc * Index(sizeof(float)) / Index(sizeof(LhsScalar)));
   k = (numext::mini)(k, max_kc);
 
-  // Bound the packed RHS strip so very wide matrices do not allocate an
-  // unbounded blockB panel.
-  Index nc = sme_packed_rhs_budget_bytes / (numext::maxi)(Index(1), k * Index(sizeof(RhsScalar)));
-  nc = (nc / nr) * nr;
-  n = (numext::mini)(n, (numext::maxi)(nr, nc));
-
   const Index block_b_hot_bytes = k * nr * Index(sizeof(RhsScalar));
   const Index min_lhs_bytes = mr * k * Index(sizeof(LhsScalar));
   const Index block_a_bytes = sme_lhs_working_set_budget_bytes > block_b_hot_bytes
@@ -205,6 +239,15 @@ void evaluateProductBlockingSizesHeuristicForSme(Index& k, Index& m, Index& n) {
                                   : min_lhs_bytes;
   Index mc = block_a_bytes / (k * Index(sizeof(LhsScalar)));
   mc = (mc / mr) * mr;
+
+  // Bound the packed RHS strip so very wide matrices do not allocate an unbounded blockB panel. When all rows fit
+  // one LHS block, each packed RHS block is read once, so it stays L2-sized.
+  const Index rhs_budget = m <= mc ? (numext::mini)(sme_packed_rhs_budget_bytes, sme_single_pass_rhs_budget_bytes)
+                                   : sme_packed_rhs_budget_bytes;
+  Index nc = rhs_budget / (numext::maxi)(Index(1), k * Index(sizeof(RhsScalar)));
+  nc = (nc / nr) * nr;
+  n = (numext::mini)(n, (numext::maxi)(nr, nc));
+
   m = (numext::mini)(m, (numext::maxi)(mr, mc));
 }
 #endif
@@ -335,7 +378,7 @@ void evaluateProductBlockingSizesHeuristic(Index& k, Index& m, Index& n, Index n
     // but can overfill the physical L1. Recompute max_kc using 85% of actual L1
     // to leave headroom for RHS streaming, prefetch buffers, and stack.
     {
-      const Index phys_l1_eff = phys_l1 * 85 / 100;
+      const Index phys_l1_eff = convert_index<Index>(phys_l1 * 85 / 100);
       const Index max_kc_phys = numext::maxi<Index>(((phys_l1_eff - k_sub) / k_div) & (~(k_peeling - 1)), k_peeling);
       if (max_kc_phys < k) {
         k = (old_k % max_kc_phys) == 0 ? max_kc_phys
@@ -385,6 +428,9 @@ void evaluateProductBlockingSizesHeuristic(Index& k, Index& m, Index& n, Index n
     }
     // WARNING Below, we assume that Traits::nr is a power of two.
     Index nc = numext::mini<Index>(rhs_panel_budget / (2 * k * sizeof(RhsScalar)), max_nc) & (~(Traits::nr - 1));
+    // As in the threaded branch, a budget below one kernel-width panel still takes nr columns: a zero
+    // width would divide by zero below.
+    nc = numext::maxi<Index>(nc, Traits::nr);
     if (n > nc) {
       // We are really blocking over the columns:
       // -> reduce blocking size to make sure the last block is as large as possible
@@ -473,14 +519,15 @@ inline void computeProductBlockingSizes(Index& k, Index& m, Index& n, Index num_
   computeProductBlockingSizes<LhsScalar, RhsScalar, 1, Index>(k, m, n, num_threads);
 }
 
-template <typename RhsPacket, typename RhsPacketx4, int registers_taken>
+// rhs_registers is the number of registers one RhsPacket takes, so RhsPacketx4 takes four times that.
+template <typename RhsPacket, typename RhsPacketx4, int registers_taken, int rhs_registers = 1>
 struct RhsPanelHelper {
  private:
   static constexpr int remaining_registers =
       (std::max)(int(EIGEN_ARCH_DEFAULT_NUMBER_OF_REGISTERS) - registers_taken, 0);
 
  public:
-  using type = std::conditional_t<remaining_registers >= 4, RhsPacketx4, RhsPacket>;
+  using type = std::conditional_t<remaining_registers >= 4 * rhs_registers, RhsPacketx4, RhsPacket>;
 };
 
 template <typename Packet>
@@ -507,25 +554,29 @@ struct packet_conditional<GEBPPacketHalf, T1, T2, T3> {
   using type = T2;
 };
 
-#define PACKET_DECL_COND_POSTFIX(postfix, name, packet_size)                                               \
-  typedef typename packet_conditional<                                                                     \
-      packet_size, typename packet_traits<name##Scalar>::type, typename packet_traits<name##Scalar>::half, \
-      typename unpacket_traits<typename packet_traits<name##Scalar>::half>::half>::type name##Packet##postfix
+#define PACKET_DECL_COND_POSTFIX(postfix, name, packet_size)                               \
+  using name##Packet##postfix =                                                            \
+      typename packet_conditional<packet_size, typename packet_traits<name##Scalar>::type, \
+                                  typename packet_traits<name##Scalar>::half,              \
+                                  typename unpacket_traits<typename packet_traits<name##Scalar>::half>::half>::type
 
-#define PACKET_DECL_COND(name, packet_size)                                                                \
-  typedef typename packet_conditional<                                                                     \
-      packet_size, typename packet_traits<name##Scalar>::type, typename packet_traits<name##Scalar>::half, \
-      typename unpacket_traits<typename packet_traits<name##Scalar>::half>::half>::type name##Packet
+#define PACKET_DECL_COND(name, packet_size)                                                \
+  using name##Packet =                                                                     \
+      typename packet_conditional<packet_size, typename packet_traits<name##Scalar>::type, \
+                                  typename packet_traits<name##Scalar>::half,              \
+                                  typename unpacket_traits<typename packet_traits<name##Scalar>::half>::half>::type
 
-#define PACKET_DECL_COND_SCALAR_POSTFIX(postfix, packet_size)                                  \
-  typedef typename packet_conditional<                                                         \
-      packet_size, typename packet_traits<Scalar>::type, typename packet_traits<Scalar>::half, \
-      typename unpacket_traits<typename packet_traits<Scalar>::half>::half>::type ScalarPacket##postfix
+#define PACKET_DECL_COND_SCALAR_POSTFIX(postfix, packet_size)                        \
+  using ScalarPacket##postfix =                                                      \
+      typename packet_conditional<packet_size, typename packet_traits<Scalar>::type, \
+                                  typename packet_traits<Scalar>::half,              \
+                                  typename unpacket_traits<typename packet_traits<Scalar>::half>::half>::type
 
-#define PACKET_DECL_COND_SCALAR(packet_size)                                                   \
-  typedef typename packet_conditional<                                                         \
-      packet_size, typename packet_traits<Scalar>::type, typename packet_traits<Scalar>::half, \
-      typename unpacket_traits<typename packet_traits<Scalar>::half>::half>::type ScalarPacket
+#define PACKET_DECL_COND_SCALAR(packet_size)                                         \
+  using ScalarPacket =                                                               \
+      typename packet_conditional<packet_size, typename packet_traits<Scalar>::type, \
+                                  typename packet_traits<Scalar>::half,              \
+                                  typename unpacket_traits<typename packet_traits<Scalar>::half>::half>::type
 
 /* Vectorization logic
  *  real*real: unpack rhs to constant packets, ...
@@ -742,7 +793,9 @@ class gebp_traits<std::complex<RealScalar>, RealScalar, ConjLhs_, false, Arch, P
                                      RhsPacketType& tmp, const std::true_type&) const {
 #ifdef EIGEN_HAS_SINGLE_INSTRUCTION_MADD
     EIGEN_UNUSED_VARIABLE(tmp);
-    c.v = pmadd(a.v, b, c.v);
+    // Conjugation is deferred to acc().
+    conj_helper<LhsPacketType, RhsPacketType, false, false> cj;
+    c = cj.pmadd(a, b, c);
 #else
     tmp = b;
     tmp = pmul(a.v, tmp);
@@ -773,6 +826,11 @@ struct DoublePacket {
   Packet first;
   Packet second;
 };
+
+template <typename Packet>
+struct is_double_packet : std::false_type {};
+template <typename Packet>
+struct is_double_packet<DoublePacket<Packet>> : std::true_type {};
 
 template <typename Packet>
 DoublePacket<Packet> padd(const DoublePacket<Packet>& a, const DoublePacket<Packet>& b) {
@@ -855,7 +913,12 @@ class gebp_traits<std::complex<RealScalar>, std::complex<RealScalar>, ConjLhs_, 
     NumberOfRegisters = EIGEN_ARCH_DEFAULT_NUMBER_OF_REGISTERS,
 
     nr = 4,
+#ifdef EIGEN_HAS_SINGLE_INSTRUCTION_MADD
+    // Each DoublePacket accumulator takes two registers.
+    mr = plain_enum_max(1, NumberOfRegisters / 4 / nr) * ResPacketSize,
+#else
     mr = (plain_enum_min(16, NumberOfRegisters) / 2 / nr) * ResPacketSize,
+#endif
 
     LhsProgress = ResPacketSize,
     RhsProgress = 1
@@ -1052,7 +1115,9 @@ class gebp_traits<RealScalar, std::complex<RealScalar>, false, ConjRhs_, Arch, P
                                      RhsPacketType& tmp, const std::true_type&) const {
 #ifdef EIGEN_HAS_SINGLE_INSTRUCTION_MADD
     EIGEN_UNUSED_VARIABLE(tmp);
-    c.v = pmadd(a, b.v, c.v);
+    // Conjugation is deferred to acc().
+    conj_helper<LhsPacketType, RhsPacketType, false, false> cj;
+    c = cj.pmadd(a, b, c);
 #else
     tmp = b;
     tmp.v = pmul(a, tmp.v);
@@ -1085,6 +1150,13 @@ class gebp_traits<RealScalar, std::complex<RealScalar>, false, ConjRhs_, Arch, P
  *  |real |cplx | no vectorization yet, would require to pack A with duplication
  *  |cplx |real | easy vectorization
  */
+// The result scalars whose kernel stores may overwrite: assigning one is known to give what adding it onto a zero
+// does. Other scalars, including custom ones over a built-in real type, keep accumulating.
+template <typename Scalar>
+struct gebp_overwritable_scalar : bool_constant<std::is_arithmetic<Scalar>::value> {};
+template <typename Real>
+struct gebp_overwritable_scalar<std::complex<Real>> : bool_constant<std::is_arithmetic<Real>::value> {};
+
 template <typename LhsScalar, typename RhsScalar, typename Index, typename DataMapper, int mr, int nr,
           bool ConjugateLhs, bool ConjugateRhs>
 struct gebp_kernel {
@@ -1131,10 +1203,51 @@ struct gebp_kernel {
     ResPacketSize = Traits::ResPacketSize
   };
 
-  EIGEN_DONT_INLINE void operator()(const DataMapper& res, const LhsScalar* blockA, const RhsScalar* blockB, Index rows,
-                                    Index depth, Index cols, ResScalar alpha, Index strideA = -1, Index strideB = -1,
-                                    Index offsetA = 0, Index offsetB = 0) const;
+  // Overwriting starts each result packet from zero instead of loading it, so it computes exactly what accumulating
+  // into a zeroed result does (see gebp_overwritable_scalar for the scalars that holds for).
+  static constexpr bool CanOverwrite = gebp_overwritable_scalar<ResScalar>::value;
+
+  EIGEN_STRONG_INLINE void operator()(const DataMapper& res, const LhsScalar* blockA, const RhsScalar* blockB,
+                                      Index rows, Index depth, Index cols, ResScalar alpha, Index strideA = -1,
+                                      Index strideB = -1, Index offsetA = 0, Index offsetB = 0) const {
+    run(false, res, blockA, blockB, rows, depth, cols, alpha, strideA, strideB, offsetA, offsetB);
+  }
+  // C = alpha * A' * B' over the block, whatever C held (see gebp_overwrite_t).
+  EIGEN_STRONG_INLINE void operator()(gebp_overwrite_t, const DataMapper& res, const LhsScalar* blockA,
+                                      const RhsScalar* blockB, Index rows, Index depth, Index cols, ResScalar alpha,
+                                      Index strideA = -1, Index strideB = -1, Index offsetA = 0,
+                                      Index offsetB = 0) const {
+    run(true, res, blockA, blockB, rows, depth, cols, alpha, strideA, strideB, offsetA, offsetB);
+  }
+
+  // One body for both: `overwrite` is a runtime flag, so that assignment and accumulation share one
+  // instantiation.
+  EIGEN_DONT_INLINE EIGEN_GEMM_NO_CLONE void run(bool overwrite, const DataMapper& res, const LhsScalar* blockA,
+                                                 const RhsScalar* blockB, Index rows, Index depth, Index cols,
+                                                 ResScalar alpha, Index strideA, Index strideB, Index offsetA,
+                                                 Index offsetB) const;
 };
+
+// One scalar result, alpha * c: added to the destination, or, overwriting, assigned as the sum onto zero that
+// accumulating into a zeroed destination computes. A scalar that cannot overwrite (CanOverwrite) takes an overload
+// without the overwriting form, so that accumulation asks of it only the `dst += alpha * c` it always did.
+template <typename ResScalar, typename Alpha, typename Acc>
+EIGEN_ALWAYS_INLINE void gebp_store_scalar_impl(std::false_type, bool, ResScalar& dst, const Alpha& alpha,
+                                                const Acc& c) {
+  dst += alpha * c;
+}
+template <typename ResScalar, typename Alpha, typename Acc>
+EIGEN_ALWAYS_INLINE void gebp_store_scalar_impl(std::true_type, bool overwrite, ResScalar& dst, const Alpha& alpha,
+                                                const Acc& c) {
+  if (overwrite)
+    dst = ResScalar(0) + alpha * c;
+  else
+    dst += alpha * c;
+}
+template <bool CanOverwrite, typename ResScalar, typename Alpha, typename Acc>
+EIGEN_ALWAYS_INLINE void gebp_store_scalar(bool overwrite, ResScalar& dst, const Alpha& alpha, const Acc& c) {
+  gebp_store_scalar_impl(bool_constant<CanOverwrite>(), overwrite, dst, alpha, c);
+}
 
 template <typename LhsScalar, typename RhsScalar, typename Index, typename DataMapper, int mr, int nr,
           bool ConjugateLhs, bool ConjugateRhs,
@@ -1152,7 +1265,8 @@ struct last_row_process_16_packets {
 
   EIGEN_STRONG_INLINE void operator()(const DataMapper& res, SwappedTraits& straits, const LhsScalar* blA,
                                       const RhsScalar* blB, Index depth, const Index endk, Index i, Index j2,
-                                      ResScalar alpha, SAccPacket& C0) const {
+                                      ResScalar alpha, SAccPacket& C0, bool overwrite = false) const {
+    EIGEN_UNUSED_VARIABLE(overwrite);
     EIGEN_UNUSED_VARIABLE(res);
     EIGEN_UNUSED_VARIABLE(straits);
     EIGEN_UNUSED_VARIABLE(blA);
@@ -1180,13 +1294,14 @@ struct last_row_process_16_packets<LhsScalar, RhsScalar, Index, DataMapper, mr, 
 
   EIGEN_STRONG_INLINE void operator()(const DataMapper& res, SwappedTraits& straits, const LhsScalar* blA,
                                       const RhsScalar* blB, Index depth, const Index endk, Index i, Index j2,
-                                      ResScalar alpha, SAccPacket& C0) const {
+                                      ResScalar alpha, SAccPacket& C0, bool overwrite = false) const {
     using SResPacketQuarter = typename unpacket_traits<typename unpacket_traits<SResPacket>::half>::half;
     using SLhsPacketQuarter = typename unpacket_traits<typename unpacket_traits<SLhsPacket>::half>::half;
     using SRhsPacketQuarter = typename unpacket_traits<typename unpacket_traits<SRhsPacket>::half>::half;
     using SAccPacketQuarter = typename unpacket_traits<typename unpacket_traits<SAccPacket>::half>::half;
 
-    SResPacketQuarter R = res.template gatherPacket<SResPacketQuarter>(i, j2);
+    SResPacketQuarter R =
+        overwrite ? pset1<SResPacketQuarter>(ResScalar(0)) : res.template gatherPacket<SResPacketQuarter>(i, j2);
     SResPacketQuarter alphav = pset1<SResPacketQuarter>(alpha);
 
     if (depth - endk > 0) {
@@ -1247,6 +1362,17 @@ struct gebp_rhs_cols<J, MrPackets, NrCols, true> {
   }
 };
 
+// EIGEN_GEBP_NEON_GCC_WORKAROUNDS: AArch64 NEON with GCC >= 9, where the micro-kernel needs help keeping its
+// accumulators in registers.
+// EIGEN_GEBP_UNROLL_ACCUMULATORS: fully unrolls a loop over the accumulators (at most 3 x 8 = 24), exposing constant
+// indices before GCC's scalar replacement pass at -O2.
+#if EIGEN_ARCH_ARM64 && defined(EIGEN_VECTORIZE_NEON) && EIGEN_GNUC_STRICT_AT_LEAST(9, 0, 0)
+#define EIGEN_GEBP_NEON_GCC_WORKAROUNDS
+#define EIGEN_GEBP_UNROLL_ACCUMULATORS _Pragma("GCC unroll 24")
+#else
+#define EIGEN_GEBP_UNROLL_ACCUMULATORS
+#endif
+
 // One step of the micro-kernel: loads MrPackets LHS packets at step K,
 // then processes NrCols RHS columns via gebp_rhs_cols.
 template <int K, int MrPackets, int NrCols>
@@ -1262,10 +1388,27 @@ struct gebp_micro_step {
     EIGEN_IF_CONSTEXPR (MrPackets >= 3) traits.loadLhs(&blA[(2 + MrPackets * K) * LhsProg], A[2]);
 
     gebp_rhs_cols<0, MrPackets, NrCols>::run(traits, blB, Index(NrCols * K), A, rhs_panel, T0, C);
+#if defined(EIGEN_GEBP_NEON_GCC_WORKAROUNDS) && !defined(EIGEN_DONT_DISABLE_GEBP_INSN_SCHEDULING)
+    using AccPacket = typename GEBPTraits::AccPacket;
+    constexpr bool kRealPacket = std::is_same<AccPacket, Packet4f>::value || std::is_same<AccPacket, Packet2d>::value;
+    EIGEN_IF_CONSTEXPR (MrPackets == 3 && NrCols == 8 && kRealPacket) {
+      // Keep the next depth step's loads from extending live ranges beyond the 24 accumulators.
+      __asm__ volatile("" ::: "memory");
+#if EIGEN_GNUC_STRICT_AT_LEAST(16, 0, 0)
+      // GCC 16 also needs the double accumulator updates to stay on their own depth step.
+      EIGEN_IF_CONSTEXPR (std::is_same<AccPacket, Packet2d>::value) {
+        EIGEN_GEBP_UNROLL_ACCUMULATORS
+        for (int n = 0; n < MrPackets * NrCols; ++n) {
+          EIGEN_OPTIMIZATION_BARRIER(C[n]);
+        }
+      }
+#endif
+    }
+#endif
   }
 };
 // Compiler register allocation workarounds for the GEBP micro-kernel.
-// GCC can fail to keep array-based SIMD values in vector registers, causing
+// GCC and clang can fail to keep array-based SIMD values in vector registers, causing
 // excessive spilling. These helpers use inline asm constraints to pin values.
 // Only applied when the scalar type is actually vectorizable (not custom types).
 // See Eigen bugs 935, 1637, and 3059.
@@ -1315,6 +1458,48 @@ EIGEN_ALWAYS_INLINE void gebp_sse_spilling_workaround(LhsArray_& A, AccArray_& A
 #endif
 }
 
+// Clang AVX/AVX2 on x86-64: the 3pX4 tile needs all 16 ymm registers (12 accumulators, 3 LHS packets, 1 RHS
+// broadcast), and clang keeps accumulators on the stack, reloading and storing them on every depth step: a dependency
+// chain through store forwarding that roughly halves the kernel's throughput. Pinned accumulators make clang spill LHS
+// packets instead, which are off those chains. 32-bit x86 has 8 ymm registers, so its accumulators spill anyway and
+// pinning only adds stack traffic. A barrier sends a class through memory, so complex packets are pinned through their
+// vector member. Not Packet8i: its madd needs a 17th register, and pinning made rare stack layouts up to 2.8x slower.
+#if EIGEN_COMP_CLANG && EIGEN_ARCH_x86_64 && defined(EIGEN_VECTORIZE_AVX) && !defined(EIGEN_VECTORIZE_AVX512)
+#define EIGEN_GEBP_AVX_CLANG_PIN_ACCUMULATORS
+template <typename Packet>
+EIGEN_ALWAYS_INLINE void gebp_avx_clang_pin_accumulator(Packet& x) {
+  pbarrier(x);
+}
+EIGEN_ALWAYS_INLINE void gebp_avx_clang_pin_accumulator(Packet4cf& x) { pbarrier(x.v); }
+EIGEN_ALWAYS_INLINE void gebp_avx_clang_pin_accumulator(Packet2cd& x) { pbarrier(x.v); }
+#endif
+template <int MrPackets, int NrCols, typename GEBPTraits_, typename FullLhsPacket_, typename AccArray_>
+EIGEN_ALWAYS_INLINE void gebp_avx_clang_spilling_workaround(AccArray_& ACC) {
+  EIGEN_UNUSED_VARIABLE(ACC);
+#ifdef EIGEN_GEBP_AVX_CLANG_PIN_ACCUMULATORS
+  using AccElement = std::decay_t<decltype(ACC[0])>;
+  constexpr bool kFloatingPoint =
+      std::is_same<AccElement, Packet8f>::value || std::is_same<AccElement, Packet4d>::value ||
+      std::is_same<AccElement, Packet4cf>::value || std::is_same<AccElement, Packet2cd>::value;
+  constexpr bool apply = GEBPTraits_::Vectorizable && MrPackets == 3 && NrCols == 4 && kFloatingPoint &&
+                         std::is_same<AccElement, FullLhsPacket_>::value;
+  EIGEN_IF_CONSTEXPR (apply) {
+    for (int n = 0; n < MrPackets * NrCols; ++n) gebp_avx_clang_pin_accumulator(ACC[n]);
+  }
+#endif
+}
+
+// Double-accumulation trick for 1pX4 path to break FMA dependency chains. A DoublePacket
+// accumulator already holds two chains, and with 16 registers doubling it would spill.
+template <typename AccPacket, int MrPackets, int NrCols>
+struct gebp_use_double_accum {
+  static constexpr bool value = MrPackets == 1 && NrCols == 4
+#ifdef EIGEN_HAS_SINGLE_INSTRUCTION_MADD
+                                && !(is_double_packet<AccPacket>::value && EIGEN_ARCH_DEFAULT_NUMBER_OF_REGISTERS < 32)
+#endif
+      ;
+};
+
 // Unrolled peeled loop body: calls gebp_micro_step for K=0..7, handling
 // double-accumulation for 1pX4, prefetches, and compiler workarounds.
 template <int MrPackets, int NrCols>
@@ -1323,7 +1508,7 @@ struct gebp_peeled_loop {
             typename RhsPacketType, typename AccArray, typename AccArrayD, typename FullLhsPacket>
   static EIGEN_ALWAYS_INLINE void run(GEBPTraits& traits, const LhsScalar_* blA, const RhsScalar_* blB, LhsArray& A,
                                       RhsPanelType& rhs_panel, RhsPacketType& T0, AccArray& C, AccArrayD& D) {
-    constexpr bool use_double_accum = (MrPackets == 1 && NrCols == 4);
+    constexpr bool use_double_accum = gebp_use_double_accum<typename GEBPTraits::AccPacket, MrPackets, NrCols>::value;
 
     // Prefetch for 4-col paths
     EIGEN_IF_CONSTEXPR (NrCols == 4) {
@@ -1336,6 +1521,7 @@ struct gebp_peeled_loop {
     gebp_micro_step<KVAL, MrPackets, NrCols>::run(traits, blA, blB, A, rhs_panel, T0, ACC); \
     gebp_neon_3p_workaround<MrPackets, GEBPTraits, FullLhsPacket>(A);                       \
     gebp_sse_spilling_workaround<MrPackets, NrCols, GEBPTraits, FullLhsPacket>(A, ACC);     \
+    gebp_avx_clang_spilling_workaround<MrPackets, NrCols, GEBPTraits, FullLhsPacket>(ACC);  \
     /* LHS prefetch for 2pX4 and 3pX4 */                                                    \
     EIGEN_IF_CONSTEXPR ((MrPackets == 2 || MrPackets == 3) && NrCols == 4) {                \
       internal::prefetch(blA + (MrPackets * KVAL + 16) * GEBPTraits::LhsProgress);          \
@@ -1383,7 +1569,8 @@ template <int MrPackets, int NrCols, typename GEBPTraits, typename LhsScalar_, t
 EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMapper_& res, const LhsScalar_* blockA,
                                                const RhsScalar_* blockB, ResScalar_ alpha, Index_ i, Index_ j2,
                                                Index_ depth, Index_ strideA, Index_ strideB, Index_ offsetA,
-                                               Index_ offsetB, int prefetch_res_offset, Index_ peeled_kc, int pk) {
+                                               Index_ offsetB, int prefetch_res_offset, Index_ peeled_kc, int pk,
+                                               bool overwrite) {
   using LhsPacketLocal = typename GEBPTraits::LhsPacket;
   using RhsPacketLocal = typename GEBPTraits::RhsPacket;
   using ResPacketLocal = typename GEBPTraits::ResPacket;
@@ -1393,10 +1580,14 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
   constexpr int RhsProg = GEBPTraits::RhsProgress;
   constexpr int ResPacketSz = GEBPTraits::ResPacketSize;
 
-  // Determine RhsPanel type based on register pressure
-  using RhsPanelType = std::conditional_t<
-      NrCols == 1, RhsPacketLocal,
-      typename RhsPanelHelper<RhsPacketLocal, RhsPacketx4Local, MrPackets * NrCols + MrPackets>::type>;
+  // Determine RhsPanel type based on register pressure. A DoublePacket takes two registers.
+  constexpr bool use_double_accum = gebp_use_double_accum<AccPacketLocal, MrPackets, NrCols>::value;
+  constexpr int AccRegisters = is_double_packet<AccPacketLocal>::value ? 2 : 1;
+  constexpr int RhsRegisters = is_double_packet<RhsPacketLocal>::value ? 2 : 1;
+  constexpr int RegistersTaken = AccRegisters * (MrPackets + use_double_accum) * NrCols + MrPackets;
+  using RhsPanelType =
+      std::conditional_t<NrCols == 1, RhsPacketLocal,
+                         typename RhsPanelHelper<RhsPacketLocal, RhsPacketx4Local, RegistersTaken, RhsRegisters>::type>;
 
   const LhsScalar_* blA = &blockA[i * strideA + offsetA * (MrPackets * LhsProg)];
   prefetch(&blA[0]);
@@ -1410,10 +1601,9 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
   constexpr int CSize = 3 * NrCols > MrPackets * NrCols ? 3 * NrCols : MrPackets * NrCols;
 #endif
   alignas(AccPacketLocal) AccPacketLocal C[CSize];
+  EIGEN_GEBP_UNROLL_ACCUMULATORS
   for (int n = 0; n < MrPackets * NrCols; ++n) traits.initAcc(C[n]);
 
-  // Double-accumulation trick for 1pX4 path to break FMA dependency chains
-  constexpr bool use_double_accum = (MrPackets == 1 && NrCols == 4);
 #ifdef EIGEN_HAS_CXX17_IFCONSTEXPR
   alignas(AccPacketLocal) AccPacketLocal D[use_double_accum ? NrCols : 1];
 #else
@@ -1458,6 +1648,7 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
 
   // Merge double accumulators
   EIGEN_IF_CONSTEXPR (use_double_accum) {
+    EIGEN_GEBP_UNROLL_ACCUMULATORS
     for (int n = 0; n < NrCols; ++n) C[n] = padd(C[n], D[n]);
   }
 
@@ -1474,15 +1665,21 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
 
   // ---- Store results: C[j + p * NrCols] -> res(i + p*ResPacketSz, j2 + j) ----
   alignas(ResPacketLocal) ResPacketLocal alphav = pset1<ResPacketLocal>(alpha);
+  EIGEN_GEBP_UNROLL_ACCUMULATORS
   for (int j = 0; j < NrCols; ++j) {
     LinearMapper_ r = res.getLinearMapper(i, j2 + j);
+    EIGEN_GEBP_UNROLL_ACCUMULATORS
     for (int p = 0; p < MrPackets; ++p) {
-      alignas(ResPacketLocal) ResPacketLocal R = r.template loadPacket<ResPacketLocal>(p * ResPacketSz);
+      alignas(ResPacketLocal) ResPacketLocal R =
+          overwrite ? pset1<ResPacketLocal>(ResScalar_(0)) : r.template loadPacket<ResPacketLocal>(p * ResPacketSz);
       traits.acc(C[j + p * NrCols], alphav, R);
       r.storePacket(p * ResPacketSz, R);
     }
   }
 }
+#undef EIGEN_GEBP_UNROLL_ACCUMULATORS
+#undef EIGEN_GEBP_NEON_GCC_WORKAROUNDS
+#undef EIGEN_GEBP_AVX_CLANG_PIN_ACCUMULATORS
 
 // Workaround a GCC/AArch64 register-allocation issue (through at least GCC 14.3): the float
 // kernel's mr=12 x nr=8 tile holds 24 of the 32 NEON registers, and GCC's pre-RA scheduler
@@ -1490,7 +1687,8 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
 // ~halving GEMM throughput (~2.1x fp32 on Cortex-X925; spills 20 -> 2 with it off). Clang
 // allocates the same tile spill-free, so we keep nr=8 and just disable that GCC pass here.
 // This is a known bug in GCC: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=100697
-// In-order cores can opt out via EIGEN_DONT_DISABLE_GEBP_INSN_SCHEDULING.
+// In-order cores can opt out via EIGEN_DONT_DISABLE_GEBP_INSN_SCHEDULING, which also drops the
+// depth-step barriers in gebp_micro_step.
 #if EIGEN_COMP_GNUC_STRICT && EIGEN_ARCH_ARM64 && !defined(EIGEN_DONT_DISABLE_GEBP_INSN_SCHEDULING)
 #pragma GCC push_options
 #pragma GCC optimize("no-schedule-insns")
@@ -1498,11 +1696,12 @@ EIGEN_ALWAYS_INLINE void gebp_micro_panel_impl(GEBPTraits& traits, const DataMap
 #endif
 template <typename LhsScalar, typename RhsScalar, typename Index, typename DataMapper, int mr, int nr,
           bool ConjugateLhs, bool ConjugateRhs>
-EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, nr, ConjugateLhs,
-                                   ConjugateRhs>::operator()(const DataMapper& res, const LhsScalar* blockA,
-                                                             const RhsScalar* blockB, Index rows, Index depth,
-                                                             Index cols, ResScalar alpha, Index strideA, Index strideB,
-                                                             Index offsetA, Index offsetB) const {
+EIGEN_DONT_INLINE EIGEN_GEMM_NO_CLONE void
+gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, nr, ConjugateLhs, ConjugateRhs>::run(
+    bool overwrite_, const DataMapper& res, const LhsScalar* blockA, const RhsScalar* blockB, Index rows, Index depth,
+    Index cols, ResScalar alpha, Index strideA, Index strideB, Index offsetA, Index offsetB) const {
+  // Constant false where the scalar cannot overwrite, so that the overwriting stores fold away.
+  const bool overwrite = CanOverwrite && overwrite_;
   Traits traits;
   SwappedTraits straits;
 
@@ -1537,7 +1736,7 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
     using LTraits = std::remove_reference_t<decltype(local_traits)>;
     gebp_micro_panel_impl<MrP, NrC, LTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                           LhsPacket>(local_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB, offsetA,
-                                     offsetB, prefetch_res_offset, peeled_kc, pk);
+                                     offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
   };
 
   // Budget (in bytes) for co-residency of the RHS block and a strip of the
@@ -1621,7 +1820,8 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
   }
 
   //---------- Process 1 * LhsProgress rows at once ----------
-  EIGEN_IF_CONSTEXPR (mr >= 1 * Traits::LhsProgress) {
+  // With a wider mr, at most one row panel is left here.
+  EIGEN_IF_CONSTEXPR (mr > 1 * Traits::LhsProgress) {
     for (Index i = peeled_mc2; i < peeled_mc1; i += LhsProgress) {
       EIGEN_IF_CONSTEXPR (nr >= 8) {
         for (Index j2 = 0; j2 < packet_cols8; j2 += 8) {
@@ -1635,6 +1835,36 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
         micro_panel(fix<1>, fix<1>, traits, i, j2);
       }
     }
+  } else EIGEN_IF_CONSTEXPR (mr == 1 * Traits::LhsProgress) {
+    // Every row comes here, blocked like the wider panels above: rows inside columns keep the rhs panel in cache
+    // and walk C down its columns.
+    const Index rhs_block1 = sizeof(ResScalar) * mr * nr + depth * nr * sizeof(RhsScalar);
+    const Index lhs_strip1 = depth * sizeof(LhsScalar) * LhsProgress;
+    const Index lhs_avail1 = (lhs_budget > rhs_block1) ? (lhs_budget - rhs_block1) : 0;
+    const Index mc1_range = peeled_mc1 - peeled_mc2;
+    const Index actual_panel_rows = (lhs_avail1 >= mc1_range * depth * static_cast<Index>(sizeof(LhsScalar)))
+                                        ? mc1_range
+                                        : LhsProgress * std::max<Index>(1, lhs_avail1 / lhs_strip1);
+    for (Index i1 = peeled_mc2; i1 < peeled_mc1; i1 += actual_panel_rows) {
+      const Index actual_panel_end = (std::min)(i1 + actual_panel_rows, peeled_mc1);
+      EIGEN_IF_CONSTEXPR (nr >= 8) {
+        for (Index j2 = 0; j2 < packet_cols8; j2 += 8) {
+          for (Index i = i1; i < actual_panel_end; i += LhsProgress) {
+            micro_panel(fix<1>, fix<8>, traits, i, j2);
+          }
+        }
+      }
+      for (Index j2 = packet_cols8; j2 < packet_cols4; j2 += 4) {
+        for (Index i = i1; i < actual_panel_end; i += LhsProgress) {
+          micro_panel(fix<1>, fix<4>, traits, i, j2);
+        }
+      }
+      for (Index j2 = packet_cols4; j2 < cols; j2++) {
+        for (Index i = i1; i < actual_panel_end; i += LhsProgress) {
+          micro_panel(fix<1>, fix<1>, traits, i, j2);
+        }
+      }
+    }
   }
 
   //---------- Process LhsProgressHalf rows at once ----------
@@ -1645,18 +1875,18 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
         for (Index j2 = 0; j2 < packet_cols8; j2 += 8) {
           gebp_micro_panel_impl<1, 8, HalfTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                                 LhsPacket>(half_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                           offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                           offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
         }
       }
       for (Index j2 = packet_cols8; j2 < packet_cols4; j2 += 4) {
         gebp_micro_panel_impl<1, 4, HalfTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                               LhsPacket>(half_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
       }
       for (Index j2 = packet_cols4; j2 < cols; j2++) {
         gebp_micro_panel_impl<1, 1, HalfTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                               LhsPacket>(half_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
       }
     }
   }
@@ -1669,18 +1899,18 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
         for (Index j2 = 0; j2 < packet_cols8; j2 += 8) {
           gebp_micro_panel_impl<1, 8, QuarterTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                                 LhsPacket>(quarter_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                           offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                           offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
         }
       }
       for (Index j2 = packet_cols8; j2 < packet_cols4; j2 += 4) {
         gebp_micro_panel_impl<1, 4, QuarterTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                               LhsPacket>(quarter_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
       }
       for (Index j2 = packet_cols4; j2 < cols; j2++) {
         gebp_micro_panel_impl<1, 1, QuarterTraits, LhsScalar, RhsScalar, ResScalar, Index, DataMapper, LinearMapper,
                               LhsPacket>(quarter_traits, res, blockA, blockB, alpha, i, j2, depth, strideA, strideB,
-                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk);
+                                         offsetA, offsetB, prefetch_res_offset, peeled_kc, pk, overwrite);
       }
     }
   }
@@ -1727,14 +1957,14 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
 
             blB += 8;
           }
-          res(i, j2 + 0) += alpha * C0;
-          res(i, j2 + 1) += alpha * C1;
-          res(i, j2 + 2) += alpha * C2;
-          res(i, j2 + 3) += alpha * C3;
-          res(i, j2 + 4) += alpha * C4;
-          res(i, j2 + 5) += alpha * C5;
-          res(i, j2 + 6) += alpha * C6;
-          res(i, j2 + 7) += alpha * C7;
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 0), alpha, C0);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 1), alpha, C1);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 2), alpha, C2);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 3), alpha, C3);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 4), alpha, C4);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 5), alpha, C5);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 6), alpha, C6);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 7), alpha, C7);
         }
       }
     }
@@ -1810,20 +2040,17 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
           }
           if (SwappedTraits::LhsProgress == 8) {
             // Special case where we have to first reduce the accumulation register C0
-            typedef std::conditional_t<SwappedTraits::LhsProgress >= 8, typename unpacket_traits<SResPacket>::half,
-                                       SResPacket>
-                SResPacketHalf;
-            typedef std::conditional_t<SwappedTraits::LhsProgress >= 8, typename unpacket_traits<SLhsPacket>::half,
-                                       SLhsPacket>
-                SLhsPacketHalf;
-            typedef std::conditional_t<SwappedTraits::LhsProgress >= 8, typename unpacket_traits<SRhsPacket>::half,
-                                       SRhsPacket>
-                SRhsPacketHalf;
-            typedef std::conditional_t<SwappedTraits::LhsProgress >= 8, typename unpacket_traits<SAccPacket>::half,
-                                       SAccPacket>
-                SAccPacketHalf;
+            using SResPacketHalf = std::conditional_t<SwappedTraits::LhsProgress >= 8,
+                                                      typename unpacket_traits<SResPacket>::half, SResPacket>;
+            using SLhsPacketHalf = std::conditional_t<SwappedTraits::LhsProgress >= 8,
+                                                      typename unpacket_traits<SLhsPacket>::half, SLhsPacket>;
+            using SRhsPacketHalf = std::conditional_t<SwappedTraits::LhsProgress >= 8,
+                                                      typename unpacket_traits<SRhsPacket>::half, SRhsPacket>;
+            using SAccPacketHalf = std::conditional_t<SwappedTraits::LhsProgress >= 8,
+                                                      typename unpacket_traits<SAccPacket>::half, SAccPacket>;
 
-            SResPacketHalf R = res.template gatherPacket<SResPacketHalf>(i, j2);
+            SResPacketHalf R =
+                overwrite ? pset1<SResPacketHalf>(ResScalar(0)) : res.template gatherPacket<SResPacketHalf>(i, j2);
             SResPacketHalf alphav = pset1<SResPacketHalf>(alpha);
 
             if (depth - endk > 0) {
@@ -1845,9 +2072,9 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
             // template form, so that LhsProgress < 16 paths don't
             // fail to compile
             last_row_process_16_packets<LhsScalar, RhsScalar, Index, DataMapper, mr, nr, ConjugateLhs, ConjugateRhs> p;
-            p(res, straits, blA, blB, depth, endk, i, j2, alpha, C0);
+            p(res, straits, blA, blB, depth, endk, i, j2, alpha, C0, overwrite);
           } else {
-            SResPacket R = res.template gatherPacket<SResPacket>(i, j2);
+            SResPacket R = overwrite ? pset1<SResPacket>(ResScalar(0)) : res.template gatherPacket<SResPacket>(i, j2);
             SResPacket alphav = pset1<SResPacket>(alpha);
             straits.acc(C0, alphav, R);
             res.scatterPacket(i, j2, R);
@@ -1875,10 +2102,10 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
 
             blB += 4;
           }
-          res(i, j2 + 0) += alpha * C0;
-          res(i, j2 + 1) += alpha * C1;
-          res(i, j2 + 2) += alpha * C2;
-          res(i, j2 + 3) += alpha * C3;
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 0), alpha, C0);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 1), alpha, C1);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 2), alpha, C2);
+          gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2 + 3), alpha, C3);
         }
       }
     }
@@ -1896,7 +2123,7 @@ EIGEN_DONT_INLINE void gebp_kernel<LhsScalar, RhsScalar, Index, DataMapper, mr, 
           RhsScalar B_0 = blB[k];
           C0 = cj.pmadd(A0, B_0, C0);
         }
-        res(i, j2) += alpha * C0;
+        gebp_store_scalar<CanOverwrite>(overwrite, res(i, j2), alpha, C0);
       }
     }
   }
@@ -2510,7 +2737,7 @@ struct gemm_pack_rhs<Scalar, Index, DataMapper, nr, RowMajor, Conjugate, PanelMo
 }  // end namespace internal
 
 /** \returns the currently set level 1 cpu cache size (in bytes) used to estimate the ideal blocking size parameters.
- * \sa setCpuCacheSize */
+ * \sa setCpuCacheSizes */
 inline std::ptrdiff_t l1CacheSize() {
   std::ptrdiff_t l1, l2, l3;
   internal::manage_caching_sizes(GetAction, &l1, &l2, &l3);
@@ -2518,7 +2745,7 @@ inline std::ptrdiff_t l1CacheSize() {
 }
 
 /** \returns the currently set level 2 cpu cache size (in bytes) used to estimate the ideal blocking size parameters.
- * \sa setCpuCacheSize */
+ * \sa setCpuCacheSizes */
 inline std::ptrdiff_t l2CacheSize() {
   std::ptrdiff_t l1, l2, l3;
   internal::manage_caching_sizes(GetAction, &l1, &l2, &l3);
@@ -2526,16 +2753,17 @@ inline std::ptrdiff_t l2CacheSize() {
 }
 
 /** \returns the currently set level 3 cpu cache size (in bytes) used to estimate the ideal blocking size parameters.
- * \sa setCpuCacheSize */
+ * \sa setCpuCacheSizes */
 inline std::ptrdiff_t l3CacheSize() {
   std::ptrdiff_t l1, l2, l3;
   internal::manage_caching_sizes(GetAction, &l1, &l2, &l3);
   return l3;
 }
 
-/** Set the cpu L1 and L2 cache sizes (in bytes).
- * These values are use to adjust the size of the blocks
- * for the algorithms working per blocks.
+/** Set the cpu L1, L2 and L3 cache sizes (in bytes).
+ * These values are used to adjust blocking sizes and, on some backends, the size crossovers between kernels.
+ * By default they are queried from the CPU that runs the first product. Setting them explicitly makes the
+ * blocking, and therefore the rounding of the results, independent of that CPU; see \ref TopicPitfalls_reproducibility.
  *
  * \sa computeProductBlockingSizes */
 inline void setCpuCacheSizes(std::ptrdiff_t l1, std::ptrdiff_t l2, std::ptrdiff_t l3) {

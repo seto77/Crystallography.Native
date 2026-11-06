@@ -13,14 +13,14 @@
 #define EIGEN_CONFIGURE_VECTORIZATION_H
 
 // Prepare for using the generic clang backend if requested.
+#if defined(EIGEN_VECTORIZE_GENERIC) && !defined(EIGEN_GENERIC_VECTOR_SIZE_BYTES)
+#define EIGEN_GENERIC_VECTOR_SIZE_BYTES 64
+#endif
 #if defined(EIGEN_VECTORIZE_GENERIC) && !defined(EIGEN_DONT_VECTORIZE) && !defined(EIGEN_DONT_ALIGN)
 #if !EIGEN_ARCH_VECTOR_EXTENSIONS
 #error "The compiler does not support clang vector extensions."
 #endif
 #define EIGEN_VECTORIZE
-#ifndef EIGEN_GENERIC_VECTOR_SIZE_BYTES
-#define EIGEN_GENERIC_VECTOR_SIZE_BYTES 64
-#endif
 #define EIGEN_MAX_ALIGN_BYTES EIGEN_GENERIC_VECTOR_SIZE_BYTES
 #endif
 
@@ -49,6 +49,13 @@
 #else
 #define EIGEN_ALIGN_TO_BOUNDARY(n) alignas(n)
 #define EIGEN_ALIGNOF(x) alignof(x)
+#endif
+
+#if defined(__riscv)
+// Defines the default LMUL for RISC-V
+#ifndef EIGEN_RISCV64_DEFAULT_LMUL
+#define EIGEN_RISCV64_DEFAULT_LMUL 1
+#endif
 #endif
 
 // Align to the boundary that avoids false sharing.
@@ -96,9 +103,13 @@
 #define EIGEN_IDEAL_MAX_ALIGN_BYTES 32
 #elif defined __HVX__ && (__HVX_LENGTH__ == 128)
 #define EIGEN_IDEAL_MAX_ALIGN_BYTES 128
-#elif defined(EIGEN_RISCV64_USE_RVV10)
-#if __riscv_v_fixed_vlen <= 512
-#define EIGEN_IDEAL_MAX_ALIGN_BYTES 64
+#elif defined(EIGEN_RISCV64_USE_RVV10) && defined(__riscv_v_fixed_vlen)
+// As for SVE: a default packet is VLEN * LMUL / 8 bytes and asks for that much alignment, which a
+// fixed-size object must be able to offer to reach the aligned path. The Alignment enum stops at 128.
+// Without a fixed VLEN, falling through to 16 keeps vectorization on, so the RVV block below reports
+// the missing -mrvv-vector-bits=zvl; evaluating the formula would give 0 and disable that block.
+#if (__riscv_v_fixed_vlen * EIGEN_RISCV64_DEFAULT_LMUL / 8) <= 128
+#define EIGEN_IDEAL_MAX_ALIGN_BYTES (__riscv_v_fixed_vlen * EIGEN_RISCV64_DEFAULT_LMUL / 8)
 #else
 #define EIGEN_IDEAL_MAX_ALIGN_BYTES 128
 #endif
@@ -432,6 +443,11 @@ extern "C" {
 
 #define EIGEN_VECTORIZE
 #define EIGEN_VECTORIZE_VSX 1
+// The POWER8 (ISA 2.07) vector instructions, such as 64-bit integer lane arithmetic and compares and vec_neg; a
+// POWER7 target has VSX without them.
+#if defined(__POWER8_VECTOR__)
+#define EIGEN_VECTORIZE_POWER8_VECTOR
+#endif
 #define EIGEN_VECTORIZE_FMA
 #include <altivec.h>
 // We need to #undef macros defined by <altivec.h> that conflict with standard C++ names.
@@ -528,6 +544,8 @@ static_assert((EIGEN_ARM64_SVE_VL >= 128) && (EIGEN_ARM64_SVE_VL <= 2048) &&
 
 #define EIGEN_VECTORIZE
 #define EIGEN_VECTORIZE_RVV10
+// pmadd and its variants map to the fused vfmadd/vfmsub/vfnmsub/vfnmadd.
+#define EIGEN_VECTORIZE_FMA
 #include <riscv_vector.h>
 
 // Since we depend on knowing RVV vector length at compile-time, we need
@@ -571,7 +589,8 @@ static_assert((EIGEN_ARM64_SVE_VL >= 128) && (EIGEN_ARM64_SVE_VL <= 2048) &&
 
 #endif  // defined(EIGEN_ARCH_RISCV)
 
-#elif (defined __s390x__ && defined __VEC__)
+// ZVector needs the vector float instructions of z14 (__ARCH__ 12); below that, s390x stays scalar.
+#elif (defined __s390x__ && defined __VEC__ && (!defined(__ARCH__) || __ARCH__ >= 12))
 
 #define EIGEN_VECTORIZE
 #define EIGEN_VECTORIZE_ZVECTOR
@@ -596,6 +615,8 @@ static_assert((EIGEN_ARM64_SVE_VL >= 128) && (EIGEN_ARM64_SVE_VL <= 2048) &&
 
 #define EIGEN_VECTORIZE
 #define EIGEN_VECTORIZE_LSX
+// pmadd and its variants map to the fused vfmadd/vfmsub/vfnmadd/vfnmsub.
+#define EIGEN_VECTORIZE_FMA
 #include <lsxintrin.h>
 
 #elif defined __HVX__ && (__HVX_LENGTH__ == 128)
@@ -619,6 +640,13 @@ static_assert((EIGEN_ARM64_SVE_VL >= 128) && (EIGEN_ARM64_SVE_VL <= 2048) &&
 
 // Enable FMA for ARM.
 #if defined(__ARM_FEATURE_FMA)
+#define EIGEN_VECTORIZE_FMA
+#endif
+
+// The generic clang backend skips the x86 detection above but fuses its pmadd where __FMA__ is defined, and the
+// kernels that choose constants or error-free products by EIGEN_VECTORIZE_FMA must know it.
+#if defined(EIGEN_VECTORIZE_GENERIC) && !defined(EIGEN_DONT_VECTORIZE) && defined(__FMA__) && \
+    !defined(EIGEN_VECTORIZE_FMA)
 #define EIGEN_VECTORIZE_FMA
 #endif
 
@@ -653,16 +681,25 @@ static_assert((EIGEN_ARM64_SVE_VL >= 128) && (EIGEN_ARM64_SVE_VL <= 2048) &&
 #include <hip/hip_bfloat16.h>
 #endif
 
-#if defined(__riscv)
-// Defines the default LMUL for RISC-V
-#ifndef EIGEN_RISCV64_DEFAULT_LMUL
-#define EIGEN_RISCV64_DEFAULT_LMUL 1
-#endif
-#endif
-
 /** \brief Namespace containing all symbols from the %Eigen library. */
 // IWYU pragma: private
 #include "../InternalHeaderCheck.h"
+
+/** Whether numext::madd uses std::fma for scalars. Defaults to the hardware: fused where a single
+ * instruction exists, which keeps the scalar and vectorized paths consistent, and unfused otherwise,
+ * where software fma costs 2-3x on Intel and up to 30x on WASM. Error-free transformations such as
+ * internal::twoprod ignore this setting: they call numext::fma when EIGEN_VECTORIZE_FMA is enabled
+ * or FP_FAST_FMA* advertises a fast scalar fma, and use Dekker's product elsewhere.
+ * Resolved here rather than in Macros.h, which Eigen/Core includes first, because the architecture
+ * branches above settle EIGEN_VECTORIZE_FMA -- the ARM one only a few lines up.
+ */
+#ifndef EIGEN_SCALAR_MADD_USE_FMA
+#ifdef EIGEN_VECTORIZE_FMA
+#define EIGEN_SCALAR_MADD_USE_FMA 1
+#else
+#define EIGEN_SCALAR_MADD_USE_FMA 0
+#endif
+#endif
 
 namespace Eigen {
 
@@ -683,6 +720,8 @@ inline static const char* SimdInstructionSetsInUse(void) {
   return "SSE, SSE2";
 #elif defined(EIGEN_VECTORIZE_ALTIVEC)
   return "AltiVec";
+#elif defined(EIGEN_VECTORIZE_POWER8_VECTOR)
+  return "VSX, POWER8 vector";
 #elif defined(EIGEN_VECTORIZE_VSX)
   return "VSX";
 #elif defined(EIGEN_VECTORIZE_NEON)

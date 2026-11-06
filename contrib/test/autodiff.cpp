@@ -1,0 +1,633 @@
+// This file is part of Eigen, a lightweight C++ template library
+// for linear algebra.
+//
+// Copyright (C) 2009 Gael Guennebaud <g.gael@free.fr>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+
+#include "main.h"
+#include <Eigen/Geometry>
+#include <Eigen/Jacobi>
+#include <Eigen/QR>
+#include <Eigen/SVD>
+#include <Eigen/SparseCore>
+#include <contrib/Eigen/AutoDiff>
+#include <contrib/Eigen/Splines>
+#include "NonCommutativeScalar.h"
+
+template <typename Scalar>
+EIGEN_DONT_INLINE Scalar foo(const Scalar& x, const Scalar& y) {
+  using namespace std;
+  //   return x+std::sin(y);
+  EIGEN_ASM_COMMENT("mybegin");
+  // pow(float, int) promotes to pow(double, double)
+  return x * 2 - 1 + static_cast<Scalar>(pow(1 + x, 2)) + 2 * sqrt(y * y + 0) - 4 * sin(0 + x) + 2 * cos(y + 0) -
+         exp(Scalar(-0.5) * x * x + 0);
+  // return x+2*y*x;//x*2 -std::pow(x,2);//(2*y/x);// - y*2;
+  EIGEN_ASM_COMMENT("myend");
+}
+
+template <typename Vector>
+EIGEN_DONT_INLINE typename Vector::Scalar foo(const Vector& p) {
+  using Scalar = typename Vector::Scalar;
+  return (p - Vector(Scalar(-1), Scalar(1.))).norm() + (p.array() * p.array()).sum() + p.dot(p);
+}
+
+template <typename Scalar_, int NX = Dynamic, int NY = Dynamic>
+struct TestFunc1 {
+  using Scalar = Scalar_;
+  enum { InputsAtCompileTime = NX, ValuesAtCompileTime = NY };
+  using InputType = Matrix<Scalar, InputsAtCompileTime, 1>;
+  using ValueType = Matrix<Scalar, ValuesAtCompileTime, 1>;
+  using JacobianType = Matrix<Scalar, ValuesAtCompileTime, InputsAtCompileTime>;
+
+  int m_inputs, m_values;
+
+  TestFunc1() : m_inputs(InputsAtCompileTime), m_values(ValuesAtCompileTime) {}
+  TestFunc1(int inputs_, int values_) : m_inputs(inputs_), m_values(values_) {}
+
+  int inputs() const { return InputsAtCompileTime == Dynamic ? m_inputs : InputsAtCompileTime; }
+  int values() const { return ValuesAtCompileTime == Dynamic ? m_values : ValuesAtCompileTime; }
+
+  template <typename T>
+  void operator()(const Matrix<T, InputsAtCompileTime, 1>& x, Matrix<T, ValuesAtCompileTime, 1>* _v) const {
+    Matrix<T, ValuesAtCompileTime, 1>& v = *_v;
+
+    v[0] = 2 * x[0] * x[0] + x[0] * x[1];
+    v[1] = 3 * x[1] * x[0] + 0.5 * x[1] * x[1];
+    if (inputs() > 2) {
+      v[0] += 0.5 * x[2];
+      v[1] += x[2];
+    }
+    if (values() > 2) {
+      v[2] = 3 * x[1] * x[0] * x[0];
+    }
+    if (inputs() > 2 && values() > 2) v[2] *= x[2];
+  }
+
+  void operator()(const InputType& x, ValueType* v, JacobianType* _j) const {
+    (*this)(x, v);
+
+    if (_j) {
+      JacobianType& j = *_j;
+
+      j(0, 0) = 4 * x[0] + x[1];
+      j(1, 0) = 3 * x[1];
+
+      j(0, 1) = x[0];
+      j(1, 1) = 3 * x[0] + 2 * 0.5 * x[1];
+
+      if (inputs() > 2) {
+        j(0, 2) = 0.5;
+        j(1, 2) = 1;
+      }
+      if (values() > 2) {
+        j(2, 0) = 3 * x[1] * 2 * x[0];
+        j(2, 1) = 3 * x[0] * x[0];
+      }
+      if (inputs() > 2 && values() > 2) {
+        j(2, 0) *= x[2];
+        j(2, 1) *= x[2];
+
+        j(2, 2) = 3 * x[1] * x[0] * x[0];
+      }
+    }
+  }
+};
+
+template <typename Scalar>
+struct integratorFunctor {
+  using InputType = Matrix<Scalar, 2, 1>;
+  using ValueType = Matrix<Scalar, 2, 1>;
+
+  /*
+   * Implementation starts here.
+   */
+  integratorFunctor(const Scalar gain) : _gain(gain) {}
+  integratorFunctor(const integratorFunctor& f) : _gain(f._gain) {}
+  const Scalar _gain;
+
+  template <typename T1, typename T2>
+  void operator()(const T1& input, T2* output, const Scalar dt) const {
+    T2& o = *output;
+
+    /* Integrator to test the AD. */
+    o[0] = input[0] + input[1] * dt * _gain;
+    o[1] = input[1] * _gain;
+  }
+
+  /* Only needed for the test */
+  template <typename T1, typename T2, typename T3>
+  void operator()(const T1& input, T2* output, T3* jacobian, const Scalar dt) const {
+    T2& o = *output;
+
+    /* Integrator to test the AD. */
+    o[0] = input[0] + input[1] * dt * _gain;
+    o[1] = input[1] * _gain;
+
+    if (jacobian) {
+      T3& j = *jacobian;
+
+      j(0, 0) = 1;
+      j(0, 1) = dt * _gain;
+      j(1, 0) = 0;
+      j(1, 1) = _gain;
+    }
+  }
+};
+
+template <typename Func>
+void forward_jacobian_with_scalar_arg(const Func& f) {
+  using Scalar = typename Func::ValueType::Scalar;
+  using ValueType = typename Func::ValueType;
+  using InputType = typename Func::InputType;
+  using JacobianType = typename AutoDiffJacobian<Func>::JacobianType;
+
+  InputType x = InputType::Random(InputType::RowsAtCompileTime);
+  ValueType y, yref;
+  JacobianType j, jref;
+
+  const Scalar dt = internal::random<double>();
+
+  jref.setZero();
+  yref.setZero();
+  f(x, &yref, &jref, dt);
+
+  // std::cerr << "y, yref, jref: " << "\n";
+  // std::cerr << y.transpose() << "\n\n";
+  // std::cerr << yref << "\n\n";
+  // std::cerr << jref << "\n\n";
+
+  AutoDiffJacobian<Func> autoj(f);
+  autoj(x, &y, &j, dt);
+
+  // std::cerr << "y j (via autodiff): " << "\n";
+  // std::cerr << y.transpose() << "\n\n";
+  // std::cerr << j << "\n\n";
+
+  VERIFY_IS_APPROX(y, yref);
+  VERIFY_IS_APPROX(j, jref);
+}
+
+template <typename Func>
+void forward_jacobian(const Func& f) {
+  typename Func::InputType x = Func::InputType::Random(f.inputs());
+  typename Func::ValueType y(f.values()), yref(f.values());
+  typename Func::JacobianType j(f.values(), f.inputs()), jref(f.values(), f.inputs());
+
+  jref.setZero();
+  yref.setZero();
+  f(x, &yref, &jref);
+
+  j.setZero();
+  y.setZero();
+  AutoDiffJacobian<Func> autoj(f);
+  autoj(x, &y, &j);
+
+  VERIFY_IS_APPROX(y, yref);
+  VERIFY_IS_APPROX(j, jref);
+}
+
+template <typename Scalar>
+void test_autodiff_scalar() {
+  using Vector2 = Matrix<Scalar, 2, 1>;
+  using AD = AutoDiffScalar<Vector2>;
+  const Scalar x = internal::random<Scalar>(Scalar(-1), Scalar(1));
+  // sqrt(y*y) is not differentiable at zero.
+  const Scalar magnitude = internal::random<Scalar>(Scalar(0.25), Scalar(1));
+  for (Scalar sign : {Scalar(-1), Scalar(1)}) {
+    const Scalar y = sign * magnitude;
+    const AD ax(x, Vector2::UnitX()), ay(y, Vector2::UnitY());
+    const AD res = foo<AD>(ax, ay);
+    VERIFY_IS_APPROX(res.value(), foo(x, y));
+
+    // dfoo/dx = 4 + 2*x - 4*cos(x) + x*exp(-x*x/2), dfoo/dy = 2*sign(y) - 2*sin(y).
+    const Vector2 expected(Scalar(4) + Scalar(2) * x - Scalar(4) * std::cos(x) + x * std::exp(-x * x / Scalar(2)),
+                           Scalar(2) * sign - Scalar(2) * std::sin(y));
+    const Scalar tolerance = Scalar(32) * NumTraits<Scalar>::epsilon() * (Scalar(1) + expected.norm());
+    VERIFY((res.derivatives() - expected).norm() <= tolerance);
+  }
+}
+
+template <int>
+void test_autodiff_vector() {
+  Vector2f p = Vector2f::Random();
+  using AD = AutoDiffScalar<Vector2f>;
+  using VectorAD = Matrix<AD, 2, 1>;
+  VectorAD ap = p.cast<AD>();
+  ap.x().derivatives() = Vector2f::UnitX();
+  ap.y().derivatives() = Vector2f::UnitY();
+
+  AD res = foo<VectorAD>(ap);
+  VERIFY_IS_APPROX(res.value(), foo(p));
+}
+
+// foo(p) = |p - (-1, 1)| + 2 |p|^2, so grad foo(p) = (p - (-1, 1)) / |p - (-1, 1)| + 4 p.
+inline void check_autodiff_vector_derivative(const Vector2f& p, float expected_value,
+                                             const Vector2f& expected_gradient) {
+  using AD = AutoDiffScalar<Vector2f>;
+  using VectorAD = Matrix<AD, 2, 1>;
+  VectorAD ap = p.cast<AD>();
+  ap.x().derivatives() = Vector2f::UnitX();
+  ap.y().derivatives() = Vector2f::UnitY();
+  const AD res = foo<VectorAD>(ap);
+  VERIFY_IS_APPROX(res.value(), expected_value);
+  VERIFY_IS_APPROX(res.derivatives(), expected_gradient);
+}
+
+template <int>
+void test_autodiff_vector_derivative() {
+  Vector2f p = Vector2f::Random();
+  // Stay away from the kink of the norm term at (-1, 1).
+  if (numext::abs(p.x() + 1.0f) < 0.01f) p.x() = -0.9f;
+  const float x = p.x(), y = p.y();
+  const float norm = std::sqrt((x + 1.0f) * (x + 1.0f) + (y - 1.0f) * (y - 1.0f));
+  check_autodiff_vector_derivative(p, norm + 2.0f * (x * x + y * y),
+                                   Vector2f((x + 1.0f) / norm + 4.0f * x, (y - 1.0f) / norm + 4.0f * y));
+}
+
+template <int>
+void test_autodiff_vector_derivative_specific_values() {
+  check_autodiff_vector_derivative(Vector2f(2.0f, 3.0f), 29.605551f, Vector2f(8.832050f, 12.554700f));
+  check_autodiff_vector_derivative(Vector2f(-3.4f, 7.2f), 133.448308f, Vector2f(-13.960994f, 29.732568f));
+}
+
+template <int>
+void test_autodiff_jacobian() {
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double, 2, 2>())));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double, 2, 3>())));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double, 3, 2>())));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double, 3, 3>())));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double>(2, 2))));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double>(2, 3))));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double>(3, 2))));
+  CALL_SUBTEST((forward_jacobian(TestFunc1<double>(3, 3))));
+  CALL_SUBTEST((forward_jacobian_with_scalar_arg(integratorFunctor<double>(10))));
+}
+
+template <int>
+void test_autodiff_hessian() {
+  using AD = AutoDiffScalar<VectorXd>;
+  using VectorAD = Matrix<AD, Eigen::Dynamic, 1>;
+  using ADD = AutoDiffScalar<VectorAD>;
+  using VectorADD = Matrix<ADD, Eigen::Dynamic, 1>;
+  VectorADD x(2);
+  double s1 = internal::random<double>(), s2 = internal::random<double>(), s3 = internal::random<double>(),
+         s4 = internal::random<double>();
+  x(0).value() = s1;
+  x(1).value() = s2;
+
+  // set unit vectors for the derivative directions (partial derivatives of the input vector)
+  x(0).derivatives().resize(2);
+  x(0).derivatives().setZero();
+  x(0).derivatives()(0) = 1;
+  x(1).derivatives().resize(2);
+  x(1).derivatives().setZero();
+  x(1).derivatives()(1) = 1;
+
+  // repeat partial derivatives for the inner AutoDiffScalar
+  x(0).value().derivatives() = VectorXd::Unit(2, 0);
+  x(1).value().derivatives() = VectorXd::Unit(2, 1);
+
+  // set the hessian matrix to zero
+  for (int idx = 0; idx < 2; idx++) {
+    x(0).derivatives()(idx).derivatives() = VectorXd::Zero(2);
+    x(1).derivatives()(idx).derivatives() = VectorXd::Zero(2);
+  }
+
+  ADD y = sin(AD(s3) * x(0) + AD(s4) * x(1));
+
+  VERIFY_IS_APPROX(y.value().derivatives()(0), y.derivatives()(0).value());
+  VERIFY_IS_APPROX(y.value().derivatives()(1), y.derivatives()(1).value());
+  VERIFY_IS_APPROX(y.value().derivatives()(0), s3 * std::cos(s1 * s3 + s2 * s4));
+  VERIFY_IS_APPROX(y.value().derivatives()(1), s4 * std::cos(s1 * s3 + s2 * s4));
+  VERIFY_IS_APPROX(y.derivatives()(0).derivatives(), -std::sin(s1 * s3 + s2 * s4) * Vector2d(s3 * s3, s4 * s3));
+  VERIFY_IS_APPROX(y.derivatives()(1).derivatives(), -std::sin(s1 * s3 + s2 * s4) * Vector2d(s3 * s4, s4 * s4));
+
+  ADD z = x(0) * x(1);
+  VERIFY_IS_APPROX(z.derivatives()(0).derivatives(), Vector2d(0, 1));
+  VERIFY_IS_APPROX(z.derivatives()(1).derivatives(), Vector2d(1, 0));
+}
+
+double bug_1222() {
+  using AD = Eigen::AutoDiffScalar<Eigen::Vector3d>;
+  const double _cv1_3 = 1.0;
+  const AD chi_3 = 1.0;
+  // this line did not work, because operator+ returns ADS<DerType&>, which then cannot be converted to ADS<DerType>
+  const AD denom = chi_3 + _cv1_3;
+  return denom.value();
+}
+
+double bug_1223() {
+  using std::min;
+  using AD = Eigen::AutoDiffScalar<Eigen::Vector3d>;
+
+  const double _cv1_3 = 1.0;
+  const AD chi_3 = 1.0;
+  const AD denom = 1.0;
+
+// failed because implementation of min attempts to construct ADS<DerType&> via constructor AutoDiffScalar(const Real&
+// value) without initializing m_derivatives (which is a reference in this case)
+#define EIGEN_TEST_SPACE
+  const AD t = min EIGEN_TEST_SPACE(denom / chi_3, 1.0);
+
+  const AD t2 = min EIGEN_TEST_SPACE(denom / (chi_3 * _cv1_3), 1.0);
+
+  return t.value() + t2.value();
+}
+
+// regression test for some compilation issues with specializations of ScalarBinaryOpTraits
+void bug_1260() {
+  Matrix4d A = Matrix4d::Ones();
+  Vector4d v = Vector4d::Ones();
+  A* v;
+}
+
+// check a compilation issue with numext::max
+double bug_1261() {
+  using AD = AutoDiffScalar<Matrix2d>;
+  using VectorAD = Matrix<AD, 2, 1>;
+
+  VectorAD v(0., 0.);
+  const AD maxVal = v.maxCoeff();
+  const AD minVal = v.minCoeff();
+  return maxVal.value() + minVal.value();
+}
+
+double bug_1264() {
+  using AD = AutoDiffScalar<Vector2d>;
+  const AD s = 0.;
+  const Matrix<AD, 3, 1> v1(0., 0., 0.);
+  const Matrix<AD, 3, 1> v2 = (s + 3.0) * v1;
+  return v2(0).value();
+}
+
+// check with expressions on constants
+double bug_1281() {
+  int n = 2;
+  using AD = AutoDiffScalar<VectorXd>;
+  const AD c = 1.;
+  AD x0(2, n, 0);
+  AD y1 = (AD(c) + AD(c)) * x0;
+  y1 = x0 * (AD(c) + AD(c));
+  AD y2 = (-AD(c)) + x0;
+  y2 = x0 + (-AD(c));
+  AD y3 = (AD(c) * (-AD(c)) + AD(c)) * x0;
+  y3 = x0 * (AD(c) * (-AD(c)) + AD(c));
+  return (y1 + y2 + y3).value();
+}
+
+// atan2 must pad the empty derivatives of a constant, as the arithmetic operators do.
+void test_autodiff_atan2_constant() {
+  using AD = AutoDiffScalar<VectorXd>;
+  const AD x(1.0, 2, 0), c(2.0);
+  VERIFY_IS_APPROX(atan2(x, c).derivatives(), Vector2d(0.4, 0));
+  VERIFY_IS_APPROX(atan2(c, x).derivatives(), Vector2d(-0.4, 0));
+}
+
+// The zero-padded derivatives of a sum must read column 0 of a non-plain derivative expression.
+void test_autodiff_padded_block_derivatives() {
+  using ColMajorMatrixXd = Matrix<double, Dynamic, Dynamic, ColMajor>;
+  ColMajorMatrixXd store(3, 2);
+  store << 1, 10, 2, 20, 3, 30;
+  AutoDiffScalar<Block<ColMajorMatrixXd, Dynamic, 1, true>> a(1.0, store.col(0));
+  AutoDiffScalar<VectorXd> b(2.0);
+  MatrixXd jac = MatrixXd::Zero(3, 2);
+  jac.topRows(3).leftCols(1) = (a + b).derivatives();
+  VERIFY_IS_EQUAL(jac.col(0), store.col(0));
+}
+
+// LLT stores the 1-norm of its input for rcond(); the sum of AutoDiffScalars is an expression, so
+// the norm must materialize its column totals before comparing them.
+void test_autodiff_selfadjoint_l1norm() {
+  using AD = AutoDiffScalar<Vector2d>;
+  Matrix<AD, 8, 8> m = Matrix<AD, 8, 8>::Identity();
+  m(3, 3) = AD(2, Vector2d(1, 0));
+  AD norm = m.selfadjointView<Lower>().l1Norm();
+  VERIFY_IS_EQUAL(norm.value(), 2.0);
+  VERIFY_IS_EQUAL(norm.derivatives()(0), 1.0);
+  LLT<Matrix<AD, 8, 8>> llt(m);
+  VERIFY(llt.info() == Success);
+}
+
+template <typename Derivatives>
+void test_autodiff_makegivens() {
+  using AD = AutoDiffScalar<Derivatives>;
+  // Exercise both ratio branches and compare analytical first derivatives.
+  for (int swap = 0; swap < 2; ++swap) {
+    const double x = swap ? 4.0 : 3.0;
+    const double y = swap ? 3.0 : 4.0;
+    const AD p(x, Derivatives(Vector2d::UnitX()));
+    const AD q(y, Derivatives(Vector2d::UnitY()));
+    AD r;
+    JacobiRotation<AD> rotation;
+    rotation.makeGivens(p, q, &r);
+    VERIFY_IS_APPROX(rotation.c().value(), x / 5.0);
+    VERIFY_IS_APPROX(rotation.s().value(), -y / 5.0);
+    VERIFY_IS_APPROX(r.value(), 5.0);
+    VERIFY_IS_APPROX(r.derivatives(), Vector2d(x / 5.0, y / 5.0));
+    VERIFY_IS_APPROX(rotation.c().derivatives(), Vector2d(y * y / 125.0, -x * y / 125.0));
+    VERIFY_IS_APPROX(rotation.s().derivatives(), Vector2d(x * y / 125.0, -x * x / 125.0));
+    JacobiRotation<AD> without_norm;
+    without_norm.makeGivens(p, q);
+    VERIFY_IS_APPROX(without_norm.c().derivatives(), rotation.c().derivatives());
+    VERIFY_IS_APPROX(without_norm.s().derivatives(), rotation.s().derivatives());
+  }
+}
+
+// Householder and Jacobi kernels must materialize AutoDiffScalar expressions before numext::sqrt and need
+// isnan/isinf overloads.
+template <typename Derivatives>
+void test_autodiff_householder_qr() {
+  using AD = AutoDiffScalar<Derivatives>;
+  Matrix<AD, 2, 2> a;
+  for (int k = 0; k < 4; ++k) a(k / 2, k % 2) = AD(double(k + 1), Derivatives(Vector4d::Unit(k)));
+  HouseholderQR<Matrix<AD, 2, 2>> qr(a);
+  const AD r00 = qr.matrixQR()(0, 0);
+  const double n = std::sqrt(10.0);
+  VERIFY_IS_APPROX(numext::abs(r00.value()), n);
+  VERIFY_IS_APPROX(r00.derivatives(), Vector4d(1.0 / n, 0, 3.0 / n, 0) * numext::sign(r00.value()));
+  const Matrix<AD, 2, 2> q = qr.householderQ();
+  const Matrix<AD, 2, 2> r = qr.matrixQR().template triangularView<Upper>();
+  const Matrix<AD, 2, 2> qra = q * r;
+  for (int k = 0; k < 4; ++k) {
+    VERIFY_IS_APPROX(qra(k / 2, k % 2).value(), a(k / 2, k % 2).value());
+    VERIFY_IS_APPROX(qra(k / 2, k % 2).derivatives(), Derivatives(Vector4d::Unit(k)));
+  }
+}
+
+template <typename Derivatives>
+void test_autodiff_jacobi_svd() {
+  using AD = AutoDiffScalar<Derivatives>;
+  Matrix<AD, 2, 2> a;
+  for (int k = 0; k < 4; ++k) a(k / 2, k % 2) = AD(double(k + 1), Derivatives(Vector4d::Unit(k)));
+  JacobiSVD<Matrix<AD, 2, 2>, ComputeFullU | ComputeFullV> svd(a);
+  const Matrix<AD, 2, 2> usv = svd.matrixU() * svd.singularValues().asDiagonal() * svd.matrixV().transpose();
+  for (int k = 0; k < 4; ++k) {
+    VERIFY_IS_APPROX(usv(k / 2, k % 2).value(), a(k / 2, k % 2).value());
+    VERIFY_IS_APPROX(usv(k / 2, k % 2).derivatives(), Derivatives(Vector4d::Unit(k)));
+  }
+}
+
+// SplineFitting::Interpolate solves its collocation system with HouseholderQR.
+template <typename Derivatives>
+void test_autodiff_spline_interpolate() {
+  using AD = AutoDiffScalar<Derivatives>;
+  using Spline1 = Spline<AD, 1>;
+  const Vector4d values(1, 2, 5, 10);
+  Matrix<AD, 1, 4> points;
+  for (int k = 0; k < 4; ++k) points(k) = AD(values(k), Derivatives(Vector4d::Unit(k)));
+  Matrix<AD, 1, 4> parameters;
+  parameters << AD(0.0), AD(1.0 / 3), AD(2.0 / 3), AD(1.0);
+  const Spline1 spline = SplineFitting<Spline1>::Interpolate(points, 2, parameters);
+  for (int k = 0; k < 4; ++k) {
+    const AD y = spline(parameters(k))(0);
+    VERIFY_IS_APPROX(y.value(), values(k));
+    VERIFY_IS_APPROX(y.derivatives(), Derivatives(Vector4d::Unit(k)));
+  }
+  // With fixed parameters the interpolant is linear in the points: y(u) = sum_k (dy/dp_k) p_k.
+  const AD y = spline(AD(0.5))(0);
+  VERIFY_IS_APPROX(y.value(), Vector4d(y.derivatives()).dot(values));
+  VERIFY_IS_APPROX(Vector4d(y.derivatives()).sum(), 1.0);
+
+  // Chord-length parameters depend on the points; the total derivative of y(u_k(p), p) is still e_k.
+  Matrix<AD, 2, 4> points2;
+  for (int k = 0; k < 4; ++k) {
+    points2(0, k) = AD(double(k), Derivatives(Vector4d::Zero()));
+    points2(1, k) = points(k);
+  }
+  using Spline2 = Spline<AD, 2>;
+  typename Spline2::KnotVectorType chordLengths;
+  ChordLengths(points2, chordLengths);
+  const Spline2 spline2 = SplineFitting<Spline2>::Interpolate(points2, 2, chordLengths);
+  for (int k = 0; k < 4; ++k) {
+    const AD y2 = spline2(chordLengths(k))(1);
+    VERIFY_IS_APPROX(y2.value(), values(k));
+    VERIFY_IS_APPROX(y2.derivatives(), Derivatives(Vector4d::Unit(k)));
+  }
+}
+
+template <typename Derivatives>
+void test_autodiff_hypot() {
+  using AD = AutoDiffScalar<Derivatives>;
+  for (int swapped = 0; swapped < 2; ++swapped) {
+    AD x(swapped ? 4.0 : 3.0), y(swapped ? 3.0 : 4.0);
+    x.derivatives() = Vector2d::UnitX();
+    y.derivatives() = Vector2d::UnitY();
+    const AD result = numext::hypot(x, y);
+    const double tolerance = 8 * NumTraits<double>::epsilon();
+    VERIFY(numext::abs(result.value() - 5.0) <= tolerance * 5.0);
+    VERIFY(numext::abs(result.derivatives()(0) - x.value() / 5.0) <= tolerance);
+    VERIFY(numext::abs(result.derivatives()(1) - y.value() / 5.0) <= tolerance);
+  }
+}
+
+template <typename Derivatives>
+void test_autodiff_geometry_atan2() {
+  using AD = AutoDiffScalar<Derivatives>;
+  using Vec3 = Matrix<AD, 3, 1>;
+  AD angle(0.6);
+  angle.derivatives() = Vector2d(1, 2);
+  const Quaternion<AD> rotation(AngleAxis<AD>(angle, Vec3::UnitZ()));
+  const AD distance = rotation.angularDistance(Quaternion<AD>::Identity());
+  const Vec3 axis = rotation.toScaledAxis();
+  AngleAxis<AD> aa_from_q;
+  aa_from_q = rotation;
+  const AD aa_angle = aa_from_q.angle();
+  const Matrix<AD, 2, 2> matrix = Rotation2D<AD>(angle).toRotationMatrix();
+  const AD recovered = Rotation2D<AD>(matrix).angle();
+  const double tolerance = 64 * NumTraits<double>::epsilon();
+  for (const AD* result : {&distance, &axis(2), &aa_angle, &recovered}) {
+    VERIFY(numext::abs(result->value() - angle.value()) <= tolerance);
+    VERIFY((result->derivatives() - angle.derivatives()).cwiseAbs().maxCoeff() <= tolerance);
+  }
+  for (Index i = 0; i < 2; ++i) {
+    VERIFY_IS_EQUAL(axis(i).value(), 0.0);
+    VERIFY(axis(i).derivatives().isZero());
+  }
+}
+
+template <typename Derivatives, int Order>
+void test_autodiff_sparse_product_commutativity() {
+  using AD = AutoDiffScalar<Derivatives>;
+  using ADExpression = decltype(std::declval<AD>() * std::declval<AD>());
+  using NoncommutativeAD = AutoDiffScalar<Matrix<noncommutative_scalar::Quaternion, 4, 1>>;
+  STATIC_CHECK((internal::functor_is_commutative<internal::scalar_product_op<AD>>::value));
+  STATIC_CHECK((internal::functor_is_commutative<internal::scalar_product_op<AD, ADExpression>>::value));
+  STATIC_CHECK((internal::functor_is_commutative<internal::scalar_product_op<AD, double>>::value));
+  STATIC_CHECK((internal::functor_is_commutative<internal::scalar_product_op<double, AD>>::value));
+  STATIC_CHECK((!internal::functor_is_commutative<internal::scalar_product_op<NoncommutativeAD>>::value));
+  using Dense = Matrix<AD, Dynamic, Dynamic>;
+  SparseMatrix<AD, Order> sparse(3, 3);
+  Dense matrix(3, 3);
+  for (Index j = 0; j < 3; ++j)
+    for (Index i = 0; i < 3; ++i) {
+      AD value(double(i + 2 * j + 1));
+      value.derivatives() = Derivatives::Constant(4, double(i - j + 1));
+      matrix(i, j) = value;
+      if (i == j || (i + j) % 2) sparse.insert(i, j) = value;
+    }
+  AD alpha(2);
+  alpha.derivatives() = Derivatives::Constant(4, 1);
+  for (bool compressed : {false, true}) {
+    if (compressed) sparse.makeCompressed();
+    Dense left = Dense::Zero(3, 3), right = Dense::Zero(3, 3);
+    left.noalias() += alpha * (sparse * matrix);
+    right.noalias() += alpha * (matrix * sparse);
+    for (Index j = 0; j < 3; ++j)
+      for (Index i = 0; i < 3; ++i) {
+        AD expectedLeft(0), expectedRight(0);
+        expectedLeft.derivatives() = Derivatives::Zero(4);
+        expectedRight.derivatives() = Derivatives::Zero(4);
+        for (Index k = 0; k < 3; ++k) {
+          expectedLeft += sparse.coeff(i, k) * matrix(k, j);
+          expectedRight += matrix(i, k) * sparse.coeff(k, j);
+        }
+        const AD scaledLeft = alpha * expectedLeft, scaledRight = alpha * expectedRight;
+        VERIFY_IS_EQUAL(left(i, j).value(), scaledLeft.value());
+        VERIFY_IS_EQUAL(right(i, j).value(), scaledRight.value());
+        VERIFY((left(i, j).derivatives() - scaledLeft.derivatives()).isZero(0));
+        VERIFY((right(i, j).derivatives() - scaledRight.derivatives()).isZero(0));
+      }
+  }
+}
+
+EIGEN_DECLARE_TEST(autodiff) {
+  CALL_SUBTEST_8((test_autodiff_sparse_product_commutativity<Vector4d, ColMajor>()));
+  CALL_SUBTEST_8((test_autodiff_sparse_product_commutativity<Vector4d, RowMajor>()));
+  CALL_SUBTEST_8((test_autodiff_sparse_product_commutativity<VectorXd, ColMajor>()));
+  CALL_SUBTEST_8((test_autodiff_sparse_product_commutativity<VectorXd, RowMajor>()));
+  for (int i = 0; i < g_repeat; i++) {
+    CALL_SUBTEST_1(test_autodiff_scalar<float>());
+    CALL_SUBTEST_1(test_autodiff_scalar<double>());
+    CALL_SUBTEST_2(test_autodiff_vector<1>());
+    CALL_SUBTEST_2(test_autodiff_vector_derivative<1>());
+    CALL_SUBTEST_3(test_autodiff_jacobian<1>());
+    CALL_SUBTEST_4(test_autodiff_hessian<1>());
+  }
+  CALL_SUBTEST_2(test_autodiff_vector_derivative_specific_values<1>());
+
+  CALL_SUBTEST_5(bug_1222());
+  CALL_SUBTEST_5(bug_1223());
+  CALL_SUBTEST_5(bug_1260());
+  CALL_SUBTEST_5(bug_1261());
+  CALL_SUBTEST_5(bug_1281());
+  CALL_SUBTEST_5(test_autodiff_selfadjoint_l1norm());
+  CALL_SUBTEST_5(test_autodiff_padded_block_derivatives());
+  CALL_SUBTEST_5(test_autodiff_atan2_constant());
+  CALL_SUBTEST_5(test_autodiff_hypot<Vector2d>());
+  CALL_SUBTEST_5(test_autodiff_hypot<VectorXd>());
+  CALL_SUBTEST_5(test_autodiff_geometry_atan2<Vector2d>());
+  CALL_SUBTEST_5(test_autodiff_geometry_atan2<VectorXd>());
+  CALL_SUBTEST_6(test_autodiff_makegivens<Vector2d>());
+  CALL_SUBTEST_6(test_autodiff_makegivens<VectorXd>());
+  CALL_SUBTEST_7(test_autodiff_householder_qr<Vector4d>());
+  CALL_SUBTEST_7(test_autodiff_householder_qr<VectorXd>());
+  CALL_SUBTEST_7(test_autodiff_jacobi_svd<Vector4d>());
+  CALL_SUBTEST_7(test_autodiff_jacobi_svd<VectorXd>());
+  CALL_SUBTEST_7(test_autodiff_spline_interpolate<Vector4d>());
+  CALL_SUBTEST_7(test_autodiff_spline_interpolate<VectorXd>());
+}

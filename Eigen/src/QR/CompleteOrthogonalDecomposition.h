@@ -111,9 +111,12 @@ class CompleteOrthogonalDecompositionImpl
   HouseholderSequenceType householderQ() const;
   HouseholderSequenceType matrixQ() const { return m_cpqr.householderQ(); }
 
-  MatrixType matrixZ() const {
-    MatrixType Z = MatrixType::Identity(m_cpqr.cols(), m_cpqr.cols());
-    applyZOnTheLeftInPlace<false>(Z);
+  using MatrixZType = Matrix<Scalar, ColsAtCompileTime, ColsAtCompileTime, plain_object_options<MatrixType>::value,
+                             MaxColsAtCompileTime, MaxColsAtCompileTime>;
+
+  MatrixZType matrixZ() const {
+    MatrixZType Z = MatrixZType::Identity(m_cpqr.cols(), m_cpqr.cols());
+    if (rank() < cols()) applyZOnTheLeftInPlace<false>(Z);
     return Z;
   }
 
@@ -184,10 +187,10 @@ class CompleteOrthogonalDecompositionImpl
 
   template <bool Transpose_, typename Rhs>
   void _check_solve_assertion(const Rhs& b) const {
-    EIGEN_ONLY_USED_FOR_DEBUG(b);
     eigen_assert(m_cpqr.m_isInitialized && "CompleteOrthogonalDecomposition is not initialized.");
-    eigen_assert((Transpose_ ? this->cols() : this->rows()) == b.rows() &&
-                 "CompleteOrthogonalDecomposition::solve(): invalid number of rows of the right hand side matrix b");
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS_MSG(
+        *this, b, Transpose_,
+        "CompleteOrthogonalDecomposition::solve(): invalid number of rows of the right hand side matrix b");
   }
 
   void computeInPlace();

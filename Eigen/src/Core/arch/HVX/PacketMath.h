@@ -131,15 +131,15 @@ class HVXPacket {
   HVX_Vector m_val = Q6_V_vzero();
 };
 
-typedef HVXPacket<HVXPacketSize::Full> Packet32f;
-typedef HVXPacket<HVXPacketSize::Half> Packet16f;
-typedef HVXPacket<HVXPacketSize::Quarter> Packet8f;
+using Packet32f = HVXPacket<HVXPacketSize::Full>;
+using Packet16f = HVXPacket<HVXPacketSize::Half>;
+using Packet8f = HVXPacket<HVXPacketSize::Quarter>;
 
 // Packet traits.
 template <>
 struct packet_traits<float> : default_packet_traits {
-  typedef Packet32f type;
-  typedef Packet16f half;
+  using type = Packet32f;
+  using half = Packet16f;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -178,8 +178,8 @@ struct packet_traits<float> : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet32f> {
-  typedef float type;
-  typedef Packet16f half;
+  using type = float;
+  using half = Packet16f;
   enum {
     size = 32,
     alignment = Aligned128,
@@ -191,8 +191,8 @@ struct unpacket_traits<Packet32f> {
 
 template <>
 struct unpacket_traits<Packet16f> {
-  typedef float type;
-  typedef Packet8f half;
+  using type = float;
+  using half = Packet8f;
   enum {
     size = 16,
     // Much code assumes alignment on packet size instead of following the trait
@@ -206,8 +206,8 @@ struct unpacket_traits<Packet16f> {
 
 template <>
 struct unpacket_traits<Packet8f> {
-  typedef float type;
-  typedef Packet8f half;
+  using type = float;
+  using half = Packet8f;
   enum {
     size = 8,
     // Much code assumes alignment on packet size instead of following the trait
@@ -767,17 +767,17 @@ EIGEN_STRONG_INLINE float predux_hvx(const HVXPacket<T>& a) {
   const Index packet_size = unpacket_traits<HVXPacket<T>>::size;
 #if __HVX_ARCH__ >= 79
   HVX_Vector vsum = Q6_Vsf_vadd_VsfVsf(a.Get(), Q6_V_vror_VR(a.Get(), sizeof(float)));
+#else
+  HVX_Vector vsum = Q6_Vsf_equals_Vqf32(Q6_Vqf32_vadd_VsfVsf(a.Get(), Q6_V_vror_VR(a.Get(), sizeof(float))));
+#endif
   for (int i = 2; i < packet_size; i <<= 1) {
+#if __HVX_ARCH__ >= 79
     vsum = Q6_Vsf_vadd_VsfVsf(vsum, Q6_V_vror_VR(vsum, i * sizeof(float)));
+#else
+    vsum = Q6_Vsf_equals_Vqf32(Q6_Vqf32_vadd_VsfVsf(vsum, Q6_V_vror_VR(vsum, i * sizeof(float))));
+#endif
   }
   return pfirst(HVXPacket<T>::Create(vsum));
-#else
-  HVX_Vector vsum = Q6_Vqf32_vadd_VsfVsf(a.Get(), Q6_V_vror_VR(a.Get(), sizeof(float)));
-  for (int i = 2; i < packet_size; i <<= 1) {
-    vsum = Q6_Vqf32_vadd_Vqf32Vqf32(vsum, Q6_V_vror_VR(vsum, i * sizeof(float)));
-  }
-  return pfirst(HVXPacket<T>::Create(Q6_Vsf_equals_Vqf32(vsum)));
-#endif
 }
 template <>
 EIGEN_STRONG_INLINE float predux<Packet32f>(const Packet32f& a) {
@@ -1007,17 +1007,27 @@ EIGEN_STRONG_INLINE float predux_min(const Packet8f& a) {
   return predux_generic(a, pmin<Packet8f>);
 }
 
+template <HVXPacketSize T>
+EIGEN_STRONG_INLINE bool predux_any_hvx(const HVXPacket<T>& a) {
+  const Index packet_size = unpacket_traits<HVXPacket<T>>::size;
+  HVX_Vector reduced = a.Get();
+  for (int i = 1; i < packet_size; i <<= 1) {
+    reduced |= Q6_V_vror_VR(reduced, i * sizeof(float));
+  }
+  return Q6_R_vextract_VR(reduced, 0) != 0;
+}
+
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet32f& a) {
-  return predux_generic(a, por<Packet32f>) != 0.0f;
+  return predux_any_hvx(a);
 }
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet16f& a) {
-  return predux_generic(a, por<Packet16f>) != 0.0f;
+  return predux_any_hvx(a);
 }
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet8f& a) {
-  return predux_generic(a, por<Packet8f>) != 0.0f;
+  return predux_any_hvx(a);
 }
 
 static const float index_vsf[32]

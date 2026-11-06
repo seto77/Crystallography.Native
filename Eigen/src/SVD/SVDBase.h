@@ -34,6 +34,8 @@ constexpr int get_qr_preconditioner(int options) { return options & QRPreconditi
 
 constexpr int get_computation_options(int options) { return options & ComputationOptionsBits; }
 
+constexpr bool should_svd_precondition_square_matrix(int options) { return (options & PreconditionSquareMatrix) != 0; }
+
 constexpr bool should_svd_compute_thin_u(int options) { return (options & ComputeThinU) != 0; }
 constexpr bool should_svd_compute_full_u(int options) { return (options & ComputeFullU) != 0; }
 constexpr bool should_svd_compute_thin_v(int options) { return (options & ComputeThinV) != 0; }
@@ -216,7 +218,6 @@ class SVDBase : public SolverBase<SVDBase<Derived> > {
    *       setThreshold(const RealScalar&).
    */
   inline Index rank() const {
-    using std::abs;
     _check_compute_assertions();
     if (m_singularValues.size() == 0) return 0;
     RealScalar premultiplied_threshold =
@@ -318,12 +319,11 @@ class SVDBase : public SolverBase<SVDBase<Derived> > {
 
   template <bool Transpose_, typename Rhs>
   void _check_solve_assertion(const Rhs& b) const {
-    EIGEN_ONLY_USED_FOR_DEBUG(b);
     _check_compute_assertions();
     eigen_assert(computeU() && computeV() &&
                  "SVDBase::solve(): Both unitaries U and V are required to be computed (thin unitaries suffice).");
-    eigen_assert((Transpose_ ? cols() : rows()) == b.rows() &&
-                 "SVDBase::solve(): invalid number of rows of the right hand side matrix b");
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS_MSG(derived(), b, Transpose_,
+                                         "SVDBase::solve(): invalid number of rows of the right hand side matrix b");
   }
 
   // return true if already allocated
@@ -404,13 +404,14 @@ template <typename Derived>
 bool SVDBase<Derived>::allocate(Index rows, Index cols, unsigned int computationOptions) {
   eigen_assert(rows >= 0 && cols >= 0);
 
+  // Reset the status on every call: a recompute of the same shape must not keep the InvalidInput of a previous one.
+  m_info = Success;
   if (m_isAllocated && rows == m_rows.value() && cols == m_cols.value() && computationOptions == m_computationOptions) {
     return true;
   }
 
   m_rows.setValue(rows);
   m_cols.setValue(cols);
-  m_info = Success;
   m_isInitialized = false;
   m_isAllocated = true;
   m_computationOptions = computationOptions;

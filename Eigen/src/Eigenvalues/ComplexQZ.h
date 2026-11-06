@@ -58,10 +58,15 @@ class ComplexQZ {
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
     ColsAtCompileTime = MatrixType::ColsAtCompileTime,
-    Options = internal::traits<MatrixType>::Options,
+    Options = internal::plain_object_options<MatrixType>::value,
     MaxRowsAtCompileTime = MatrixType::MaxRowsAtCompileTime,
     MaxColsAtCompileTime = MatrixType::MaxColsAtCompileTime
   };
+
+  /** \brief Type of the matrices returned by matrixQ() and matrixZ(): a plain matrix with the shape and storage
+   * options of \p MatrixType_, and \p MatrixType_ itself unless that is a Ref<>. */
+  using PlainMatrixType =
+      Matrix<Scalar, RowsAtCompileTime, ColsAtCompileTime, Options, MaxRowsAtCompileTime, MaxColsAtCompileTime>;
 
   using Vec = Matrix<Scalar, Dynamic, 1>;
   using Vec2 = Matrix<Scalar, 2, 1>;
@@ -73,7 +78,7 @@ class ComplexQZ {
    *
    * \returns A const reference to the matrix Q.
    */
-  const MatrixType& matrixQ() const {
+  const PlainMatrixType& matrixQ() const {
     eigen_assert(m_isInitialized && "ComplexQZ is not initialized.");
     eigen_assert(m_computeQZ && "The matrices Q and Z have not been computed during the QZ decomposition.");
     return m_Q;
@@ -83,7 +88,7 @@ class ComplexQZ {
    *
    * \returns A const reference to the matrix Z.
    */
-  const MatrixType& matrixZ() const {
+  const PlainMatrixType& matrixZ() const {
     eigen_assert(m_isInitialized && "ComplexQZ is not initialized.");
     eigen_assert(m_computeQZ && "The matrices Q and Z have not been computed during the QZ decomposition.");
     return m_Z;
@@ -117,6 +122,8 @@ class ComplexQZ {
    */
   ComplexQZ(Index n, bool computeQZ = true, unsigned int maxIters = 400)
       : m_n(n),
+        m_maxIters(maxIters),
+        m_computeQZ(computeQZ),
         m_S(n, n),
         m_T(n, n),
         m_Q(computeQZ ? n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
@@ -124,8 +131,7 @@ class ComplexQZ {
         m_Z(computeQZ ? n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
             computeQZ ? n : (MatrixType::ColsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::ColsAtCompileTime)),
         m_ws(2 * n),
-        m_computeQZ(computeQZ),
-        m_maxIters(maxIters) {}
+        m_hCoeffs(n) {}
 
   /** \brief Constructor. computes the QZ decomposition of given matrices
    * upon creation
@@ -134,22 +140,52 @@ class ComplexQZ {
    * \param[in] B         input matrix B
    * \param[in] computeQZ If false, the matrices Q and Z are not computed
    *
-   * This constructor calls the compute() method to compute the QZ decomposition.
+   * This constructor computes the QZ decomposition as the compute() method does.
    * If input matrices are sparse, call the constructor that uses only the
    * size as input the computeSparse(...) method.
    */
-  ComplexQZ(const MatrixType& A, const MatrixType& B, bool computeQZ = true, unsigned int maxIters = 400)
+  template <typename InputTypeA, typename InputTypeB>
+  ComplexQZ(const EigenBase<InputTypeA>& A, const EigenBase<InputTypeB>& B, bool computeQZ = true,
+            unsigned int maxIters = 400)
       : m_n(A.rows()),
         m_maxIters(maxIters),
         m_computeQZ(computeQZ),
-        m_S(A.rows(), A.cols()),
-        m_T(A.rows(), A.cols()),
+        m_S(A.derived()),
+        m_T(B.derived()),
         m_Q(computeQZ ? m_n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
             computeQZ ? m_n : (MatrixType::ColsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::ColsAtCompileTime)),
         m_Z(computeQZ ? m_n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
             computeQZ ? m_n : (MatrixType::ColsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::ColsAtCompileTime)),
-        m_ws(2 * m_n) {
-    compute(A, B, computeQZ);
+        m_ws(2 * m_n),
+        m_hCoeffs(m_n) {
+    computeInPlace(computeQZ);
+  }
+
+  /** \brief Constructor for \link InplaceDecomposition inplace decomposition \endlink
+   *
+   * \param[in,out] A         input matrix A
+   * \param[in,out] B         input matrix B
+   * \param[in]     computeQZ If false, the matrices Q and Z are not computed
+   * \param[in]     maxIters  Maximum number of iterations
+   *
+   * When \p MatrixType is a Ref<>, the decomposition is computed within the memory of \p A and \p B, which then
+   * hold S and T; Q and Z are stored in the decomposition object. Otherwise this constructor behaves like
+   * ComplexQZ(const EigenBase<InputTypeA>&, const EigenBase<InputTypeB>&, bool, unsigned int).
+   */
+  template <typename InputTypeA, typename InputTypeB>
+  ComplexQZ(EigenBase<InputTypeA>& A, EigenBase<InputTypeB>& B, bool computeQZ = true, unsigned int maxIters = 400)
+      : m_n(A.rows()),
+        m_maxIters(maxIters),
+        m_computeQZ(computeQZ),
+        m_S(A.derived()),
+        m_T(B.derived()),
+        m_Q(computeQZ ? m_n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
+            computeQZ ? m_n : (MatrixType::ColsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::ColsAtCompileTime)),
+        m_Z(computeQZ ? m_n : (MatrixType::RowsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::RowsAtCompileTime),
+            computeQZ ? m_n : (MatrixType::ColsAtCompileTime == Eigen::Dynamic ? 0 : MatrixType::ColsAtCompileTime)),
+        m_ws(2 * m_n),
+        m_hCoeffs(m_n) {
+    computeInPlace(computeQZ);
   }
 
   /** \brief Compute the QZ decomposition of complex input matrices
@@ -158,7 +194,8 @@ class ComplexQZ {
    * \param[in] B         Matrix B.
    * \param[in] computeQZ If false, the matrices Q and Z are not computed.
    */
-  void compute(const MatrixType& A, const MatrixType& B, bool computeQZ = true);
+  template <typename InputTypeA, typename InputTypeB>
+  void compute(const EigenBase<InputTypeA>& A, const EigenBase<InputTypeB>& B, bool computeQZ = true);
 
   /** \brief Compute the decomposition of sparse complex input matrices.
    * Main difference to the compute(...) method is that it computes a
@@ -194,21 +231,27 @@ class ComplexQZ {
   bool m_isInitialized = false;
   bool m_computeQZ;
   ComputationInfo m_info = InvalidInput;
-  MatrixType m_S, m_T, m_Q, m_Z;
+  MatrixType m_S, m_T;
+  PlainMatrixType m_Q, m_Z;
   RealScalar m_normOfT, m_normOfS;
   Vec m_ws;
+  Vec m_hCoeffs;
 
   // Test if a Scalar is 0 up to a certain tolerance
   static bool is_negligible(const Scalar x, const RealScalar tol = NumTraits<RealScalar>::epsilon()) {
     return numext::abs(x) <= tol;
   }
 
-  void do_QZ_step(Index p, Index q);
+  void do_QZ_step(Index f, Index l, unsigned int iter);
 
-  inline Mat2 computeZk2(const Row2& b);
+  Vec3 shiftColumn(Index p, Index l, unsigned int iter) const;
+
+  JacobiRotation<Scalar> computeZk2(const Row2& b);
+
+  void computeInPlace(bool computeQZ);
 
   // This is basically taken from Eigen3::RealQZ
-  void hessenbergTriangular(const MatrixType& A, const MatrixType& B);
+  void hessenbergTriangular();
 
   // This function can be called when m_Q and m_Z are initialized and m_S, m_T
   // are in hessenberg-triangular form
@@ -229,19 +272,31 @@ class ComplexQZ {
 };
 
 template <typename MatrixType_>
-void ComplexQZ<MatrixType_>::compute(const MatrixType& A, const MatrixType& B, bool computeQZ) {
-  m_computeQZ = computeQZ;
-  m_n = A.rows();
+template <typename InputTypeA, typename InputTypeB>
+void ComplexQZ<MatrixType_>::compute(const EigenBase<InputTypeA>& A, const EigenBase<InputTypeB>& B, bool computeQZ) {
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(A, "A is not a square matrix");
+  EIGEN_INTERNAL_ASSERT_SAME_SHAPE_MSG(A, B, "B is not a square matrix or B is not of the same size as A");
+  // Copy A and B, these will be the matrices on which we operate later
+  m_S = A.derived();
+  m_T = B.derived();
+  computeInPlace(computeQZ);
+}
 
-  eigen_assert(m_n == A.cols() && "A is not a square matrix");
-  eigen_assert(m_n == B.rows() && m_n == B.cols() && "B is not a square matrix or B is not of the same size as A");
+/** \internal Computes the QZ decomposition of the pencil held in (m_S, m_T), which are overwritten by S and T. */
+template <typename MatrixType_>
+void ComplexQZ<MatrixType_>::computeInPlace(bool computeQZ) {
+  m_computeQZ = computeQZ;
+  m_n = m_S.rows();
+
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_S, "A is not a square matrix");
+  EIGEN_INTERNAL_ASSERT_SAME_SHAPE_MSG(m_S, m_T, "B is not a square matrix or B is not of the same size as A");
 
   m_isInitialized = true;
   m_global_iter = 0;
   m_info = Success;
 
   // This will initialize m_Q and m_Z and bring m_S, m_T to hessenberg-triangular form
-  hessenbergTriangular(A, B);
+  hessenbergTriangular();
 
   // We assume that we already have that S is upper-Hessenberg and T is
   // upper-triangular. This is what the hessenbergTriangular(...) method does
@@ -250,22 +305,21 @@ void ComplexQZ<MatrixType_>::compute(const MatrixType& A, const MatrixType& B, b
 
 // This is basically taken from Eigen3::RealQZ
 template <typename MatrixType_>
-void ComplexQZ<MatrixType_>::hessenbergTriangular(const MatrixType& A, const MatrixType& B) {
-  // Copy A and B, these will be the matrices on which we operate later
-  m_S = A;
-  m_T = B;
-
-  // Perform QR decomposition of the matrix Q
-  HouseholderQR<MatrixType> qr(m_T);
-  m_T = qr.matrixQR();
-  m_T.template triangularView<StrictlyLower>().setZero();
-
-  if (m_computeQZ) m_Q = qr.householderQ();
+void ComplexQZ<MatrixType_>::hessenbergTriangular() {
+  // Perform the QR decomposition of T in place: T holds R above the Householder vectors Q is formed from
+  m_ws.resize(2 * m_n);
+  m_hCoeffs.resize(m_n);
+  internal::householder_qr_inplace_blocked<MatrixType, Vec>::run(m_T, m_hCoeffs, 48, m_ws.data());
+  Map<Vec> workspace(m_ws.data(), m_n);
+  const auto householderQ = householderSequence(m_T, m_hCoeffs.conjugate());
+  if (m_computeQZ) householderQ.evalTo(m_Q, workspace);
 
   // overwrite S with Q* x S
-  m_S.applyOnTheLeft(qr.householderQ().adjoint());
+  householderQ.adjoint().applyThisOnTheLeft(m_S, workspace);
 
-  if (m_computeQZ) m_Z = MatrixType::Identity(m_n, m_n);
+  m_T.template triangularView<StrictlyLower>().setZero();
+
+  if (m_computeQZ) m_Z = PlainMatrixType::Identity(m_n, m_n);
 
   // reduce S to upper Hessenberg with Givens rotations
   for (Index j = 0; j <= m_n - 3; j++) {
@@ -364,8 +418,8 @@ template <typename SparseMatrixType_>
 void ComplexQZ<MatrixType>::computeSparse(const SparseMatrixType_& A, const SparseMatrixType_& B, bool computeQZ) {
   m_computeQZ = computeQZ;
   m_n = A.rows();
-  eigen_assert(m_n == A.cols() && "A is not a square matrix");
-  eigen_assert(m_n == B.rows() && m_n == B.cols() && "B is not a square matrix or B is not of the same size as A");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(A, "A is not a square matrix");
+  EIGEN_INTERNAL_ASSERT_SAME_SHAPE_MSG(A, B, "B is not a square matrix or B is not of the same size as A");
   m_isInitialized = true;
   m_global_iter = 0;
   m_info = Success;
@@ -378,6 +432,7 @@ void ComplexQZ<MatrixType>::computeSparse(const SparseMatrixType_& A, const Spar
 
 template <typename MatrixType_>
 void ComplexQZ<MatrixType_>::reduceHessenbergTriangular() {
+  m_ws.resize(2 * m_n);
   Index l = m_n - 1, f;
   unsigned int local_iter = 0;
   computeNorms();
@@ -402,7 +457,7 @@ void ComplexQZ<MatrixType_>::reduceHessenbergTriangular() {
       if (z >= f) {
         push_down_zero_ST(z, l);
       } else {
-        do_QZ_step(f, m_n - l - 1);
+        do_QZ_step(f, l, local_iter);
         local_iter++;
         m_global_iter++;
       }
@@ -416,36 +471,64 @@ void ComplexQZ<MatrixType_>::reduceHessenbergTriangular() {
 }
 
 template <typename MatrixType_>
-inline typename ComplexQZ<MatrixType_>::Mat2 ComplexQZ<MatrixType_>::computeZk2(const Row2& b) {
-  Mat2 S;
-  S << Scalar(0), Scalar(1), Scalar(1), Scalar(0);
-  Vec2 bprime = S * b.adjoint();
+JacobiRotation<typename ComplexQZ<MatrixType_>::Scalar> ComplexQZ<MatrixType_>::computeZk2(const Row2& b) {
   JacobiRotation<Scalar> J;
-  J.makeGivens(bprime(0), bprime(1));
-  Mat2 Z = S;
-  Z.applyOnTheLeft(0, 1, J);
-  Z = S * Z;
-  return Z;
+  J.makeGivens(numext::conj(b(1)), numext::conj(b(0)));
+  // S J S = J.transpose() for the exchange matrix S and a real Givens cosine.
+  return J.transpose();
 }
 
+/** \internal First column of the shift polynomial of the block (S, T)(p:l, p:l), up to a nonzero factor. */
 template <typename MatrixType_>
-void ComplexQZ<MatrixType_>::do_QZ_step(Index p, Index q) {
-  // This is certainly not the most efficient way of doing this,
-  // but a readable one.
+typename ComplexQZ<MatrixType_>::Vec3 ComplexQZ<MatrixType_>::shiftColumn(Index p, Index l, unsigned int iter) const {
   const auto a = [p, this](Index i, Index j) { return m_S(p + i - 1, p + j - 1); };
   const auto b = [p, this](Index i, Index j) { return m_T(p + i - 1, p + j - 1); };
-  const Index m = m_n - p - q;  // Size of the inner block
-  Scalar x, y, z;
-  // We could introduce doing exceptional shifts from time to time.
-  Scalar W1 = a(m - 1, m - 1) / b(m - 1, m - 1) - a(1, 1) / b(1, 1), W2 = a(m, m) / b(m, m) - a(1, 1) / b(1, 1),
-         W3 = a(m, m - 1) / b(m - 1, m - 1);
+  const Index m = l - p + 1;  // Size of the inner block
+  if (iter > 0 && iter % 10 == 0) {
+    // Break stalled double-shift iterations with a single shift displaced by the trailing subdiagonals.
+    const RealScalar displacement =
+        numext::abs(a(m, m - 1) / b(m - 1, m - 1)) + numext::abs(a(m - 1, m - 2) / b(m - 2, m - 2));
+    const Scalar shift = a(m, m) / b(m, m) + displacement;
+    // (S*T^-1 - shift*I)*e1 has only two nonzero entries.
+    return Vec3(a(1, 1) / b(1, 1) - shift, a(2, 1) / b(1, 1), Scalar(0));
+  }
+  const Scalar W1 = a(m - 1, m - 1) / b(m - 1, m - 1) - a(1, 1) / b(1, 1), W2 = a(m, m) / b(m, m) - a(1, 1) / b(1, 1),
+               W3 = a(m, m - 1) / b(m - 1, m - 1);
+  return Vec3(
+      (W1 * W2 - a(m - 1, m) / b(m, m) * W3 + W3 * b(m - 1, m) / b(m, m) * a(1, 1) / b(1, 1)) * b(1, 1) / a(2, 1) +
+          a(1, 2) / b(2, 2) - a(1, 1) / b(1, 1) * b(1, 2) / b(2, 2),
+      (a(2, 2) / b(2, 2) - a(1, 1) / b(1, 1)) - a(2, 1) / b(1, 1) * b(1, 2) / b(2, 2) - W1 - W2 +
+          W3 * (b(m - 1, m) / b(m, m)),
+      a(3, 2) / b(2, 2));
+}
 
-  x = (W1 * W2 - a(m - 1, m) / b(m, m) * W3 + W3 * b(m - 1, m) / b(m, m) * a(1, 1) / b(1, 1)) * b(1, 1) / a(2, 1) +
-      a(1, 2) / b(2, 2) - a(1, 1) / b(1, 1) * b(1, 2) / b(2, 2);
-  y = (a(2, 2) / b(2, 2) - a(1, 1) / b(1, 1)) - a(2, 1) / b(1, 1) * b(1, 2) / b(2, 2) - W1 - W2 +
-      W3 * (b(m - 1, m) / b(m, m));
-  z = a(3, 2) / b(2, 2);
+/** \internal Performs one QZ sweep on the unreduced block (S, T)(f:l, f:l). */
+template <typename MatrixType_>
+void ComplexQZ<MatrixType_>::do_QZ_step(Index f, Index l, unsigned int iter) {
+  // Start at the lowest row p > f where the bulge v spreads S(p, p-1) only into negligible entries (the test of
+  // EISPACK's hqr and LAPACK's xLAHQR, applied to S, with v scaled to |v(0)| + |v(1)| + |v(2)| = 1; rows where that
+  // sum is 0 or not finite are skipped):
+  //   |S(p, p-1)| (|v(1)| + |v(2)|) <= eps |v(0)| (|S(p-1, p-1)| + |S(p, p)| + |S(p+1, p+1)|).
+  // From row f the bulge is proportional to S(f+1, f), and a tiny but not negligible entry, e.g. next to zero
+  // eigenvalues, can stall the iteration. A block of three rows has no such p, as in xLAHQR.
+  Index p = f;
   Vec3 X;
+  for (Index j = l - 2; j > f; --j) {
+    X = shiftColumn(j, l, iter);
+    const RealScalar scale = numext::abs(X(0)) + numext::abs(X(1)) + numext::abs(X(2));
+    if (!(numext::isfinite)(scale) || scale == RealScalar(0)) continue;
+    X /= scale;
+    const RealScalar diagonal =
+        numext::abs(m_S(j - 1, j - 1)) + numext::abs(m_S(j, j)) + numext::abs(m_S(j + 1, j + 1));
+    if (numext::abs(m_S(j, j - 1)) * (numext::abs(X(1)) + numext::abs(X(2))) <=
+        NumTraits<RealScalar>::epsilon() * numext::abs(X(0)) * diagonal) {
+      p = j;
+      break;
+    }
+  }
+  if (p == f) X = shiftColumn(f, l, iter);
+  const Index m = l - p + 1;  // Size of the inner block
+  Scalar x = X(0), y = X(1), z = X(2);
   const PermutationMatrix<3, 3, int> S3(Vector3i(2, 0, 1));
   for (Index k = p; k < p + m - 2; k++) {
     X << x, y, z;
@@ -459,32 +542,43 @@ void ComplexQZ<MatrixType_>::do_QZ_step(Index p, Index q) {
     m_S.template middleRows<3>(k)
         .rightCols((std::min)(m_n, m_n - k + 1))
         .applyHouseholderOnTheLeft(ess, tau, m_ws.data());
+    if (k > f && k == p) {
+      // The reflector spread the negligible S(p, p-1) into the entries below it, which are dropped.
+      m_S.coeffRef(k + 1, k - 1) = Scalar(0);
+      m_S.coeffRef(k + 2, k - 1) = Scalar(0);
+    }
     m_T.template middleRows<3>(k).rightCols(m_n - k).applyHouseholderOnTheLeft(ess, tau, m_ws.data());
     if (m_computeQZ) m_Q.template middleCols<3>(k).applyHouseholderOnTheRight(ess, numext::conj(tau), m_ws.data());
 
     // Compute Matrix Zk1 s.t. (b(k+2,k) ... b(k+2, k+2)) Zk1 = (0,0,*)
     Vec3 bprime = (m_T.template block<1, 3>(k + 2, k) * S3).adjoint();
     bprime.makeHouseholder(ess, tau, beta);
-    m_S.template middleCols<3>(k).topRows((std::min)(k + 4, m_n)).applyOnTheRight(S3);
-    m_S.template middleCols<3>(k)
-        .topRows((std::min)(k + 4, m_n))
-        .applyHouseholderOnTheRight(ess, numext::conj(tau), m_ws.data());
-    m_S.template middleCols<3>(k).topRows((std::min)(k + 4, m_n)).applyOnTheRight(S3.transpose());
-    m_T.template middleCols<3>(k).topRows((std::min)(k + 3, m_n)).applyOnTheRight(S3);
-    m_T.template middleCols<3>(k)
-        .topRows((std::min)(k + 3, m_n))
-        .applyHouseholderOnTheRight(ess, numext::conj(tau), m_ws.data());
-    m_T.template middleCols<3>(k).topRows((std::min)(k + 3, m_n)).applyOnTheRight(S3.transpose());
+    auto Sk = m_S.template middleCols<3>(k).topRows((std::min)(k + 4, m_n));
+    auto Tk = m_T.template middleCols<3>(k).topRows((std::min)(k + 3, m_n));
+    // Right multiplication by S3 permutes columns as (2, 0, 1); reverse the swaps for S3^T.
+    Sk.col(0).swap(Sk.col(2));
+    Sk.col(1).swap(Sk.col(2));
+    Sk.applyHouseholderOnTheRight(ess, numext::conj(tau), m_ws.data());
+    Sk.col(1).swap(Sk.col(2));
+    Sk.col(0).swap(Sk.col(2));
+    Tk.col(0).swap(Tk.col(2));
+    Tk.col(1).swap(Tk.col(2));
+    Tk.applyHouseholderOnTheRight(ess, numext::conj(tau), m_ws.data());
+    Tk.col(1).swap(Tk.col(2));
+    Tk.col(0).swap(Tk.col(2));
     if (m_computeQZ) {
-      m_Z.template middleRows<3>(k).applyOnTheLeft(S3.transpose());
-      m_Z.template middleRows<3>(k).applyHouseholderOnTheLeft(ess, tau, m_ws.data());
-      m_Z.template middleRows<3>(k).applyOnTheLeft(S3);
+      auto Zk = m_Z.template middleRows<3>(k);
+      Zk.row(0).swap(Zk.row(2));
+      Zk.row(1).swap(Zk.row(2));
+      Zk.applyHouseholderOnTheLeft(ess, tau, m_ws.data());
+      Zk.row(1).swap(Zk.row(2));
+      Zk.row(0).swap(Zk.row(2));
     }
-    Mat2 Zk2 = computeZk2(m_T.template block<1, 2>(k + 1, k));
-    m_S.template middleCols<2>(k).topRows((std::min)(k + 4, m_n)).applyOnTheRight(Zk2);
-    m_T.template middleCols<2>(k).topRows((std::min)(k + 3, m_n)).applyOnTheRight(Zk2);
+    const JacobiRotation<Scalar> Zk2 = computeZk2(m_T.template block<1, 2>(k + 1, k));
+    m_S.template middleCols<2>(k).topRows((std::min)(k + 4, m_n)).applyOnTheRight(0, 1, Zk2);
+    m_T.template middleCols<2>(k).topRows((std::min)(k + 3, m_n)).applyOnTheRight(0, 1, Zk2);
 
-    if (m_computeQZ) m_Z.template middleRows<2>(k).applyOnTheLeft(Zk2.adjoint());
+    if (m_computeQZ) m_Z.template middleRows<2>(k).applyOnTheLeft(0, 1, Zk2.adjoint());
 
     x = m_S(k + 1, k);
     y = m_S(k + 2, k);
@@ -501,12 +595,12 @@ void ComplexQZ<MatrixType_>::do_QZ_step(Index p, Index q) {
 
   if (m_computeQZ) m_Q.template middleCols<2>(p + m - 2).applyOnTheRight(0, 1, J);
 
-  // Find a Householder matrix Zn1 s.t. (b(n,n-1) b(n,n)) * Zn1 = (0 *)
-  Mat2 Zn1 = computeZk2(m_T.template block<1, 2>(p + m - 1, p + m - 2));
-  m_S.template middleCols<2>(p + m - 2).applyOnTheRight(Zn1);
-  m_T.template middleCols<2>(p + m - 2).applyOnTheRight(Zn1);
+  // Find a rotation Zn1 s.t. (b(n,n-1) b(n,n)) * Zn1 = (0 *)
+  const JacobiRotation<Scalar> Zn1 = computeZk2(m_T.template block<1, 2>(p + m - 1, p + m - 2));
+  m_S.template middleCols<2>(p + m - 2).applyOnTheRight(0, 1, Zn1);
+  m_T.template middleCols<2>(p + m - 2).applyOnTheRight(0, 1, Zn1);
 
-  if (m_computeQZ) m_Z.template middleRows<2>(p + m - 2).applyOnTheLeft(Zn1.adjoint());
+  if (m_computeQZ) m_Z.template middleRows<2>(p + m - 2).applyOnTheLeft(0, 1, Zn1.adjoint());
 }
 
 /** \internal we found an undesired non-zero at (i+1,i) on the subdiagonal of S and reduce the block */
@@ -514,7 +608,8 @@ template <typename MatrixType_>
 void ComplexQZ<MatrixType_>::reduceDiagonal2x2block(Index i) {
   // We have found a non-zero on the subdiagonal and want to eliminate it
   Mat2 Si = m_S.template block<2, 2>(i, i), Ti = m_T.template block<2, 2>(i, i);
-  if (is_negligible(Ti(0, 0)) && !is_negligible(Ti(1, 1))) {
+  const RealScalar tolT = m_normOfT * NumTraits<RealScalar>::epsilon();
+  if (is_negligible(Ti(0, 0), tolT)) {
     Eigen::JacobiRotation<Scalar> G;
     G.makeGivens(m_S(i, i), m_S(i + 1, i));
     m_S.applyOnTheLeft(i, i + 1, G.adjoint());
@@ -522,13 +617,13 @@ void ComplexQZ<MatrixType_>::reduceDiagonal2x2block(Index i) {
 
     if (m_computeQZ) m_Q.applyOnTheRight(i, i + 1, G);
 
-  } else if (!is_negligible(Ti(0, 0)) && is_negligible(Ti(1, 1))) {
+  } else if (is_negligible(Ti(1, 1), tolT)) {
     Eigen::JacobiRotation<Scalar> G;
     G.makeGivens(m_S(i + 1, i + 1), m_S(i + 1, i));
     m_S.applyOnTheRight(i, i + 1, G.adjoint());
     m_T.applyOnTheRight(i, i + 1, G.adjoint());
     if (m_computeQZ) m_Z.applyOnTheLeft(i, i + 1, G);
-  } else if (!is_negligible(Ti(0, 0)) && !is_negligible(Ti(1, 1))) {
+  } else {
     Scalar mu = Si(0, 0) / Ti(0, 0);
     Scalar a12_bar = Si(0, 1) - mu * Ti(0, 1);
     Scalar a22_bar = Si(1, 1) - mu * Ti(1, 1);
@@ -547,19 +642,73 @@ void ComplexQZ<MatrixType_>::reduceDiagonal2x2block(Index i) {
 
     if (m_computeQZ) m_Z.applyOnTheLeft(i, i + 1, G);
 
-    Mat2 tildeSi = m_S.template block<2, 2>(i, i), tildeTi = m_T.template block<2, 2>(i, i);
-    Mat2 C = tildeSi.norm() < (lambda * tildeTi).norm() ? tildeSi : lambda * tildeTi;
-    G.makeGivens(C(0, 0), C(1, 0));
+    // The left rotation from T's first column keeps T triangular; the residual ~eps (|S| + |lambda| |T|) of the null
+    // vector lands in S(i+1, i), where the refinement below removes it.
+    if (numext::abs(m_T(i, i)) + numext::abs(m_T(i + 1, i)) > tolT)
+      G.makeGivens(m_T(i, i), m_T(i + 1, i));
+    else
+      G.makeGivens(m_S(i, i), m_S(i + 1, i));
     m_S.applyOnTheLeft(i, i + 1, G.adjoint());
     m_T.applyOnTheLeft(i, i + 1, G.adjoint());
 
     if (m_computeQZ) m_Q.applyOnTheRight(i, i + 1, G);
   }
 
-  if (!is_negligible(m_S(i + 1, i), m_normOfS * NumTraits<RealScalar>::epsilon())) {
+  // Rotations formed from lambda can leave S(i+1, i) well above eps (|S(i, i)| + |S(i+1, i+1)|), e.g. for graded T.
+  // Refine with single-shift QZ steps. With K = T^-1 S = [a b; c d], the Rayleigh quotient shift d = S(i+1, i+1) /
+  // T(i+1, i+1) maps |c| to |c|^2 |b| / (|a - d|^2 + |c|^2): quadratic for separated eigenvalues, but not monotone. Up
+  // to four steps run on a copy of the block. Of the prefixes that pass the final test |S(i+1, i)| <= eps m_normOfS, or
+  // of all if none does, the one with the smallest |S(i+1, i)| / (|S(i, i)| + |S(i+1, i+1)|) is applied.
+  const auto relativeSubdiagonal = [](const Mat2& s) {
+    const RealScalar subdiagonal = numext::abs(s(1, 0));
+    const RealScalar diagonal = numext::abs(s(0, 0)) + numext::abs(s(1, 1));
+    return subdiagonal <= NumTraits<RealScalar>::epsilon() * diagonal ? RealScalar(0) : subdiagonal / diagonal;
+  };
+  JacobiRotation<Scalar> left[4], right[4];
+  Mat2 Sstep = m_S.template block<2, 2>(i, i), Tstep = m_T.template block<2, 2>(i, i);
+  const RealScalar tolS = m_normOfS * NumTraits<RealScalar>::epsilon();
+  RealScalar current = relativeSubdiagonal(Sstep), best = current;
+  bool bestPasses = is_negligible(Sstep(1, 0), tolS);
+  int bestSteps = 0;
+  for (int k = 0; k < 4 && current > RealScalar(0); ++k) {
+    if (is_negligible(Tstep(1, 1), tolT)) {
+      // An infinite eigenvalue: deflate it with a rotation of the columns, as in the branch above.
+      left[k] = JacobiRotation<Scalar>(Scalar(1), Scalar(0));
+      right[k].makeGivens(Sstep(1, 1), Sstep(1, 0));
+      right[k] = right[k].adjoint();
+    } else {
+      const Scalar shift = Sstep(1, 1) / Tstep(1, 1);
+      left[k].makeGivens(Sstep(0, 0) - shift * Tstep(0, 0), Sstep(1, 0));
+      Sstep.applyOnTheLeft(0, 1, left[k].adjoint());
+      Tstep.applyOnTheLeft(0, 1, left[k].adjoint());
+      right[k] = computeZk2(Tstep.row(1));
+    }
+    Sstep.applyOnTheRight(0, 1, right[k]);
+    Tstep.applyOnTheRight(0, 1, right[k]);
+    Tstep(1, 0) = Scalar(0);
+    current = relativeSubdiagonal(Sstep);
+    const bool passes = is_negligible(Sstep(1, 0), tolS);
+    if ((passes && !bestPasses) || (passes == bestPasses && current < best)) {
+      best = current;
+      bestPasses = passes;
+      bestSteps = k + 1;
+    }
+  }
+  for (int k = 0; k < bestSteps; ++k) {
+    m_S.rightCols(m_n - i).applyOnTheLeft(i, i + 1, left[k].adjoint());
+    m_T.rightCols(m_n - i).applyOnTheLeft(i, i + 1, left[k].adjoint());
+    if (m_computeQZ) m_Q.applyOnTheRight(i, i + 1, left[k]);
+    m_S.topRows(i + 2).applyOnTheRight(i, i + 1, right[k]);
+    m_T.topRows(i + 2).applyOnTheRight(i, i + 1, right[k]);
+    m_T(i + 1, i) = Scalar(0);
+    if (m_computeQZ) m_Z.applyOnTheLeft(i, i + 1, right[k].adjoint());
+  }
+
+  if (!is_negligible(m_S(i + 1, i), tolS)) {
     m_info = ComputationInfo::NumericalIssue;
   } else {
     m_S(i + 1, i) = Scalar(0);
+    m_T(i + 1, i) = Scalar(0);
   }
 }
 
@@ -615,13 +764,8 @@ void ComplexQZ<MatrixType_>::push_down_zero_ST(Index k, Index l) {
 /** \internal Computes vector L1 norms of S and T when in Hessenberg-Triangular form already */
 template <typename MatrixType_>
 void ComplexQZ<MatrixType_>::computeNorms() {
-  const Index size = m_S.cols();
-  m_normOfS = RealScalar(0);
-  m_normOfT = RealScalar(0);
-  for (Index j = 0; j < size; ++j) {
-    m_normOfS += m_S.col(j).segment(0, (std::min)(size, j + 2)).cwiseAbs().sum();
-    m_normOfT += m_T.row(j).segment(j, size - j).cwiseAbs().sum();
-  }
+  m_normOfS = internal::hessenberg_abs_sum<Upper>(m_S);
+  m_normOfT = internal::triangular_abs_sum<Upper>(m_T);
 }
 
 /** \internal Look for single small sub-diagonal element S(res, res-1) and return res (or 0). Copied from Eigen3 RealQZ

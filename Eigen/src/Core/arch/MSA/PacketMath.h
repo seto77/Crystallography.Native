@@ -40,9 +40,9 @@ namespace internal {
 
 #define EIGEN_MSA_SHF_I8(a, b, c, d) (((d) << 6) | ((c) << 4) | ((b) << 2) | (a))
 
-typedef v4f32 Packet4f;
-typedef v4i32 Packet4i;
-typedef v4u32 Packet4ui;
+using Packet4f = v4f32;
+using Packet4i = v4i32;
+using Packet4ui = v4u32;
 
 #define EIGEN_DECLARE_CONST_Packet4f(NAME, X) const Packet4f p4f_##NAME = {X, X, X, X}
 #define EIGEN_DECLARE_CONST_Packet4i(NAME, X) const Packet4i p4i_##NAME = {X, X, X, X}
@@ -65,8 +65,8 @@ inline std::ostream& operator<<(std::ostream& os, const Packet4ui& value) {
 
 template <>
 struct packet_traits<float> : default_packet_traits {
-  typedef Packet4f type;
-  typedef Packet4f half;  // Packet2f intrinsics not implemented yet
+  using type = Packet4f;
+  using half = Packet4f;  // Packet2f intrinsics not implemented yet
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -86,8 +86,8 @@ struct packet_traits<float> : default_packet_traits {
 
 template <>
 struct packet_traits<int32_t> : default_packet_traits {
-  typedef Packet4i type;
-  typedef Packet4i half;  // Packet2i intrinsics not implemented yet
+  using type = Packet4i;
+  using half = Packet4i;  // Packet2i intrinsics not implemented yet
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -99,7 +99,7 @@ struct packet_traits<int32_t> : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet4f> {
-  typedef float type;
+  using type = float;
   enum {
     size = 4,
     alignment = Aligned16,
@@ -107,12 +107,13 @@ struct unpacket_traits<Packet4f> {
     masked_load_available = false,
     masked_store_available = false
   };
-  typedef Packet4f half;
+  using half = Packet4f;
+  using integer_packet = Packet4i;
 };
 
 template <>
 struct unpacket_traits<Packet4i> {
-  typedef int32_t type;
+  using type = int32_t;
   enum {
     size = 4,
     alignment = Aligned16,
@@ -120,7 +121,7 @@ struct unpacket_traits<Packet4i> {
     masked_load_available = false,
     masked_store_available = false
   };
-  typedef Packet4i half;
+  using half = Packet4i;
 };
 
 template <>
@@ -213,20 +214,6 @@ EIGEN_STRONG_INLINE Packet4i pnegate(const Packet4i& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet4f pconj(const Packet4f& a) {
-  EIGEN_MSA_DEBUG;
-
-  return a;
-}
-
-template <>
-EIGEN_STRONG_INLINE Packet4i pconj(const Packet4i& a) {
-  EIGEN_MSA_DEBUG;
-
-  return a;
-}
-
-template <>
 EIGEN_STRONG_INLINE Packet4f pmul<Packet4f>(const Packet4f& a, const Packet4f& b) {
   EIGEN_MSA_DEBUG;
 
@@ -254,6 +241,8 @@ EIGEN_STRONG_INLINE Packet4i pdiv<Packet4i>(const Packet4i& a, const Packet4i& b
   return __builtin_msa_div_s_w(a, b);
 }
 
+template <>
+struct is_fused_madd<Packet4f> : true_type {};
 template <>
 EIGEN_STRONG_INLINE Packet4f pmadd(const Packet4f& a, const Packet4f& b, const Packet4f& c) {
   EIGEN_MSA_DEBUG;
@@ -558,6 +547,31 @@ EIGEN_STRONG_INLINE Packet4i pabs(const Packet4i& a) {
   return __builtin_msa_add_a_w(zero, a);
 }
 
+template <int N>
+EIGEN_STRONG_INLINE Packet4i parithmetic_shift_right(const Packet4i& a) {
+  return __builtin_msa_srai_w(a, N);
+}
+
+template <int N>
+EIGEN_STRONG_INLINE Packet4i plogical_shift_right(const Packet4i& a) {
+  return __builtin_msa_srli_w(a, N);
+}
+
+template <int N>
+EIGEN_STRONG_INLINE Packet4i plogical_shift_left(const Packet4i& a) {
+  return __builtin_msa_slli_w(a, N);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4i pcast<Packet4f, Packet4i>(const Packet4f& a) {
+  return __builtin_msa_ftrunc_s_w(a);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet4f pldexp<Packet4f>(const Packet4f& a, const Packet4f& exponent) {
+  return pldexp_generic(a, exponent);
+}
+
 template <>
 EIGEN_STRONG_INLINE float predux<Packet4f>(const Packet4f& a) {
   EIGEN_MSA_DEBUG;
@@ -568,12 +582,22 @@ EIGEN_STRONG_INLINE float predux<Packet4f>(const Packet4f& a) {
 }
 
 template <>
+EIGEN_STRONG_INLINE bool predux_any(const Packet4f& a) {
+  return __builtin_msa_bnz_v((v16u8)a);
+}
+
+template <>
 EIGEN_STRONG_INLINE int32_t predux<Packet4i>(const Packet4i& a) {
   EIGEN_MSA_DEBUG;
 
   Packet4i s = padd(a, __builtin_msa_shf_w(a, EIGEN_MSA_SHF_I8(2, 3, 0, 1)));
   s = padd(s, __builtin_msa_shf_w(s, EIGEN_MSA_SHF_I8(1, 0, 3, 2)));
   return s[0];
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const Packet4i& a) {
+  return __builtin_msa_bnz_v((v16u8)a);
 }
 
 // Other reduction functions:
@@ -771,26 +795,6 @@ EIGEN_STRONG_INLINE Packet4f pceil<Packet4f>(const Packet4f& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet4f pround<Packet4f>(const Packet4f& a) {
-  Packet4f v = a;
-  int32_t old_mode, new_mode;
-  asm volatile(
-      "cfcmsa  %[old_mode], $1\n"
-      "ori     %[new_mode], %[old_mode], 3\n"
-      "xori    %[new_mode], %[new_mode], 3\n"  // 0 = round to nearest, ties to even.
-      "ctcmsa  $1, %[new_mode]\n"
-      "frint.w %w[v], %w[v]\n"
-      "ctcmsa  $1, %[old_mode]\n"
-      :  // outputs
-      [old_mode] "=r"(old_mode), [new_mode] "=r"(new_mode),
-      [v] "+f"(v)
-      :  // inputs
-      :  // clobbers
-  );
-  return v;
-}
-
-template <>
 EIGEN_STRONG_INLINE Packet4f print<Packet4f>(const Packet4f& a) {
   // frint.w uses the current rounding mode (default: round to nearest, ties to even).
   Packet4f v = a;
@@ -825,9 +829,9 @@ EIGEN_STRONG_INLINE Packet4f pcmp_lt_or_nan<Packet4f>(const Packet4f& a, const P
 
 //---------- double ----------
 
-typedef v2f64 Packet2d;
-typedef v2i64 Packet2l;
-typedef v2u64 Packet2ul;
+using Packet2d = v2f64;
+using Packet2l = v2i64;
+using Packet2ul = v2u64;
 
 #define EIGEN_DECLARE_CONST_Packet2d(NAME, X) const Packet2d p2d_##NAME = {X, X}
 #define EIGEN_DECLARE_CONST_Packet2l(NAME, X) const Packet2l p2l_##NAME = {X, X}
@@ -850,8 +854,8 @@ inline std::ostream& operator<<(std::ostream& os, const Packet2ul& value) {
 
 template <>
 struct packet_traits<double> : default_packet_traits {
-  typedef Packet2d type;
-  typedef Packet2d half;
+  using type = Packet2d;
+  using half = Packet2d;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -866,7 +870,7 @@ struct packet_traits<double> : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet2d> {
-  typedef double type;
+  using type = double;
   enum {
     size = 2,
     alignment = Aligned16,
@@ -874,8 +878,62 @@ struct unpacket_traits<Packet2d> {
     masked_load_available = false,
     masked_store_available = false
   };
-  typedef Packet2d half;
+  using half = Packet2d;
+  using integer_packet = Packet2l;
 };
+
+template <>
+struct unpacket_traits<Packet2l> {
+  using type = int64_t;
+  enum {
+    size = 2,
+    alignment = Aligned16,
+    vectorizable = true,
+    masked_load_available = false,
+    masked_store_available = false
+  };
+  using half = Packet2l;
+};
+
+template <>
+EIGEN_STRONG_INLINE Packet2l pset1<Packet2l>(const int64_t& from) {
+  return __builtin_msa_fill_d(from);
+}
+
+template <int N>
+EIGEN_STRONG_INLINE Packet2l plogical_shift_right(const Packet2l& a) {
+  return __builtin_msa_srli_d(a, N);
+}
+
+template <int N>
+EIGEN_STRONG_INLINE Packet2l plogical_shift_left(const Packet2l& a) {
+  return __builtin_msa_slli_d(a, N);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2l pcast<Packet2d, Packet2l>(const Packet2d& a) {
+  return __builtin_msa_ftrunc_s_d(a);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2l pand<Packet2l>(const Packet2l& a, const Packet2l& b) {
+  return (Packet2l)__builtin_msa_and_v((v16u8)a, (v16u8)b);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2l por<Packet2l>(const Packet2l& a, const Packet2l& b) {
+  return (Packet2l)__builtin_msa_or_v((v16u8)a, (v16u8)b);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2l pxor<Packet2l>(const Packet2l& a, const Packet2l& b) {
+  return (Packet2l)__builtin_msa_xor_v((v16u8)a, (v16u8)b);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2l pandnot<Packet2l>(const Packet2l& a, const Packet2l& b) {
+  return pand(a, (Packet2l)__builtin_msa_xori_b((v16u8)b, 255));
+}
 
 template <>
 EIGEN_STRONG_INLINE Packet2d pset1<Packet2d>(const double& from) {
@@ -915,13 +973,6 @@ EIGEN_STRONG_INLINE Packet2d pnegate(const Packet2d& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet2d pconj(const Packet2d& a) {
-  EIGEN_MSA_DEBUG;
-
-  return a;
-}
-
-template <>
 EIGEN_STRONG_INLINE Packet2d pmul<Packet2d>(const Packet2d& a, const Packet2d& b) {
   EIGEN_MSA_DEBUG;
 
@@ -935,6 +986,8 @@ EIGEN_STRONG_INLINE Packet2d pdiv<Packet2d>(const Packet2d& a, const Packet2d& b
   return __builtin_msa_fdiv_d(a, b);
 }
 
+template <>
+struct is_fused_madd<Packet2d> : true_type {};
 template <>
 EIGEN_STRONG_INLINE Packet2d pmadd(const Packet2d& a, const Packet2d& b, const Packet2d& c) {
   EIGEN_MSA_DEBUG;
@@ -1094,6 +1147,11 @@ EIGEN_STRONG_INLINE double predux<Packet2d>(const Packet2d& a) {
   return s[0];
 }
 
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const Packet2d& a) {
+  return __builtin_msa_bnz_v((v16u8)a);
+}
+
 // Other reduction functions:
 // mul
 template <>
@@ -1207,26 +1265,6 @@ EIGEN_STRONG_INLINE Packet2d pceil<Packet2d>(const Packet2d& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet2d pround<Packet2d>(const Packet2d& a) {
-  Packet2d v = a;
-  int32_t old_mode, new_mode;
-  asm volatile(
-      "cfcmsa  %[old_mode], $1\n"
-      "ori     %[new_mode], %[old_mode], 3\n"
-      "xori    %[new_mode], %[new_mode], 3\n"  // 0 = round to nearest, ties to even.
-      "ctcmsa  $1, %[new_mode]\n"
-      "frint.d %w[v], %w[v]\n"
-      "ctcmsa  $1, %[old_mode]\n"
-      :  // outputs
-      [old_mode] "=r"(old_mode), [new_mode] "=r"(new_mode),
-      [v] "+f"(v)
-      :  // inputs
-      :  // clobbers
-  );
-  return v;
-}
-
-template <>
 EIGEN_STRONG_INLINE Packet2d print<Packet2d>(const Packet2d& a) {
   // frint.d uses the current rounding mode (default: round to nearest, ties to even).
   Packet2d v = a;
@@ -1257,6 +1295,11 @@ EIGEN_STRONG_INLINE Packet2d ptrunc<Packet2d>(const Packet2d& a) {
 template <>
 EIGEN_STRONG_INLINE Packet2d pcmp_lt_or_nan<Packet2d>(const Packet2d& a, const Packet2d& b) {
   return (Packet2d)__builtin_msa_fcult_d(a, b);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet2d pldexp<Packet2d>(const Packet2d& a, const Packet2d& exponent) {
+  return pldexp_generic(a, exponent);
 }
 
 }  // end namespace internal

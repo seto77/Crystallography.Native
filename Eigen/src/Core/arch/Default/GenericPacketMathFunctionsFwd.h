@@ -43,6 +43,10 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pfrexp_generic_get_biased_exponent(
 template <typename Packet>
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_generic(const Packet& a, const Packet& exponent);
 
+/** \internal \returns ((a * c1) * c1) * c2 in that order, for the implementations of pldexp. */
+template <typename Packet>
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_apply_factors(const Packet& a, const Packet& c1, const Packet& c2);
+
 // Explicitly multiplies
 //    a * (2^e)
 // clamping e to the range
@@ -54,6 +58,19 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_generic(const Packet& a, con
 // Assumes IEEE floating point format
 template <typename Packet>
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet pldexp_fast(const Packet& a, const Packet& exponent);
+
+namespace unary_pow {
+// The two operations on a floating-point packet's raw bits that the integer-exponent pow needs: a right shift by
+// the mantissa width and a lane-wise subtraction, both of the exponent field. Defined in GenericPacketMathPow.h
+// in terms of unpacket_traits<Packet>::integer_packet. Override these, and has_exponent_bit_ops, where there is
+// no integer_packet but the two operations can still be expressed.
+template <typename Packet, typename = void>
+struct has_exponent_bit_ops;
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet exponent_bits_shift_right(const Packet& bits);
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet exponent_bits_sub(const Packet& a_bits, const Packet& b_bits);
+}  // namespace unary_pow
 
 /** \internal \returns cbrt(x) for single precision float */
 template <typename Packet>
@@ -114,6 +131,10 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_atan(const Pa
 /** \internal \returns exp2(x) */
 template <typename Packet>
 EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_exp2(const Packet& x);
+
+/** \internal \returns exp2(f) for |f| <= 1/2 */
+template <typename Packet>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_exp2_reduced(const Packet& f);
 
 /** \internal \returns exp(x) for single precision float */
 template <typename Packet, bool IsFinite = false>
@@ -226,8 +247,8 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet pmul_complex(const Pa
 template <typename Packet, int N>
 struct ppolevl;
 
-/** \internal \returns log(x) for complex types */
-template <typename Packet>
+/** \internal \returns log(x), or log2(x) for Base2, for complex types */
+template <typename Packet, bool Base2 = false>
 EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet plog_complex(const Packet& x);
 
 /** \internal \returns exp(x) for complex types */

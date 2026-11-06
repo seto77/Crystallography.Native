@@ -62,9 +62,7 @@ class FixedInt {
   constexpr FixedInt(std::integral_constant<int, N>) {}
 
   constexpr FixedInt(VariableAndFixedInt<N> other) {
-#ifndef EIGEN_INTERNAL_DEBUGGING
     EIGEN_UNUSED_VARIABLE(other);
-#endif
     eigen_internal_assert(int(other) == N);
   }
 
@@ -110,6 +108,11 @@ class FixedInt {
 
   constexpr VariableAndFixedInt<N> operator()(int val) const { return VariableAndFixedInt<N>(val); }
 };
+
+#if EIGEN_COMP_CXXVER < 17
+template <int N>
+constexpr int FixedInt<N>::value;
+#endif
 
 /** \internal
  * \class VariableAndFixedInt

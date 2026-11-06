@@ -93,9 +93,7 @@ class QuaternionBase : public RotationBase<Derived, 3> {
    *
    * \sa QuaternionBase::coeffsScalarLast()
    * */
-  EIGEN_DEVICE_FUNC inline typename internal::traits<Derived>::Coefficients coeffsScalarFirst() const {
-    return derived().coeffsScalarFirst();
-  }
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarFirst() const { return derived().coeffsScalarFirst(); }
 
   /** \returns a vector containing the coefficients in their original order [\c x, \c y, \c z, \c w].
    *
@@ -104,9 +102,7 @@ class QuaternionBase : public RotationBase<Derived, 3> {
    *
    * \sa QuaternionBase::coeffsScalarFirst()
    * */
-  EIGEN_DEVICE_FUNC inline typename internal::traits<Derived>::Coefficients coeffsScalarLast() const {
-    return derived().coeffsScalarLast();
-  }
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarLast() const { return derived().coeffsScalarLast(); }
 
   /** \returns a vector expression of the coefficients (x,y,z,w) */
   EIGEN_DEVICE_FUNC inline typename internal::traits<Derived>::Coefficients& coeffs() { return derived().coeffs(); }
@@ -470,9 +466,9 @@ class Map<const Quaternion<Scalar_>, Options_> : public QuaternionBase<Map<const
 
   EIGEN_DEVICE_FUNC inline const Coefficients& coeffs() const { return m_coeffs; }
 
-  EIGEN_DEVICE_FUNC inline Coefficients coeffsScalarLast() const { return m_coeffs; }
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarLast() const { return m_coeffs; }
 
-  EIGEN_DEVICE_FUNC inline Coefficients coeffsScalarFirst() const {
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarFirst() const {
     return {m_coeffs.w(), m_coeffs.x(), m_coeffs.y(), m_coeffs.z()};
   }
 
@@ -512,9 +508,9 @@ class Map<Quaternion<Scalar_>, Options_> : public QuaternionBase<Map<Quaternion<
   EIGEN_DEVICE_FUNC inline Coefficients& coeffs() { return m_coeffs; }
   EIGEN_DEVICE_FUNC inline const Coefficients& coeffs() const { return m_coeffs; }
 
-  EIGEN_DEVICE_FUNC inline Coefficients coeffsScalarLast() const { return m_coeffs; }
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarLast() const { return m_coeffs; }
 
-  EIGEN_DEVICE_FUNC inline Coefficients coeffsScalarFirst() const {
+  EIGEN_DEVICE_FUNC inline Matrix<Scalar, 4, 1> coeffsScalarFirst() const {
     return {m_coeffs.w(), m_coeffs.x(), m_coeffs.y(), m_coeffs.z()};
   }
 
@@ -544,8 +540,19 @@ using QuaternionMapAlignedd = Map<Quaternion<double>, Aligned>;
 namespace internal {
 template <int Arch, class Derived1, class Derived2, typename Scalar>
 struct quat_product {
-  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Quaternion<Scalar> run(const QuaternionBase<Derived1>& a,
-                                                                      const QuaternionBase<Derived2>& b) {
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Quaternion<Scalar> run(const QuaternionBase<Derived1>& input_a,
+                                                                      const QuaternionBase<Derived2>& input_b) {
+    const Derived1* a_ptr = &input_a.derived();
+    const Derived2* b_ptr = &input_b.derived();
+#if EIGEN_ARCH_ARM && EIGEN_COMP_CLANG
+    EIGEN_IF_CONSTEXPR (std::is_same<Scalar, double>::value) {
+      // Keep operand addresses opaque to LLVM's ARM load/store optimizer (llvm-project#223630).
+      // Register constraints avoid the spills introduced by the general optimization barrier.
+      asm("" : "+r"(a_ptr), "+r"(b_ptr));
+    }
+#endif
+    const Derived1& a = *a_ptr;
+    const Derived2& b = *b_ptr;
     return Quaternion<Scalar>(a.w() * b.w() - a.x() * b.x() - a.y() * b.y() - a.z() * b.z(),
                               a.w() * b.x() + a.x() * b.w() + a.y() * b.z() - a.z() * b.y(),
                               a.w() * b.y() + a.y() * b.w() + a.z() * b.x() - a.x() * b.z(),
@@ -614,11 +621,9 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& QuaternionBase<Derived>::operator
  */
 template <class Derived>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Derived& QuaternionBase<Derived>::operator=(const AngleAxisType& aa) {
-  EIGEN_USING_STD(cos)
-  EIGEN_USING_STD(sin)
   Scalar ha = Scalar(0.5) * aa.angle();  // Scalar(0.5) to suppress precision loss warnings
-  this->w() = cos(ha);
-  this->vec() = sin(ha) * aa.axis();
+  this->w() = numext::cos(ha);
+  this->vec() = numext::sin(ha) * aa.axis();
   return derived();
 }
 
@@ -687,24 +692,20 @@ template <class Derived>
 template <typename Derived1, typename Derived2>
 EIGEN_DEVICE_FUNC inline Derived& QuaternionBase<Derived>::setFromTwoVectors(const MatrixBase<Derived1>& a,
                                                                              const MatrixBase<Derived2>& b) {
-  EIGEN_USING_STD(sqrt)
   Vector3 v0 = a.normalized();
   Vector3 v1 = b.normalized();
   Scalar c = v1.dot(v0);
 
-  // if dot == -1, vectors are nearly opposites
-  // => any axis perpendicular to v0 will do for a ~180 degree rotation.
+  // if dot == -1, vectors are nearly opposites: an axis orthogonal to v0 alone does not send v0 to v1.
+  // => rotate through a direction m orthogonal to v0, so that both v0 -> m and m -> v1 are ~90 degree rotations.
+  // With u = v0.unitOrthogonal() and m = u x v0, both legs turn about v0 x m = u, so v1 = -v0 still gives (0, u).
   if (c < Scalar(-1) + NumTraits<Scalar>::dummy_precision()) {
-    c = numext::maxi(c, Scalar(-1));
-    Vector3 axis = v0.unitOrthogonal();
-
-    Scalar w2 = (Scalar(1) + c) * Scalar(0.5);
-    this->w() = sqrt(w2);
-    this->vec() = axis * sqrt(Scalar(1) - w2);
+    const Vector3 m = v0.unitOrthogonal().cross(v0);
+    coeffs() = (Quaternion<Scalar>::FromTwoVectors(m, v1) * Quaternion<Scalar>::FromTwoVectors(v0, m)).coeffs();
     return derived();
   }
   Vector3 axis = v0.cross(v1);
-  Scalar s = sqrt((Scalar(1) + c) * Scalar(2));
+  Scalar s = numext::sqrt<Scalar>((Scalar(1) + c) * Scalar(2));
   Scalar invs = Scalar(1) / s;
   this->vec() = axis * invs;
   this->w() = s * Scalar(0.5);
@@ -727,8 +728,6 @@ template <class Derived>
 template <typename OtherDerived>
 EIGEN_DEVICE_FUNC inline Derived& QuaternionBase<Derived>::setFromScaledAxis(
     const MatrixBase<OtherDerived>& scaled_axis) {
-  EIGEN_USING_STD(sin)
-  EIGEN_USING_STD(cos)
   EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(OtherDerived, 3)
 
   // Materialise the input once so the caller's expression (e.g. omega*dt) is not
@@ -747,8 +746,8 @@ EIGEN_DEVICE_FUNC inline Derived& QuaternionBase<Derived>::setFromScaledAxis(
   }
 
   const Scalar half_angle = Scalar(0.5) * angle;
-  this->w() = cos(half_angle);
-  this->vec() = (sin(half_angle) / angle) * v;
+  this->w() = numext::cos(half_angle);
+  this->vec() = (numext::sin(half_angle) / angle) * v;
   return derived();
 }
 
@@ -767,7 +766,6 @@ EIGEN_DEVICE_FUNC inline Derived& QuaternionBase<Derived>::setFromScaledAxis(
  */
 template <class Derived>
 EIGEN_DEVICE_FUNC inline typename QuaternionBase<Derived>::Vector3 QuaternionBase<Derived>::toScaledAxis() const {
-  EIGEN_USING_STD(atan2)
   eigen_assert(internal::isApprox(this->squaredNorm(), Scalar(1), Scalar(8) * NumTraits<Scalar>::dummy_precision()) &&
                "QuaternionBase::toScaledAxis(): the quaternion must be approximately a unit quaternion");
 
@@ -779,7 +777,7 @@ EIGEN_DEVICE_FUNC inline typename QuaternionBase<Derived>::Vector3 QuaternionBas
   // |w| in atan2 prevents -0.0 from flipping the sign; recover it via the comparison below
   // (false for both +0.0 and -0.0).
   // Cannot overflow: for unit q, atan2(s, |c|) is O(s) as s -> 0, so k stays in [2, pi].
-  Scalar k = Scalar(2) * atan2(sin_half_angle, numext::abs(this->w())) / sin_half_angle;
+  Scalar k = Scalar(2) * numext::atan2(sin_half_angle, numext::abs(this->w())) / sin_half_angle;
   if (this->w() < Scalar(0)) k = -k;
   return k * this->vec();
 }
@@ -790,13 +788,10 @@ EIGEN_DEVICE_FUNC inline typename QuaternionBase<Derived>::Vector3 QuaternionBas
  */
 template <typename Scalar, int Options>
 EIGEN_DEVICE_FUNC Quaternion<Scalar, Options> Quaternion<Scalar, Options>::UnitRandom() {
-  EIGEN_USING_STD(sqrt)
-  EIGEN_USING_STD(sin)
-  EIGEN_USING_STD(cos)
   const Scalar u1 = internal::random<Scalar>(0, 1), u2 = internal::random<Scalar>(0, 2 * EIGEN_PI),
                u3 = internal::random<Scalar>(0, 2 * EIGEN_PI);
-  const Scalar a = sqrt(Scalar(1) - u1), b = sqrt(u1);
-  return Quaternion(a * sin(u2), a * cos(u2), b * sin(u3), b * cos(u3));
+  const Scalar a = numext::sqrt<Scalar>(Scalar(1) - u1), b = numext::sqrt(u1);
+  return Quaternion(a * numext::sin(u2), a * numext::cos(u2), b * numext::sin(u3), b * numext::cos(u3));
 }
 
 /** Constructs a quaternion from its coefficients in the order [\c x, \c y, \c z, \c w], i.e. vector part [\c x, \c y,
@@ -910,9 +905,8 @@ template <class Derived>
 template <class OtherDerived>
 EIGEN_DEVICE_FUNC inline typename internal::traits<Derived>::Scalar QuaternionBase<Derived>::angularDistance(
     const QuaternionBase<OtherDerived>& other) const {
-  EIGEN_USING_STD(atan2)
   Quaternion<Scalar> d = (*this) * other.conjugate();
-  return Scalar(2) * atan2(d.vec().norm(), numext::abs(d.w()));
+  return Scalar(2) * numext::atan2(d.vec().norm(), numext::abs(d.w()));
 }
 
 /** \returns the spherical linear interpolation between the two quaternions
@@ -925,8 +919,6 @@ template <class Derived>
 template <class OtherDerived>
 EIGEN_DEVICE_FUNC Quaternion<typename internal::traits<Derived>::Scalar> QuaternionBase<Derived>::slerp(
     const Scalar& t, const QuaternionBase<OtherDerived>& other) const {
-  EIGEN_USING_STD(acos)
-  EIGEN_USING_STD(sin)
   const Scalar one = Scalar(1) - NumTraits<Scalar>::epsilon();
   Scalar d = this->dot(other);
   Scalar absD = numext::abs(d);
@@ -940,11 +932,11 @@ EIGEN_DEVICE_FUNC Quaternion<typename internal::traits<Derived>::Scalar> Quatern
     scale1 = t;
   } else {
     // theta is the angle between the 2 quaternions
-    Scalar theta = acos(absD);
-    Scalar sinTheta = numext::sqrt(Scalar(1) - absD * absD);
+    Scalar theta = numext::acos(absD);
+    Scalar sinTheta = numext::sqrt<Scalar>(Scalar(1) - absD * absD);
 
-    scale0 = sin((Scalar(1) - t) * theta) / sinTheta;
-    scale1 = sin(t * theta) / sinTheta;
+    scale0 = numext::sin<Scalar>((Scalar(1) - t) * theta) / sinTheta;
+    scale1 = numext::sin<Scalar>(t * theta) / sinTheta;
   }
   if (d < Scalar(0)) scale1 = -scale1;
 
@@ -957,34 +949,50 @@ namespace internal {
 template <typename Other>
 struct quaternionbase_assign_impl<Other, 3, 3> {
   using Scalar = typename Other::Scalar;
-  template <class Derived>
+
+  template <bool Normalize>
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE Scalar compute_scale(Scalar& t) {
+    if (!Normalize) return Scalar(1);
+    t = numext::sqrt(t);
+    Scalar s = Scalar(0.5) / t;
+    t *= Scalar(0.5);
+    return s;
+  }
+
+  template <int AxisI, int AxisJ, int AxisK, bool Normalize, class Derived, class Mat>
+  EIGEN_DEVICE_FUNC static EIGEN_STRONG_INLINE void assign_branch(QuaternionBase<Derived>& q, const Mat& mat,
+                                                                  Scalar mii, Scalar mjj, Scalar mkk) {
+    // Guard against slightly negative argument from non-orthogonal matrices.
+    Scalar t = numext::maxi(mii - mjj - mkk + Scalar(1.0), Scalar(0));
+    const Scalar s = compute_scale<Normalize>(t);
+    q.coeffs().coeffRef(AxisI) = t;
+    q.w() = (mat.coeff(AxisK, AxisJ) - mat.coeff(AxisJ, AxisK)) * s;
+    q.coeffs().coeffRef(AxisJ) = (mat.coeff(AxisJ, AxisI) + mat.coeff(AxisI, AxisJ)) * s;
+    q.coeffs().coeffRef(AxisK) = (mat.coeff(AxisK, AxisI) + mat.coeff(AxisI, AxisK)) * s;
+  }
+
+  template <bool Normalize = true, class Derived>
   EIGEN_DEVICE_FUNC static inline void run(QuaternionBase<Derived>& q, const Other& a_mat) {
     const typename internal::nested_eval<Other, 2>::type mat(a_mat);
-    EIGEN_USING_STD(sqrt)
     // This algorithm comes from  "Quaternion Calculus and Fast Animation",
     // Ken Shoemake, 1987 SIGGRAPH course notes
-    Scalar t = mat.trace();
+    const Scalar m00 = mat.coeff(0, 0);
+    const Scalar m11 = mat.coeff(1, 1);
+    const Scalar m22 = mat.coeff(2, 2);
+    Scalar t = m00 + (m11 + m22);
     if (t > Scalar(0)) {
-      t = sqrt(numext::maxi(t + Scalar(1.0), Scalar(0)));
-      q.w() = Scalar(0.5) * t;
-      t = Scalar(0.5) / t;
-      q.x() = (mat.coeff(2, 1) - mat.coeff(1, 2)) * t;
-      q.y() = (mat.coeff(0, 2) - mat.coeff(2, 0)) * t;
-      q.z() = (mat.coeff(1, 0) - mat.coeff(0, 1)) * t;
+      t = numext::maxi(t + Scalar(1.0), Scalar(0));
+      const Scalar s = compute_scale<Normalize>(t);
+      q.w() = t;
+      q.x() = (mat.coeff(2, 1) - mat.coeff(1, 2)) * s;
+      q.y() = (mat.coeff(0, 2) - mat.coeff(2, 0)) * s;
+      q.z() = (mat.coeff(1, 0) - mat.coeff(0, 1)) * s;
+    } else if (m00 >= m11 && m00 >= m22) {
+      assign_branch<0, 1, 2, Normalize>(q, mat, m00, m11, m22);
+    } else if (m11 >= m22) {
+      assign_branch<1, 2, 0, Normalize>(q, mat, m11, m22, m00);
     } else {
-      Index i = 0;
-      if (mat.coeff(1, 1) > mat.coeff(0, 0)) i = 1;
-      if (mat.coeff(2, 2) > mat.coeff(i, i)) i = 2;
-      Index j = (i + 1) % 3;
-      Index k = (j + 1) % 3;
-
-      // Guard against slightly negative argument from non-orthogonal matrices.
-      t = sqrt(numext::maxi(mat.coeff(i, i) - mat.coeff(j, j) - mat.coeff(k, k) + Scalar(1.0), Scalar(0)));
-      q.coeffs().coeffRef(i) = Scalar(0.5) * t;
-      t = Scalar(0.5) / t;
-      q.w() = (mat.coeff(k, j) - mat.coeff(j, k)) * t;
-      q.coeffs().coeffRef(j) = (mat.coeff(j, i) + mat.coeff(i, j)) * t;
-      q.coeffs().coeffRef(k) = (mat.coeff(k, i) + mat.coeff(i, k)) * t;
+      assign_branch<2, 0, 1, Normalize>(q, mat, m22, m00, m11);
     }
   }
 };

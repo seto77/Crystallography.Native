@@ -25,6 +25,8 @@ namespace internal {
  */
 template <typename Scalar>
 struct scalar_opposite_op {
+  EIGEN_STATIC_ASSERT((!std::is_same<Scalar, bool>::value),
+                      BOOLEAN_NEGATION_IS_NOT_SUPPORTED__CAST_TO_A_SIGNED_INTEGER_TYPE)
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const { return numext::negate(a); }
   template <typename Packet>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
@@ -185,8 +187,10 @@ struct functor_traits<scalar_carg_op<Scalar>> {
   using RealScalar = typename NumTraits<Scalar>::Real;
   enum {
     Cost = functor_traits<scalar_atan2_op<RealScalar>>::Cost,
-    // The generic pcarg lowers to patan2, whose quotient-based reduction needs pdiv.
-    PacketAccess = packet_traits<RealScalar>::HasATan && packet_traits<RealScalar>::HasDiv
+    // The generic pcarg lowers to patan2, whose quotient-based reduction needs pdiv. It takes complex packets only; a
+    // real argument is 0 or pi, which the scalar path returns.
+    PacketAccess =
+        NumTraits<Scalar>::IsComplex && packet_traits<RealScalar>::HasATan && packet_traits<RealScalar>::HasDiv
   };
 };
 
@@ -241,9 +245,10 @@ struct scalar_arithmetic_shift_right_op {
     return internal::parithmetic_shift_right<N>(a);
   }
 };
+// A zero shift stays scalar: immediate right-shift intrinsics such as NEON's vshr_n reject a count of zero.
 template <typename Scalar, int N>
 struct functor_traits<scalar_arithmetic_shift_right_op<Scalar, N>> {
-  enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift };
+  enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift && N != 0 };
 };
 
 /** \internal
@@ -263,7 +268,7 @@ struct scalar_logical_shift_right_op {
 };
 template <typename Scalar, int N>
 struct functor_traits<scalar_logical_shift_right_op<Scalar, N>> {
-  enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift };
+  enum { Cost = NumTraits<Scalar>::AddCost, PacketAccess = packet_traits<Scalar>::HasShift && N != 0 };
 };
 
 /** \internal
@@ -414,7 +419,8 @@ struct scalar_exp2_op {
 template <typename Scalar>
 struct functor_traits<scalar_exp2_op<Scalar>> {
   enum {
-    PacketAccess = packet_traits<Scalar>::HasExp,
+    // There is no complex pexp2; complex arguments take numext::exp2.
+    PacketAccess = packet_traits<Scalar>::HasExp && !NumTraits<Scalar>::IsComplex,
     Cost = functor_traits<scalar_exp_op<Scalar>>::Cost  // TODO: measure cost of exp2
   };
 };
@@ -535,9 +541,7 @@ struct functor_traits<scalar_log1p_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_log10_op {
-  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const {
-    EIGEN_USING_STD(log10) return log10(a);
-  }
+  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const { return numext::log10(a); }
   template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& a) const {
     return internal::plog10(a);
@@ -558,11 +562,27 @@ template <typename Scalar>
 struct scalar_log2_op {
   using RealScalar = typename NumTraits<Scalar>::Real;
   EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const {
-    return Scalar(RealScalar(EIGEN_LOG2E)) * numext::log(a);
+    return run(a, std::integral_constant<int, kKind>());
   }
   template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& a) const {
     return internal::plog2(a);
+  }
+
+ private:
+  // 0: float, double or long double; 1: std::complex of one of them; 2: any other scalar, user types included.
+  static constexpr int kKind =
+      std::is_floating_point<Scalar>::value                                                                ? 0
+      : std::is_floating_point<RealScalar>::value && std::is_same<Scalar, std::complex<RealScalar>>::value ? 1
+                                                                                                           : 2;
+  // std::log2 is exact at powers of two, like plog2; log2(e) * log(a) can be an ulp off there. complex_log2 takes the
+  // real part log2|a| from std::log2, like plog2 on complex packets.
+  EIGEN_DEVICE_FUNC static Scalar run(const Scalar& a, std::integral_constant<int, 0>) { return numext::log2(a); }
+  EIGEN_DEVICE_FUNC static Scalar run(const Scalar& a, std::integral_constant<int, 1>) {
+    return internal::complex_log2(a);
+  }
+  EIGEN_DEVICE_FUNC static Scalar run(const Scalar& a, std::integral_constant<int, 2>) {
+    return internal::mul(RealScalar(EIGEN_LOG2E), numext::log(a));
   }
 };
 template <typename Scalar>
@@ -903,7 +923,7 @@ struct functor_traits<scalar_inverse_op<Scalar>> {
  */
 template <typename Scalar>
 struct scalar_square_op {
-  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const { return a * a; }
+  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const { return internal::mul(a, a); }
   template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& a) const {
     return internal::pmul(a, a);
@@ -934,7 +954,9 @@ struct functor_traits<scalar_square_op<bool>> {
  */
 template <typename Scalar>
 struct scalar_cube_op {
-  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const { return a * a * a; }
+  EIGEN_DEVICE_FUNC constexpr inline Scalar operator()(const Scalar& a) const {
+    return internal::mul(a, internal::mul(a, a));
+  }
   template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& a) const {
     return internal::pmul(a, pmul(a, a));
@@ -1066,7 +1088,7 @@ struct functor_traits<scalar_trunc_op<Scalar>> {
 template <typename Scalar, bool UseTypedPredicate = false>
 struct scalar_isnan_op {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE bool operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return numext::isnan(a);
 #else
     return numext::isnan EIGEN_NOT_A_MACRO(a);
@@ -1077,7 +1099,7 @@ struct scalar_isnan_op {
 template <typename Scalar>
 struct scalar_isnan_op<Scalar, true> {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return (numext::isnan(a) ? ptrue(a) : pzero(a));
 #else
     return (numext::isnan EIGEN_NOT_A_MACRO(a) ? ptrue(a) : pzero(a));
@@ -1101,7 +1123,7 @@ struct functor_traits<scalar_isnan_op<Scalar, UseTypedPredicate>> {
 template <typename Scalar, bool UseTypedPredicate = false>
 struct scalar_isinf_op {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE bool operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return numext::isinf(a);
 #else
     return (numext::isinf)(a);
@@ -1112,7 +1134,7 @@ struct scalar_isinf_op {
 template <typename Scalar>
 struct scalar_isinf_op<Scalar, true> {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return (numext::isinf(a) ? ptrue(a) : pzero(a));
 #else
     return (numext::isinf EIGEN_NOT_A_MACRO(a) ? ptrue(a) : pzero(a));
@@ -1135,7 +1157,7 @@ struct functor_traits<scalar_isinf_op<Scalar, UseTypedPredicate>> {
 template <typename Scalar, bool UseTypedPredicate = false>
 struct scalar_isfinite_op {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE bool operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return numext::isfinite(a);
 #else
     return (numext::isfinite)(a);
@@ -1146,7 +1168,7 @@ struct scalar_isfinite_op {
 template <typename Scalar>
 struct scalar_isfinite_op<Scalar, true> {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-#if defined(SYCL_DEVICE_ONLY)
+#if defined(EIGEN_SYCL_DEVICE_ONLY)
     return (numext::isfinite(a) ? ptrue(a) : pzero(a));
 #else
     return (numext::isfinite EIGEN_NOT_A_MACRO(a) ? ptrue(a) : pzero(a));
@@ -1173,13 +1195,18 @@ struct scalar_boolean_not_op {
   // `false` any value `a` that satisfies `a == Scalar(0)`
   // `true` is the complement of `false`
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-    return a == Scalar(0) ? Scalar(1) : Scalar(0);
+    return Scalar(a == Scalar(0));
   }
   template <typename Packet>
-  EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
-    const Packet cst_one = pset1<Packet>(Scalar(1));
-    Packet not_a = pcmp_eq(a, pzero(a));
-    return pand(not_a, cst_one);
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
+    const Packet cst_one = pset1<Packet>(Scalar(true));
+    EIGEN_IF_CONSTEXPR ((std::is_same<Scalar, bool>::value)) {
+      // Boolean packet lanes are canonical, so logical NOT is 1 & ~a.
+      return pandnot(cst_one, a);
+    } else {
+      Packet not_a = pcmp_eq(a, pzero(a));
+      return pand(not_a, cst_one);
+    }
   }
 };
 template <typename Scalar>
@@ -1442,11 +1469,10 @@ struct scalar_unary_pow_op<Scalar, ExponentScalar, false, false, false, false> {
   }
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
-    EIGEN_USING_STD(pow);
-    return static_cast<Scalar>(pow(a, m_exponent));
+    return static_cast<Scalar>(numext::pow(a, m_exponent));
   }
   template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet packetOp(const Packet& a) const {
     return unary_pow_impl<Packet, Scalar>::run(a, m_exponent);
   }
 
@@ -1455,16 +1481,37 @@ struct scalar_unary_pow_op<Scalar, ExponentScalar, false, false, false, false> {
   scalar_unary_pow_op() {}
 };
 
-template <typename Scalar, typename ExponentScalar, bool BaseIsInteger>
-struct scalar_unary_pow_op<Scalar, ExponentScalar, BaseIsInteger, true, false, false> {
+// Specialization for a complex base and a real, non-integer exponent type: integer-valued exponents take the
+// repeated-squaring path, which is exact where the power is representable; the rest defer to pow. There is no
+// vectorized complex pow, so this stays scalar.
+template <typename Scalar, typename ExponentScalar>
+struct scalar_unary_pow_op<Scalar, ExponentScalar, false, false, true, false> {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE scalar_unary_pow_op(const ExponentScalar& exponent)
+      : m_exponent(exponent),
+        m_use_repeated_squaring((numext::isfinite)(exponent) && numext::round(exponent) == exponent &&
+                                unary_pow::use_repeated_squaring<Scalar>(exponent)) {}
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
+    if (m_use_repeated_squaring) return unary_pow::int_pow(a, m_exponent);
+    // std::pow can promote the complex component for a wider exponent before casting back to Scalar.
+    EIGEN_USING_STD(pow);
+    return static_cast<Scalar>(pow(a, m_exponent));
+  }
+
+ private:
+  const ExponentScalar m_exponent;
+  const bool m_use_repeated_squaring;
+  scalar_unary_pow_op() {}
+};
+
+template <typename Scalar, typename ExponentScalar, bool BaseIsInteger, bool BaseIsComplex>
+struct scalar_unary_pow_op<Scalar, ExponentScalar, BaseIsInteger, true, BaseIsComplex, false> {
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE scalar_unary_pow_op(const ExponentScalar& exponent)
       : m_exponent(exponent) {}
-  // TODO: error handling logic for complex^real_integer
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Scalar operator()(const Scalar& a) const {
     return unary_pow_impl<Scalar, ExponentScalar>::run(a, m_exponent);
   }
   template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE Packet packetOp(const Packet& a) const {
     return unary_pow_impl<Packet, ExponentScalar>::run(a, m_exponent);
   }
 
@@ -1477,8 +1524,15 @@ template <typename Scalar, typename ExponentScalar>
 struct functor_traits<scalar_unary_pow_op<Scalar, ExponentScalar>> {
   enum {
     GenPacketAccess = functor_traits<scalar_pow_op<Scalar, ExponentScalar>>::PacketAccess,
-    IntPacketAccess = !NumTraits<Scalar>::IsComplex && packet_traits<Scalar>::HasMul &&
-                      (packet_traits<Scalar>::HasDiv || NumTraits<Scalar>::IsInteger) && packet_traits<Scalar>::HasCmp,
+    // Only the real-exponent specializations define packetOp. Every path multiplies packets of the base type and
+    // divides them for a negative exponent unless the base is an integer; the compares and selects run on the
+    // real packet, which for a complex base is the component view of its packet. A complex base is vectorized
+    // only through the double-word path, so it also needs that path's packet support.
+    IntPacketAccess =
+        !NumTraits<ExponentScalar>::IsComplex && packet_traits<Scalar>::HasMul &&
+        (packet_traits<Scalar>::HasDiv || NumTraits<Scalar>::IsInteger) &&
+        packet_traits<typename NumTraits<Scalar>::Real>::HasCmp &&
+        (!NumTraits<Scalar>::IsComplex || unary_pow::use_double_word<typename packet_traits<Scalar>::type>::value),
     PacketAccess = NumTraits<ExponentScalar>::IsInteger ? IntPacketAccess : (IntPacketAccess && GenPacketAccess),
     Cost = functor_traits<scalar_pow_op<Scalar, ExponentScalar>>::Cost
   };

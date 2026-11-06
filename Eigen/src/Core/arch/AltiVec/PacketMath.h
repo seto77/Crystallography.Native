@@ -31,16 +31,16 @@ namespace internal {
 #define EIGEN_ARCH_DEFAULT_NUMBER_OF_REGISTERS 32
 #endif
 
-typedef __vector float Packet4f;
-typedef __vector int Packet4i;
-typedef __vector unsigned int Packet4ui;
-typedef __vector __bool int Packet4bi;
-typedef __vector short int Packet8s;
-typedef __vector unsigned short int Packet8us;
-typedef __vector __bool short Packet8bi;
-typedef __vector signed char Packet16c;
-typedef __vector unsigned char Packet16uc;
-typedef eigen_packet_wrapper<__vector unsigned short int, 0> Packet8bf;
+using Packet4f = __vector float;
+using Packet4i = __vector int;
+using Packet4ui = __vector unsigned int;
+using Packet4bi = __vector __bool int;
+using Packet8s = __vector short int;
+using Packet8us = __vector unsigned short int;
+using Packet8bi = __vector __bool short;
+using Packet16c = __vector signed char;
+using Packet16uc = __vector unsigned char;
+using Packet8bf = eigen_packet_wrapper<__vector unsigned short int, 0>;
 
 // To avoid repeating the same code, but we need to reuse the constants
 // and it doesn't really work to declare them global, so we define macros instead
@@ -163,8 +163,8 @@ static Packet16uc p16uc_COMPLEX32_REV =
 
 template <>
 struct packet_traits<float> : default_packet_traits {
-  typedef Packet4f type;
-  typedef Packet4f half;
+  using type = Packet4f;
+  using half = Packet4f;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -212,8 +212,8 @@ struct packet_traits<float> : default_packet_traits {
 };
 template <>
 struct packet_traits<bfloat16> : default_packet_traits {
-  typedef Packet8bf type;
-  typedef Packet8bf half;
+  using type = Packet8bf;
+  using half = Packet8bf;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -249,8 +249,8 @@ struct packet_traits<bfloat16> : default_packet_traits {
 
 template <>
 struct packet_traits<int> : default_packet_traits {
-  typedef Packet4i type;
-  typedef Packet4i half;
+  using type = Packet4i;
+  using half = Packet4i;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -271,8 +271,8 @@ struct packet_traits<int> : default_packet_traits {
 
 template <>
 struct packet_traits<short int> : default_packet_traits {
-  typedef Packet8s type;
-  typedef Packet8s half;
+  using type = Packet8s;
+  using half = Packet8s;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -288,8 +288,8 @@ struct packet_traits<short int> : default_packet_traits {
 
 template <>
 struct packet_traits<unsigned short int> : default_packet_traits {
-  typedef Packet8us type;
-  typedef Packet8us half;
+  using type = Packet8us;
+  using half = Packet8us;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -305,8 +305,8 @@ struct packet_traits<unsigned short int> : default_packet_traits {
 
 template <>
 struct packet_traits<signed char> : default_packet_traits {
-  typedef Packet16c type;
-  typedef Packet16c half;
+  using type = Packet16c;
+  using half = Packet16c;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -322,8 +322,8 @@ struct packet_traits<signed char> : default_packet_traits {
 
 template <>
 struct packet_traits<unsigned char> : default_packet_traits {
-  typedef Packet16uc type;
-  typedef Packet16uc half;
+  using type = Packet16uc;
+  using half = Packet16uc;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -339,9 +339,9 @@ struct packet_traits<unsigned char> : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet4f> {
-  typedef float type;
-  typedef Packet4f half;
-  typedef Packet4i integer_packet;
+  using type = float;
+  using half = Packet4f;
+  using integer_packet = Packet4i;
   enum {
     size = 4,
     alignment = Aligned16,
@@ -352,8 +352,8 @@ struct unpacket_traits<Packet4f> {
 };
 template <>
 struct unpacket_traits<Packet4i> {
-  typedef int type;
-  typedef Packet4i half;
+  using type = int;
+  using half = Packet4i;
   enum {
     size = 4,
     alignment = Aligned16,
@@ -364,8 +364,8 @@ struct unpacket_traits<Packet4i> {
 };
 template <>
 struct unpacket_traits<Packet8s> {
-  typedef short int type;
-  typedef Packet8s half;
+  using type = short int;
+  using half = Packet8s;
   enum {
     size = 8,
     alignment = Aligned16,
@@ -376,8 +376,8 @@ struct unpacket_traits<Packet8s> {
 };
 template <>
 struct unpacket_traits<Packet8us> {
-  typedef unsigned short int type;
-  typedef Packet8us half;
+  using type = unsigned short int;
+  using half = Packet8us;
   enum {
     size = 8,
     alignment = Aligned16,
@@ -389,8 +389,8 @@ struct unpacket_traits<Packet8us> {
 
 template <>
 struct unpacket_traits<Packet16c> {
-  typedef signed char type;
-  typedef Packet16c half;
+  using type = signed char;
+  using half = Packet16c;
   enum {
     size = 16,
     alignment = Aligned16,
@@ -401,8 +401,8 @@ struct unpacket_traits<Packet16c> {
 };
 template <>
 struct unpacket_traits<Packet16uc> {
-  typedef unsigned char type;
-  typedef Packet16uc half;
+  using type = unsigned char;
+  using half = Packet16uc;
   enum {
     size = 16,
     alignment = Aligned16,
@@ -414,8 +414,8 @@ struct unpacket_traits<Packet16uc> {
 
 template <>
 struct unpacket_traits<Packet8bf> {
-  typedef bfloat16 type;
-  typedef Packet8bf half;
+  using type = bfloat16;
+  using half = Packet8bf;
   enum {
     size = 8,
     alignment = Aligned16,
@@ -1069,7 +1069,7 @@ EIGEN_STRONG_INLINE Packet16uc psub<Packet16uc>(const Packet16uc& a, const Packe
 
 template <>
 EIGEN_STRONG_INLINE Packet4f pnegate(const Packet4f& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return vec_neg(a);
 #else
   return vec_xor(a, p4f_MZERO);
@@ -1077,7 +1077,7 @@ EIGEN_STRONG_INLINE Packet4f pnegate(const Packet4f& a) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet16c pnegate(const Packet16c& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return vec_neg(a);
 #else
   return reinterpret_cast<Packet16c>(p4i_ZERO) - a;
@@ -1085,7 +1085,7 @@ EIGEN_STRONG_INLINE Packet16c pnegate(const Packet16c& a) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet8s pnegate(const Packet8s& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return vec_neg(a);
 #else
   return reinterpret_cast<Packet8s>(p4i_ZERO) - a;
@@ -1093,20 +1093,11 @@ EIGEN_STRONG_INLINE Packet8s pnegate(const Packet8s& a) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet4i pnegate(const Packet4i& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return vec_neg(a);
 #else
   return p4i_ZERO - a;
 #endif
-}
-
-template <>
-EIGEN_STRONG_INLINE Packet4f pconj(const Packet4f& a) {
-  return a;
-}
-template <>
-EIGEN_STRONG_INLINE Packet4i pconj(const Packet4i& a) {
-  return a;
 }
 
 template <>
@@ -1145,6 +1136,8 @@ EIGEN_STRONG_INLINE Packet4f pdiv<Packet4f>(const Packet4f& a, const Packet4f& b
   // Do one Newton-Raphson iteration to get the needed accuracy
   t = vec_nmsub(y_0, b, p4f_ONE);
   y_1 = vec_madd(y_0, t, y_0);
+  // For b = +-0 or +-inf the step computes 0 * inf = NaN, while the estimate +-inf or +-0 is exact.
+  y_1 = vec_sel(y_0, y_1, vec_cmpeq(t, t));
 
   return vec_madd(a, y_1, p4f_MZERO);
 #else
@@ -1164,11 +1157,13 @@ EIGEN_STRONG_INLINE Packet4i pdiv<Packet4i>(const Packet4i& a, const Packet4i& b
 #endif
 }
 
-// This overload is required for integer packet types.
+template <>
+struct is_fused_madd<Packet4f> : true_type {};
 template <>
 EIGEN_STRONG_INLINE Packet4f pmadd(const Packet4f& a, const Packet4f& b, const Packet4f& c) {
   return vec_madd(a, b, c);
 }
+// This overload is required for integer packet types.
 template <>
 EIGEN_STRONG_INLINE Packet4i pmadd(const Packet4i& a, const Packet4i& b, const Packet4i& c) {
   return a * b + c;
@@ -1265,8 +1260,9 @@ template <>
 EIGEN_STRONG_INLINE Packet4f pcmp_le(const Packet4f& a, const Packet4f& b) {
   return reinterpret_cast<Packet4f>(vec_cmple(a, b));
 }
-// To fix bug with vec_cmplt on older versions
-#ifdef EIGEN_VECTORIZE_VSX
+// To fix bug with vec_cmplt on older versions. Clang needs it: for AltiVec vectors its a < b is one bool, true when
+// every lane compares less, which breaks the generic pcmp_lt.
+#if defined(EIGEN_VECTORIZE_VSX) || EIGEN_COMP_CLANG
 template <>
 EIGEN_STRONG_INLINE Packet4f pcmp_lt(const Packet4f& a, const Packet4f& b) {
   return reinterpret_cast<Packet4f>(vec_cmplt(a, b));
@@ -1893,16 +1889,8 @@ EIGEN_STRONG_INLINE Packet8s pabs(const Packet8s& a) {
   return vec_abs(a);
 }
 template <>
-EIGEN_STRONG_INLINE Packet8us pabs(const Packet8us& a) {
-  return a;
-}
-template <>
 EIGEN_STRONG_INLINE Packet16c pabs(const Packet16c& a) {
   return vec_abs(a);
-}
-template <>
-EIGEN_STRONG_INLINE Packet16uc pabs(const Packet16uc& a) {
-  return a;
 }
 template <>
 EIGEN_STRONG_INLINE Packet8bf pabs(const Packet8bf& a) {
@@ -2449,6 +2437,18 @@ EIGEN_STRONG_INLINE Packet8bf pcmp_eq(const Packet8bf& a, const Packet8bf& b) {
   BF16_TO_F32_BINARY_OP_WRAPPER_BOOL(pcmp_eq<Packet4f>, a, b);
 }
 
+// Compare encoded lanes: widening bf16 subnormals to float loses them under DAZ/FZ.
+template <>
+EIGEN_STRONG_INLINE Packet8bf psign<Packet8bf>(const Packet8bf& a) {
+  const Packet8us magnitude = vec_and(a.m_val, vec_splats(static_cast<unsigned short int>(0x7fff)));
+  const Packet8bi is_zero = vec_cmpeq(magnitude, vec_splats(static_cast<unsigned short int>(0)));
+  const Packet8us keep =
+      vec_or(reinterpret_cast<Packet8us>(vec_cmpgt(magnitude, vec_splats(static_cast<unsigned short int>(0x7f80)))),
+             vec_splats(static_cast<unsigned short int>(0x8000)));
+  const Packet8us value = vec_sel(vec_splats(static_cast<unsigned short int>(0x3f80)), a.m_val, keep);
+  return Packet8bf(vec_andc(value, reinterpret_cast<Packet8us>(is_zero)));
+}
+
 template <>
 EIGEN_STRONG_INLINE bfloat16 pfirst(const Packet8bf& a) {
   return Eigen::bfloat16_impl::raw_uint16_to_bfloat16((pfirst<Packet8us>(a)));
@@ -2784,7 +2784,14 @@ EIGEN_STRONG_INLINE unsigned char predux_max<Packet16uc>(const Packet16uc& a) {
 
 template <>
 EIGEN_STRONG_INLINE bool predux_any(const Packet4f& x) {
-  return vec_any_ne(x, pzero(x));
+  const Packet4ui zero = {0, 0, 0, 0};
+  return vec_any_ne(reinterpret_cast<Packet4ui>(x), zero);
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const Packet8bf& x) {
+  const Packet8us zero = {0, 0, 0, 0, 0, 0, 0, 0};
+  return vec_any_ne(x.m_val, zero);
 }
 
 template <typename T>
@@ -3101,13 +3108,13 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<Packet16uc, 16>& kernel) {
 
 //---------- double ----------
 #ifdef EIGEN_VECTORIZE_VSX
-typedef __vector double Packet2d;
-typedef __vector unsigned long long Packet2ul;
-typedef __vector long long Packet2l;
+using Packet2d = __vector double;
+using Packet2ul = __vector unsigned long long;
+using Packet2l = __vector long long;
 #if EIGEN_COMP_CLANG
-typedef Packet2ul Packet2bl;
+using Packet2bl = Packet2ul;
 #else
-typedef __vector __bool long Packet2bl;
+using Packet2bl = __vector __bool long;
 #endif
 
 static Packet2l p2l_ZERO = reinterpret_cast<Packet2l>(p4i_ZERO);
@@ -3133,8 +3140,8 @@ Packet2d vec_splat_dbl(const Packet2d& a) {
 
 template <>
 struct packet_traits<double> : default_packet_traits {
-  typedef Packet2d type;
-  typedef Packet2d half;
+  using type = Packet2d;
+  using half = Packet2d;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -3173,8 +3180,8 @@ struct packet_traits<double> : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet2d> {
-  typedef double type;
-  typedef Packet2l integer_packet;
+  using type = double;
+  using integer_packet = Packet2l;
   enum {
     size = 2,
     alignment = Aligned16,
@@ -3182,12 +3189,12 @@ struct unpacket_traits<Packet2d> {
     masked_load_available = false,
     masked_store_available = false
   };
-  typedef Packet2d half;
+  using half = Packet2d;
 };
 template <>
 struct unpacket_traits<Packet2l> {
-  typedef int64_t type;
-  typedef Packet2l half;
+  using type = int64_t;
+  using half = Packet2l;
   enum {
     size = 2,
     alignment = Aligned16,
@@ -3303,16 +3310,11 @@ EIGEN_STRONG_INLINE Packet2d psub<Packet2d>(const Packet2d& a, const Packet2d& b
 
 template <>
 EIGEN_STRONG_INLINE Packet2d pnegate(const Packet2d& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return vec_neg(a);
 #else
   return vec_xor(a, p2d_MZERO);
 #endif
-}
-
-template <>
-EIGEN_STRONG_INLINE Packet2d pconj(const Packet2d& a) {
-  return a;
 }
 
 template <>
@@ -3324,7 +3326,8 @@ EIGEN_STRONG_INLINE Packet2d pdiv<Packet2d>(const Packet2d& a, const Packet2d& b
   return vec_div(a, b);
 }
 
-// This overload is required for integer packet types.
+template <>
+struct is_fused_madd<Packet2d> : true_type {};
 template <>
 EIGEN_STRONG_INLINE Packet2d pmadd(const Packet2d& a, const Packet2d& b, const Packet2d& c) {
   return vec_madd(a, b, c);
@@ -3371,7 +3374,7 @@ EIGEN_STRONG_INLINE Packet2d pcmp_eq(const Packet2d& a, const Packet2d& b) {
   return reinterpret_cast<Packet2d>(vec_cmpeq(a, b));
 }
 template <>
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
 EIGEN_STRONG_INLINE Packet2l pcmp_eq(const Packet2l& a, const Packet2l& b) {
   return reinterpret_cast<Packet2l>(vec_cmpeq(a, b));
 }
@@ -3380,6 +3383,19 @@ EIGEN_STRONG_INLINE Packet2l pcmp_eq(const Packet2l& a, const Packet2l& b) {
   Packet4i halves = reinterpret_cast<Packet4i>(vec_cmpeq(reinterpret_cast<Packet4i>(a), reinterpret_cast<Packet4i>(b)));
   Packet4i flipped = vec_perm(halves, halves, p16uc_COMPLEX32_REV);
   return reinterpret_cast<Packet2l>(pand(halves, flipped));
+}
+#endif
+// Not the generic a < b ? ptrue(a) : pzero(a): under Clang's default -faltivec-src-compat=mixed,
+// a < b on vector long long is a scalar all-lanes predicate, not a lane mask.
+template <>
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
+EIGEN_STRONG_INLINE Packet2l pcmp_lt(const Packet2l& a, const Packet2l& b) {
+  return reinterpret_cast<Packet2l>(vec_cmplt(a, b));
+}
+#else
+EIGEN_STRONG_INLINE Packet2l pcmp_lt(const Packet2l& a, const Packet2l& b) {
+  const Packet2l ret = {a[0] < b[0] ? -1 : 0, a[1] < b[1] ? -1 : 0};
+  return ret;
 }
 #endif
 template <>
@@ -3491,7 +3507,7 @@ template <>
 EIGEN_STRONG_INLINE Packet2d pabs(const Packet2d& a) {
   return vec_abs(a);
 }
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
 template <>
 EIGEN_STRONG_INLINE Packet2d psignbit(const Packet2d& a) {
   return (Packet2d)vec_sra((Packet2l)a, vec_splats((unsigned long long)(63)));
@@ -3522,7 +3538,7 @@ inline Packet2d pcast<Packet2l, Packet2d>(const Packet2l& x);
 // Things are more complicated for POWER7. There is actually a
 // vec_xxsxdi intrinsic but it is not supported by some gcc versions.
 // So we need to shift by N % 32 and rearrange bytes.
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
 
 template <int N>
 EIGEN_STRONG_INLINE Packet2l plogical_shift_left(const Packet2l& a) {
@@ -3629,19 +3645,17 @@ EIGEN_STRONG_INLINE Packet2l plogical_shift_right(const Packet2l& a) {
 
 template <>
 EIGEN_STRONG_INLINE Packet2d pldexp<Packet2d>(const Packet2d& a, const Packet2d& exponent) {
-  // Clamp exponent to [-2099, 2099]
+  // The single-rounding split of pldexp_generic on int64 exponents.
   const Packet2d max_exponent = pset1<Packet2d>(2099.0);
+  const Packet2d last_max = pset1<Packet2d>(1022.0);
   const Packet2l e = pcast<Packet2d, Packet2l>(pmin(pmax(exponent, pnegate(max_exponent)), max_exponent));
-
-  // Split 2^e into four factors and multiply:
+  const Packet2l b = pcast<Packet2d, Packet2l>(pmin(pmax(exponent, pnegate(last_max)), last_max));
   const Packet2l bias = {1023, 1023};
-  Packet2l b = plogical_shift_right<2>(e);  // floor(e/4)
-  Packet2d c = reinterpret_cast<Packet2d>(plogical_shift_left<52>(b + bias));
-  Packet2d out = pmul(pmul(pmul(a, c), c), c);                        // a * 2^(3b)
-  b = psub(psub(psub(e, b), b), b);                                   // e - 3b
-  c = reinterpret_cast<Packet2d>(plogical_shift_left<52>(b + bias));  // 2^(e - 3b)
-  out = pmul(out, c);                                                 // a * 2^e
-  return out;
+  const Packet2l even = {-2, -2};
+  const Packet2l t = psub(e, b) & even;
+  const Packet2d c1 = reinterpret_cast<Packet2d>(plogical_shift_left<51>(t + bias + bias));    // 2^(t/2)
+  const Packet2d c2 = reinterpret_cast<Packet2d>(plogical_shift_left<52>(psub(e, t) + bias));  // 2^(e - t)
+  return pldexp_apply_factors(a, c1, c2);                                                      // a * 2^e
 }
 
 // Extract exponent without existence of Packet2l.
@@ -3661,6 +3675,13 @@ EIGEN_STRONG_INLINE double predux<Packet2d>(const Packet2d& a) {
   b = reinterpret_cast<Packet2d>(vec_sld(reinterpret_cast<Packet4f>(a), reinterpret_cast<Packet4f>(a), 8));
   sum = a + b;
   return pfirst<Packet2d>(sum);
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const Packet2d& a) {
+  // A 64-bit lane is nonzero iff one of its 32-bit halves is; the doubleword compare needs POWER8.
+  const Packet4ui zero = {0, 0, 0, 0};
+  return vec_any_ne(reinterpret_cast<Packet4ui>(a), zero);
 }
 
 // Other reduction functions:

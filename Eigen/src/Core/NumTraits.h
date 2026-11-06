@@ -19,7 +19,7 @@ namespace Eigen {
 namespace internal {
 
 // default implementation of digits(), based on numeric_limits if specialized,
-// 0 for integer types, and log2(epsilon()) otherwise.
+// 0 for integer types, and 1 - log2(epsilon()) otherwise, as epsilon() = 2^(1 - digits).
 template <typename T, bool use_numeric_limits = std::numeric_limits<T>::is_specialized,
           bool is_integer = NumTraits<T>::IsInteger>
 struct default_digits_impl {
@@ -33,13 +33,38 @@ struct default_digits_impl<T, false, false>  // Floating point
     using std::ceil;
     using std::log2;
     using Real = typename NumTraits<T>::Real;
-    return int(ceil(-log2(NumTraits<Real>::epsilon())));
+    return int(ceil(-log2(NumTraits<Real>::epsilon()))) + 1;
   }
 };
 
 template <typename T>
 struct default_digits_impl<T, false, true>  // Integer
 {
+  EIGEN_DEVICE_FUNC constexpr static int run() { return 0; }
+};
+
+namespace precision_detail {
+using std::ceil;
+using std::log2;
+
+template <typename T, typename = void>
+struct has_epsilon_digits : std::false_type {};
+
+// Detect the complete calculation: ADL can return another custom expression type.
+template <typename T>
+struct has_epsilon_digits<T, void_t<decltype(int(ceil(-log2(NumTraits<typename NumTraits<T>::Real>::epsilon()))) + 1)>>
+    : std::true_type {};
+}  // namespace precision_detail
+
+// Only formatting tolerates unspecified precision; numerical users of digits() still require it.
+template <typename T, bool Known = std::numeric_limits<T>::is_specialized || NumTraits<T>::IsInteger ||
+                                   precision_detail::has_epsilon_digits<T>::value>
+struct decimal_digits_source {
+  EIGEN_DEVICE_FUNC constexpr static int run() { return default_digits_impl<T>::run(); }
+};
+
+template <typename T>
+struct decimal_digits_source<T, false> {
   EIGEN_DEVICE_FUNC constexpr static int run() { return 0; }
 };
 
@@ -58,7 +83,8 @@ struct default_digits10_impl<T, false, false>  // Floating point
     using std::floor;
     using std::log10;
     using Real = typename NumTraits<T>::Real;
-    return int(floor((internal::default_digits_impl<Real>::run() - 1) * log10(2)));
+    const int digits = decimal_digits_source<Real>::run();
+    return digits > 0 ? int(floor((digits - 1) * log10(2))) : 0;
   }
 };
 
@@ -83,7 +109,8 @@ struct default_max_digits10_impl<T, false, false>  // Floating point
     using std::ceil;
     using std::log10;
     using Real = typename NumTraits<T>::Real;
-    return int(ceil(internal::default_digits_impl<Real>::run() * log10(2) + 1));
+    const int digits = decimal_digits_source<Real>::run();
+    return digits > 0 ? int(ceil(digits * log10(2) + 1)) : 0;
   }
 };
 
@@ -98,7 +125,9 @@ struct default_max_digits10_impl<T, false, true>  // Integer
 namespace numext {
 
 /** \internal bit-wise cast without changing the underlying bit representation. */
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+// std::bit_cast has no __device__ qualifier; in GPU device passes it requires relaxed constexpr
+// and, for non-literal return types such as Eigen::half, stays host-only and miscompiles under NVCC.
+#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L && !defined(EIGEN_GPU_COMPILE_PHASE)
 template <typename Tgt, typename Src>
 EIGEN_DEVICE_FUNC constexpr Tgt bit_cast(const Src& src) {
   return std::bit_cast<Tgt>(src);
@@ -139,6 +168,11 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Tgt bit_cast(const Src& src) {
  * \tparam T the numeric type at hand
  *
  * This class stores enums, typedefs and static methods giving information about a numeric type.
+ * The default precision queries use std::numeric_limits when specialized. Otherwise binary precision uses an
+ * epsilon-based calculation when available, and decimal precision is derived from the real type's binary precision.
+ * Decimal queries without usable precision information return zero (unspecified precision).
+ * The binary digits() query still requires usable precision information.
+ * Custom scalar types can specialize these methods when finite precision information is available.
  *
  * The provided data consists of:
  * \li A typedef \c Real, giving the "real part" type of \a T. If \a T is already real,
@@ -164,8 +198,8 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Tgt bit_cast(const Src& src) {
  *     called, and to 0 if it is safe not to call it. Default is 0 if \a T is an arithmetic type, and 1 otherwise.
  * \li An epsilon() function which, unlike <a href="http://en.cppreference.com/w/cpp/types/numeric_limits/epsilon">
  *     `std::numeric_limits::epsilon()`</a>, it returns a \c Real instead of a \a T.
- * \li A dummy_precision() function returning a weak epsilon value. It is mainly used as a default value by the fuzzy
- *     comparison operators.
+ * \li A dummy_precision() function returning a default relative tolerance for approximate comparisons.
+ *     This is distinct from epsilon() and does not describe the rounding error of an algorithm.
  * \li highest() and lowest() functions returning the highest and lowest possible values respectively.
  * \li digits() function returning the number of radix digits (non-sign digits for integers, mantissa for floating-point).
  *     This is the analogue of <a href="http://en.cppreference.com/w/cpp/types/numeric_limits/digits">
@@ -248,7 +282,7 @@ template <>
 struct NumTraits<long double> : GenericNumTraits<long double> {
   EIGEN_DEVICE_FUNC constexpr static long double dummy_precision() { return static_cast<long double>(1e-15l); }
 
-#if defined(EIGEN_ARCH_PPC) && (__LDBL_MANT_DIG__ == 106)
+#if EIGEN_ARCH_PPC && (__LDBL_MANT_DIG__ == 106)
   // PowerPC double double causes issues with some values
   EIGEN_DEVICE_FUNC constexpr static long double epsilon() {
     // 2^(-(__LDBL_MANT_DIG__)+1)

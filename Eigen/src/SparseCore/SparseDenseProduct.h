@@ -18,6 +18,28 @@ namespace Eigen {
 
 namespace internal {
 
+template <typename Lhs, typename Rhs, typename Dest, typename Alpha>
+void ordered_sparse_dense_add(Dest& dst, const Lhs& lhs, const Rhs& rhs, const Alpha& alpha, true_type) {
+  if (numext::is_exactly_zero(alpha)) return;
+  evaluator<Lhs> lhsEval(lhs);
+  evaluator<Rhs> rhsEval(rhs);
+  for (Index outer = 0; outer < lhs.outerSize(); ++outer)
+    for (typename evaluator<Lhs>::InnerIterator it(lhsEval, outer); it; ++it)
+      for (Index col = 0; col < rhs.cols(); ++col)
+        dst.coeffRef(it.row(), col) += alpha * (it.value() * rhsEval.coeff(it.col(), col));
+}
+
+template <typename Lhs, typename Rhs, typename Dest, typename Alpha>
+void ordered_sparse_dense_add(Dest& dst, const Lhs& lhs, const Rhs& rhs, const Alpha& alpha, false_type) {
+  if (numext::is_exactly_zero(alpha)) return;
+  evaluator<Lhs> lhsEval(lhs);
+  evaluator<Rhs> rhsEval(rhs);
+  for (Index outer = 0; outer < rhs.outerSize(); ++outer)
+    for (typename evaluator<Rhs>::InnerIterator it(rhsEval, outer); it; ++it)
+      for (Index row = 0; row < lhs.rows(); ++row)
+        dst.coeffRef(row, it.col()) += alpha * (lhsEval.coeff(row, it.row()) * it.value());
+}
+
 template <>
 struct product_promote_storage_type<Sparse, Dense, OuterProduct> {
   using ret = Sparse;
@@ -388,13 +410,13 @@ struct sparse_time_dense_product_impl<SparseLhsType, DenseRhsType, DenseResType,
     const Index end =
         innerNnz ? start + innerNnz[i] : (mat.outerIndexPtr() ? mat.outerIndexPtr()[i + 1] : mat.nonZeros());
     typename Res::RowXpr res_i(res.row(i));
-    for (Index k = start; k < end; ++k) res_i += (alpha * vals[k]) * rhs.row(inds[k]);
+    for (Index k = start; k < end; ++k) res_i.matrix() += (alpha * vals[k]) * rhs.row(inds[k]);
   }
 
   static void processRow(const LhsEval& lhsEval, const SparseLhsType& /*lhs*/, const DenseRhsType& rhs, Res& res,
                          const typename Res::Scalar& alpha, Index i, std::false_type /* has_compressed_storage */) {
     typename Res::RowXpr res_i(res.row(i));
-    for (LhsInnerIterator it(lhsEval, i); it; ++it) res_i += (alpha * it.value()) * rhs.row(it.index());
+    for (LhsInnerIterator it(lhsEval, i); it; ++it) res_i.matrix() += (alpha * it.value()) * rhs.row(it.index());
   }
 };
 
@@ -427,7 +449,7 @@ struct sparse_time_dense_product_impl<SparseLhsType, DenseRhsType, DenseResType,
       typename Rhs::ConstRowXpr rhs_j(rhs.row(j));
       const Index start = outer ? outer[j] : 0;
       const Index end = innerNnz ? start + innerNnz[j] : (outer ? outer[j + 1] : mat.nonZeros());
-      for (Index k = start; k < end; ++k) res.row(inds[k]) += (alpha * vals[k]) * rhs_j;
+      for (Index k = start; k < end; ++k) res.row(inds[k]).matrix() += (alpha * vals[k]) * rhs_j;
     }
   }
 
@@ -436,7 +458,7 @@ struct sparse_time_dense_product_impl<SparseLhsType, DenseRhsType, DenseResType,
     evaluator<Lhs> lhsEval(lhs);
     for (Index j = 0; j < lhs.outerSize(); ++j) {
       typename Rhs::ConstRowXpr rhs_j(rhs.row(j));
-      for (LhsInnerIterator it(lhsEval, j); it; ++it) res.row(it.index()) += (alpha * it.value()) * rhs_j;
+      for (LhsInnerIterator it(lhsEval, j); it; ++it) res.row(it.index()).matrix() += (alpha * it.value()) * rhs_j;
     }
   }
 };
@@ -462,7 +484,19 @@ struct generic_product_impl<Lhs, Rhs, SparseShape, DenseShape, ProductType>
     using RhsNested = typename nested_eval<Rhs, ((Lhs::Flags & RowMajorBit) == 0) ? 1 : Dynamic>::type;
     LhsNested lhsNested(lhs);
     RhsNested rhsNested(rhs);
-    internal::sparse_time_dense_product(lhsNested, rhsNested, dst, alpha);
+    run(dst, lhsNested, rhsNested, alpha,
+        functor_is_commutative<scalar_product_op<typename Lhs::Scalar, typename Rhs::Scalar>>());
+  }
+
+ private:
+  template <typename Dest, typename NestedLhs, typename NestedRhs>
+  static void run(Dest& dst, const NestedLhs& lhs, const NestedRhs& rhs, const Scalar& alpha, true_type) {
+    internal::sparse_time_dense_product(lhs, rhs, dst, alpha);
+  }
+
+  template <typename Dest, typename NestedLhs, typename NestedRhs>
+  static void run(Dest& dst, const NestedLhs& lhs, const NestedRhs& rhs, const Scalar& alpha, false_type) {
+    ordered_sparse_dense_add(dst, lhs, rhs, alpha, true_type());
   }
 };
 
@@ -483,9 +517,21 @@ struct generic_product_impl<Lhs, Rhs, DenseShape, SparseShape, ProductType>
     LhsNested lhsNested(lhs);
     RhsNested rhsNested(rhs);
 
-    // transpose everything
+    run(dst, lhsNested, rhsNested, alpha,
+        functor_is_commutative<scalar_product_op<typename Lhs::Scalar, typename Rhs::Scalar>>());
+  }
+
+ private:
+  template <typename Dst, typename NestedLhs, typename NestedRhs>
+  static void run(Dst& dst, const NestedLhs& lhs, const NestedRhs& rhs, const Scalar& alpha, true_type) {
+    // Transposition reverses coefficient multiplication, so this needs commutative scalars.
     Transpose<Dst> dstT(dst);
-    internal::sparse_time_dense_product(rhsNested.transpose(), lhsNested.transpose(), dstT, alpha);
+    internal::sparse_time_dense_product(rhs.transpose(), lhs.transpose(), dstT, alpha);
+  }
+
+  template <typename Dst, typename NestedLhs, typename NestedRhs>
+  static void run(Dst& dst, const NestedLhs& lhs, const NestedRhs& rhs, const Scalar& alpha, false_type) {
+    ordered_sparse_dense_add(dst, lhs, rhs, alpha, false_type());
   }
 };
 
@@ -511,6 +557,8 @@ struct sparse_dense_outer_product_evaluator {
   using RhsEval = evaluator<ActualRhs>;
   using LhsIterator = typename evaluator<ActualLhs>::InnerIterator;
   using Scalar = typename ProdXprType::Scalar;
+  using FactorScalar = typename ActualRhs::Scalar;
+  using ProductOp = sparse_scalar_product_op<typename ActualLhs::Scalar, FactorScalar, NeedToTranspose>;
 
  public:
   enum { Flags = NeedToTranspose ? RowMajorBit : 0, CoeffReadCost = HugeCost };
@@ -527,22 +575,22 @@ struct sparse_dense_outer_product_evaluator {
     EIGEN_STRONG_INLINE Index row() const { return NeedToTranspose ? m_outer : LhsIterator::index(); }
     EIGEN_STRONG_INLINE Index col() const { return NeedToTranspose ? LhsIterator::index() : m_outer; }
 
-    EIGEN_STRONG_INLINE Scalar value() const { return LhsIterator::value() * m_factor; }
+    EIGEN_STRONG_INLINE Scalar value() const { return ProductOp()(LhsIterator::value(), m_factor); }
     EIGEN_STRONG_INLINE operator bool() const { return LhsIterator::operator bool() && (!m_empty); }
 
    protected:
-    Scalar get(const RhsEval& rhs, Index outer, Dense = Dense()) const { return rhs.coeff(outer); }
+    FactorScalar get(const RhsEval& rhs, Index outer, Dense = Dense()) const { return rhs.coeff(outer); }
 
-    Scalar get(const RhsEval& rhs, Index outer, Sparse = Sparse()) {
+    FactorScalar get(const RhsEval& rhs, Index outer, Sparse = Sparse()) {
       typename RhsEval::InnerIterator it(rhs, outer);
-      if (it && it.index() == 0 && it.value() != Scalar(0)) return it.value();
+      if (it && it.index() == 0 && it.value() != FactorScalar(0)) return it.value();
       m_empty = true;
-      return Scalar(0);
+      return FactorScalar(0);
     }
 
     Index m_outer;
     bool m_empty;
-    Scalar m_factor;
+    FactorScalar m_factor;
   };
 
   sparse_dense_outer_product_evaluator(const Lhs1& lhs, const ActualRhs& rhs)

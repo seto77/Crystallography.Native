@@ -30,7 +30,7 @@ namespace internal {
  *  \param precond   preconditioner used
  *  \param iters     on input: maximum number of iterations to perform
  *                   on output: number of iterations performed
- *  \param restart   number of iterations for a restart, capped by the problem size
+ *  \param restart_  number of iterations for a restart, clamped to [1, mat.rows()]
  *  \param tol_error on input: relative tolerance for the preconditioned residual, normalized by the preconditioned
  *                   right-hand side
  *                   on output: relative preconditioned residual achieved
@@ -60,9 +60,6 @@ namespace internal {
 template <typename MatrixType, typename Rhs, typename Dest, typename Preconditioner>
 bool gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner& precond, Index& iters,
            const Index& restart_, typename Dest::RealScalar& tol_error) {
-  using std::abs;
-  using std::sqrt;
-
   using RealScalar = typename Dest::RealScalar;
   using Scalar = typename Dest::Scalar;
   using VectorType = Matrix<Scalar, Dynamic, 1>;
@@ -72,6 +69,7 @@ bool gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner&
 
   if (rhs.norm() <= considerAsZero) {
     x.setZero();
+    iters = 0;
     tol_error = 0;
     return true;
   }
@@ -165,7 +163,7 @@ bool gmres(const MatrixType& mat, const Rhs& rhs, Dest& x, const Preconditioner&
     // insert coefficients into upper matrix triangle
     H.col(k - 1).head(k) = v.head(k);
 
-    tol_error = abs(w(k)) / rhsNorm;
+    tol_error = numext::abs(w(k)) / rhsNorm;
     bool stop = (k == m || tol_error < tol || iters == maxIters);
 
     if (stop || k == restart) {

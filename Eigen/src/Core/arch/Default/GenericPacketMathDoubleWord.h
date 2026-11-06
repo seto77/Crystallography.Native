@@ -25,6 +25,22 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void absolute_split(const Packet& x, Packe
   r = psub(x, n);
 }
 
+// Knuth two-sum: x + y = s_hi + s_lo exactly, with no magnitude ordering required.
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twosum(const Packet& x, const Packet& y, Packet& s_hi, Packet& s_lo) {
+  s_hi = padd(x, y);
+  pbarrier(s_hi);
+  Packet y_part = psub(s_hi, x);
+  pbarrier(y_part);
+  Packet x_part = psub(s_hi, y_part);
+  pbarrier(x_part);
+  Packet x_err = psub(x, x_part);
+  pbarrier(x_err);
+  Packet y_err = psub(y, y_part);
+  pbarrier(y_err);
+  s_lo = padd(x_err, y_err);
+}
+
 // This function computes the sum {s_hi, s_lo}, such that x + y = s_hi + s_lo
 // holds exactly, and s_hi = fl(x+y), if |x| >= |y|.
 template <typename Packet>
@@ -35,96 +51,136 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void fast_twosum(const Packet& x, const Pa
 }
 
 #ifdef EIGEN_VECTORIZE_FMA
-// This function implements the extended precision product of
-// a pair of floating point numbers. Given {x, y}, it computes the pair
-// {p_hi, p_lo} such that x * y = p_hi + p_lo holds exactly and
-// p_hi = fl(x * y).
-template <typename Packet>
-EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x, const Packet& y, Packet& p_hi, Packet& p_lo) {
-  p_hi = pmul(x, y);
-  p_lo = pmsub(x, y, p_hi);
-}
-
-// A version of twoprod that takes x, y, and fl(x*y) as input and returns the p_lo such that
-// x * y = xy + p_lo holds exactly.
-template <typename Packet>
+// Given x, y, and xy = fl(x*y), return the residual such that x*y = xy + residual exactly.
+template <typename Packet, std::enable_if_t<!is_scalar<Packet>::value, int> = 0>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet twoprod_low(const Packet& x, const Packet& y, const Packet& xy) {
   return pmsub(x, y, xy);
 }
 
+template <typename Scalar, std::enable_if_t<is_scalar<Scalar>::value, int> = 0>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar twoprod_low(const Scalar& x, const Scalar& y, const Scalar& xy) {
+  // Error-free products require FMA even when EIGEN_SCALAR_MADD_USE_FMA disables fusion in scalar madd.
+  return twoprod_low_fma(x, y, xy);
+}
+
+// This function implements the extended precision product of
+// a pair of floating point numbers. Given {x, y}, it computes the pair
+// {p_hi, p_lo} such that x * y = p_hi + p_lo holds exactly and
+// p_hi = fl(x * y). PreventReassociation preserves the separately rounded non-FMA operations.
+template <typename Packet, bool PreventReassociation = false>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x, const Packet& y, Packet& p_hi, Packet& p_lo) {
+  p_hi = pmul(x, y);
+  p_lo = twoprod_low(x, y, p_hi);
+}
+
 #else
+
+// Dekker's product requires separately rounded operations. GCC's C++ default -ffp-contract=fast may fuse
+// fl(x*y) into its consumers, so use fma for scalar types that <cmath> advertises as fast.
+// This does not prevent contraction in the remaining scalar or packet fallback paths.
+template <typename Scalar>
+struct has_fast_fma : std::false_type {};
+#ifdef FP_FAST_FMAF
+template <>
+struct has_fast_fma<float> : std::true_type {};
+#endif
+#ifdef FP_FAST_FMA
+template <>
+struct has_fast_fma<double> : std::true_type {};
+#endif
+#ifdef FP_FAST_FMAL
+template <>
+struct has_fast_fma<long double> : std::true_type {};
+#endif
+
+template <typename Scalar, std::enable_if_t<has_fast_fma<Scalar>::value, int> = 0>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar twoprod_low(const Scalar& x, const Scalar& y, const Scalar& xy) {
+  return twoprod_low_fma(x, y, xy);
+}
+
+template <typename Scalar, bool PreventReassociation = false, std::enable_if_t<has_fast_fma<Scalar>::value, int> = 0>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Scalar& x, const Scalar& y, Scalar& p_hi, Scalar& p_lo) {
+  p_hi = x * y;
+  p_lo = twoprod_low(x, y, p_hi);
+}
 
 // This function implements the Veltkamp splitting. Given a floating point
 // number x it returns the pair {x_hi, x_lo} such that x_hi + x_lo = x holds
 // exactly and that half of the significand of x fits in x_hi.
 // This is Algorithm 3 from Jean-Michel Muller, "Elementary Functions",
 // 3rd edition, Birkh\"auser, 2016.
-template <typename Packet>
+template <typename Packet, bool PreventReassociation = false>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void veltkamp_splitting(const Packet& x, Packet& x_hi, Packet& x_lo) {
   using Scalar = typename unpacket_traits<Packet>::type;
   constexpr int shift = (NumTraits<Scalar>::digits() + 1) / 2;
   const Scalar shift_scale = Scalar(uint64_t(1) << shift);  // Scalar constructor not necessarily constexpr.
-  const Packet gamma = pmul(pset1<Packet>(shift_scale + Scalar(1)), x);
+  Packet gamma = pmul(pset1<Packet>(shift_scale + Scalar(1)), x);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(gamma);
   Packet rho = psub(x, gamma);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(rho);
   x_hi = padd(rho, gamma);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(x_hi);
   x_lo = psub(x, x_hi);
 }
 
-// This function implements Dekker's algorithm for products x * y.
-// Given floating point numbers {x, y} computes the pair
-// {p_hi, p_lo} such that x * y = p_hi + p_lo holds exactly and
-// p_hi = fl(x * y).
-template <typename Packet>
-EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x, const Packet& y, Packet& p_hi, Packet& p_lo) {
-  Packet x_hi, x_lo, y_hi, y_lo;
-  veltkamp_splitting(x, x_hi, x_lo);
-  veltkamp_splitting(y, y_hi, y_lo);
-
-  p_hi = pmul(x, y);
-  p_lo = pmadd(x_hi, y_hi, pnegate(p_hi));
-  p_lo = pmadd(x_hi, y_lo, p_lo);
-  p_lo = pmadd(x_lo, y_hi, p_lo);
-  p_lo = pmadd(x_lo, y_lo, p_lo);
-}
-
 // A version of twoprod that takes x, y, and fl(x*y) as input and returns the p_lo such that
-// x * y = xy + p_lo holds exactly.
-template <typename Packet>
+// x * y = xy + p_lo holds exactly. PreventReassociation preserves the separately rounded operations.
+template <typename Packet, bool PreventReassociation = false, std::enable_if_t<!has_fast_fma<Packet>::value, int> = 0>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet twoprod_low(const Packet& x, const Packet& y, const Packet& xy) {
   Packet x_hi, x_lo, y_hi, y_lo;
-  veltkamp_splitting(x, x_hi, x_lo);
-  veltkamp_splitting(y, y_hi, y_lo);
+  veltkamp_splitting<Packet, PreventReassociation>(x, x_hi, x_lo);
+  veltkamp_splitting<Packet, PreventReassociation>(y, y_hi, y_lo);
 
-  Packet p_lo = pmadd(x_hi, y_hi, pnegate(xy));
+  Packet p_lo = pmsub(x_hi, y_hi, xy);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(p_lo);
   p_lo = pmadd(x_hi, y_lo, p_lo);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(p_lo);
   p_lo = pmadd(x_lo, y_hi, p_lo);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(p_lo);
   p_lo = pmadd(x_lo, y_lo, p_lo);
   return p_lo;
 }
 
+// This function implements Dekker's algorithm for products x * y.
+// Given floating point numbers {x, y}, it computes {p_hi, p_lo} such that
+// x * y = p_hi + p_lo exactly and p_hi = fl(x * y).
+template <typename Packet, bool PreventReassociation = false, std::enable_if_t<!has_fast_fma<Packet>::value, int> = 0>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x, const Packet& y, Packet& p_hi, Packet& p_lo) {
+  Packet hi = pmul(x, y);
+  EIGEN_IF_CONSTEXPR (PreventReassociation) pbarrier(hi);
+  const Packet lo = twoprod_low<Packet, PreventReassociation>(x, y, hi);
+  p_hi = hi;
+  p_lo = lo;
+}
+
 #endif  // EIGEN_VECTORIZE_FMA
 
-// This function implements Dekker's algorithm for the addition
-// of two double word numbers represented by {x_hi, x_lo} and {y_hi, y_lo}.
-// It returns the result as a pair {s_hi, s_lo} such that
-// x_hi + x_lo + y_hi + y_lo = s_hi + s_lo holds exactly.
-// This is Algorithm 5 from Jean-Michel Muller, "Elementary Functions",
-// 3rd edition, Birkh\"auser, 2016.
+// This function implements the addition of two double word numbers
+// represented by {x_hi, x_lo} and {y_hi, y_lo}, with operands of either sign
+// and magnitude: Knuth's two-sum of the high parts is error-free, the low
+// parts are added to its error term, and the result is renormalized.
+// This is Algorithm 5 (SloppyDWPlusDW) from Joldes, Muller, & Popescu (2017),
+// "Tight and rigorous error bounds for basic building blocks of double-word
+// arithmetic", https://hal.science/hal-01351529: the error is a few u^2
+// relative to |x| + |y|, not to the sum, which may cancel.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twosum(const Packet& x_hi, const Packet& x_lo, const Packet& y_hi,
                                                   const Packet& y_lo, Packet& s_hi, Packet& s_lo) {
-  const Packet x_greater_mask = pcmp_lt(pabs(y_hi), pabs(x_hi));
-  Packet r_hi_1, r_lo_1;
-  fast_twosum(x_hi, y_hi, r_hi_1, r_lo_1);
-  Packet r_hi_2, r_lo_2;
-  fast_twosum(y_hi, x_hi, r_hi_2, r_lo_2);
-  const Packet r_hi = pselect(x_greater_mask, r_hi_1, r_hi_2);
+  Packet s = padd(x_hi, y_hi);
+  Packet y_part = psub(s, x_hi);
+  Packet err = padd(psub(x_hi, psub(s, y_part)), psub(y_hi, y_part));
+  fast_twosum(s, padd(err, padd(x_lo, y_lo)), s_hi, s_lo);
+}
 
-  const Packet s1 = padd(padd(y_lo, r_lo_1), x_lo);
-  const Packet s2 = padd(padd(x_lo, r_lo_2), y_lo);
-  const Packet s = pselect(x_greater_mask, s1, s2);
-
-  fast_twosum(r_hi, s, s_hi, s_lo);
+// The difference {x_hi, x_lo} - {y_hi, y_lo} of two double word numbers,
+// the same algorithm as twosum with the sign of y folded into the operations.
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twodiff(const Packet& x_hi, const Packet& x_lo, const Packet& y_hi,
+                                                   const Packet& y_lo, Packet& s_hi, Packet& s_lo) {
+  Packet s = psub(x_hi, y_hi);
+  Packet y_part = psub(x_hi, s);
+  Packet err = psub(psub(x_hi, padd(s, y_part)), psub(y_hi, y_part));
+  fast_twosum(s, padd(err, psub(x_lo, y_lo)), s_hi, s_lo);
 }
 
 // This is a version of twosum for double word numbers,
@@ -172,10 +228,15 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x_hi, const Pac
 
 // This function implements the multiplication of two double word
 // numbers represented by {x_hi, x_lo} and {y_hi, y_lo}.
-// It returns the result as a pair {p_hi, p_lo} such that
-// (x_hi + x_lo) * (y_hi + y_lo) = p_hi + p_lo holds with a relative error
-// of less than 2*2^{-2p}, where p is the number of significand bits
-// in the floating point type.
+// For normalized inputs (x_hi = RN(x_hi + x_lo), likewise for y), the result
+// {p_hi, p_lo} has relative error < 5*u^2 for p-bit significands, u = 2^{-p}, p >= 8.
+// This assumes round-to-nearest, no overflow/underflow, an exact two-product
+// residual, and separately rounded operations outside that residual.
+// Each DW*FP product has relative error <= (3/2 + 4*u)*u^2: Joldes, Muller,
+// and Popescu (2017), "Tight and rigorous error bounds for basic building
+// blocks of double-word arithmetic", Theorem 4.1, https://hal.science/hal-01351529.
+// The final sum adds absolute error <= u^2*((3+3*u+u^2)*abs(p_hi_hi)
+// + (4+3*u+u^2)*abs(p_lo_hi)); using abs(y_lo) <= u*abs(y_hi) gives the bound above.
 template <typename Packet>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x_hi, const Packet& x_lo, const Packet& y_hi,
                                                    const Packet& y_lo, Packet& p_hi, Packet& p_lo) {
@@ -184,6 +245,22 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void twoprod(const Packet& x_hi, const Pac
   Packet p_lo_hi, p_lo_lo;
   twoprod(x_hi, x_lo, y_lo, p_lo_hi, p_lo_lo);
   fast_twosum(p_hi_hi, p_hi_lo, p_lo_hi, p_lo_lo, p_hi, p_lo);
+}
+
+// This function implements the multiplication of two double word numbers
+// {x_hi, x_lo} and {y_hi, y_lo} at a lower cost than twoprod above: the
+// cross terms are accumulated onto the two-product residual and the x_lo*y_lo
+// term is dropped. For normalized inputs the relative error is < 7*u^2.
+// This is Algorithm 10 (DWTimesDW1) from Joldes, Muller, & Popescu (2017),
+// "Tight and rigorous error bounds for basic building blocks of double-word
+// arithmetic", https://hal.science/hal-01351529.
+template <typename Packet>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void fast_twoprod(const Packet& x_hi, const Packet& x_lo, const Packet& y_hi,
+                                                        const Packet& y_lo, Packet& p_hi, Packet& p_lo) {
+  Packet c_hi, c_lo;
+  twoprod(x_hi, y_hi, c_hi, c_lo);
+  c_lo = pmadd(x_hi, y_lo, pmadd(x_lo, y_hi, c_lo));
+  fast_twosum(c_hi, c_lo, p_hi, p_lo);
 }
 
 // This function implements the division of double word {x_hi, x_lo}

@@ -53,9 +53,8 @@ struct compute_inverse_and_det_with_check<MatrixType, ResultType, 1> {
                                            const typename MatrixType::RealScalar& absDeterminantThreshold,
                                            ResultType& result, typename ResultType::Scalar& determinant,
                                            bool& invertible) {
-    using std::abs;
     determinant = matrix.coeff(0, 0);
-    invertible = abs(determinant) > absDeterminantThreshold;
+    invertible = numext::abs(determinant) > absDeterminantThreshold;
     if (invertible) result.coeffRef(0, 0) = typename ResultType::Scalar(1) / determinant;
   }
 };
@@ -90,10 +89,9 @@ struct compute_inverse_and_det_with_check<MatrixType, ResultType, 2> {
                                            const typename MatrixType::RealScalar& absDeterminantThreshold,
                                            ResultType& inverse, typename ResultType::Scalar& determinant,
                                            bool& invertible) {
-    using std::abs;
     using Scalar = typename ResultType::Scalar;
     determinant = matrix.determinant();
-    invertible = abs(determinant) > absDeterminantThreshold;
+    invertible = numext::abs(determinant) > absDeterminantThreshold;
     if (!invertible) return;
     const Scalar invdet = Scalar(1) / determinant;
     compute_inverse_size2_helper(matrix, invdet, inverse);
@@ -212,9 +210,8 @@ struct compute_inverse_and_det_with_check<MatrixType, ResultType, 4> {
                                            const typename MatrixType::RealScalar& absDeterminantThreshold,
                                            ResultType& inverse, typename ResultType::Scalar& determinant,
                                            bool& invertible) {
-    using std::abs;
     determinant = matrix.determinant();
-    invertible = abs(determinant) > absDeterminantThreshold;
+    invertible = numext::abs(determinant) > absDeterminantThreshold;
     if (invertible && extract_data(matrix) != extract_data(inverse)) {
       compute_inverse<MatrixType, ResultType>::run(matrix, inverse);
     } else if (invertible) {
@@ -279,7 +276,7 @@ struct Assignment<DstXprType, Inverse<XprType>,
 template <typename Derived>
 EIGEN_DEVICE_FUNC inline Inverse<Derived> MatrixBase<Derived>::inverse() const {
   EIGEN_STATIC_ASSERT(!NumTraits<Scalar>::IsInteger, THIS_FUNCTION_IS_NOT_FOR_INTEGER_NUMERIC_TYPES)
-  eigen_assert(rows() == cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(*this);
   return Inverse<Derived>(derived());
 }
 
@@ -310,7 +307,7 @@ inline void MatrixBase<Derived>::computeInverseAndDetWithCheck(ResultType& inver
                                                                bool& invertible,
                                                                const RealScalar& absDeterminantThreshold) const {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(Derived, ResultType)
-  eigen_assert(rows() == cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(*this);
   inverse.resize(rows(), cols());
   // for 2x2, it's worth giving a chance to avoid evaluating.
   // for larger sizes, evaluating has negligible cost and limits code size.

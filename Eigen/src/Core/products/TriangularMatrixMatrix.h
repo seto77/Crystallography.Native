@@ -48,6 +48,9 @@ struct product_triangular_matrix_matrix<Scalar, Index, Mode, true, LhsStorageOrd
   using Traits = gebp_traits<Scalar, Scalar>;
   enum {
     SmallPanelWidth = 2 * plain_enum_max(Traits::mr, Traits::nr),
+    // A multiple of mr, so that horizontal panels start on lhs micro-panel boundaries. It exceeds SmallPanelWidth only
+    // if nr > mr, e.g. for NEON double (18 vs 16), whose vertical panels ran 1-3% slower at 18 on Cortex-A76.
+    HorizontalPanelWidth = numext::div_ceil(int(SmallPanelWidth), int(Traits::mr)) * int(Traits::mr),
     IsLower = (Mode & Lower) == Lower,
     SetDiag = (Mode & (ZeroDiag | UnitDiag)) ? 0 : 1
   };
@@ -79,10 +82,22 @@ EIGEN_DONT_INLINE void product_triangular_matrix_matrix<
 
   Index kc = blocking.kc();                    // cache block size along the K direction
   Index mc = (std::min)(rows, blocking.mc());  // cache block size along the M direction
+#ifdef EIGEN_VECTORIZE_SME
+  // The SME kernel moves each output block through ZA on every call, which a panelWidth-deep update does not amortize.
+  constexpr bool HorizontalBelowNr = sme_has_gebp_kernel<Scalar, Scalar>::value;
+#else
+  constexpr bool HorizontalBelowNr = false;
+#endif
+  // P horizontal panels update each output panel once instead of (P+1)/2 times on average, with the same packed
+  // coefficients and flops. Below nr columns, the generic kernel's partial register blocks run faster over the short
+  // depth of vertical panels.
+  const bool horizontal =
+      (HorizontalBelowNr || cols >= Traits::nr) && Index(HorizontalPanelWidth) <= (std::min)(kc, mc);
   // The small panel size must not be larger than blocking size.
   // Usually this should never be the case because SmallPanelWidth^2 is very small
   // compared to L2 cache size, but let's be safe:
-  Index panelWidth = (std::min)(Index(SmallPanelWidth), (std::min)(kc, mc));
+  const Index panelWidth =
+      horizontal ? Index(HorizontalPanelWidth) : (std::min)(Index(SmallPanelWidth), (std::min)(kc, mc));
 
   std::size_t sizeA = kc * mc;
   std::size_t sizeB = kc * cols;
@@ -90,16 +105,23 @@ EIGEN_DONT_INLINE void product_triangular_matrix_matrix<
   ei_declare_aligned_stack_constructed_variable(Scalar, blockA, sizeA, blocking.blockA());
   ei_declare_aligned_stack_constructed_variable(Scalar, blockB, sizeB, blocking.blockB());
 
-  Matrix<Scalar, SmallPanelWidth, SmallPanelWidth, LhsStorageOrder> triangularBuffer;
-  triangularBuffer.setZero();
+  static constexpr int PanelCapacity =
+      (EIGEN_STACK_ALLOCATION_LIMIT == 0 ||
+       HorizontalPanelWidth * HorizontalPanelWidth * sizeof(Scalar) <= EIGEN_STACK_ALLOCATION_LIMIT)
+          ? int(HorizontalPanelWidth)
+          : Dynamic;
+  Matrix<Scalar, PanelCapacity, PanelCapacity, LhsStorageOrder> triangularBuffer(HorizontalPanelWidth,
+                                                                                 HorizontalPanelWidth);
+  triangularBuffer.topLeftCorner(panelWidth, panelWidth).setZero();
   EIGEN_IF_CONSTEXPR ((Mode & ZeroDiag) == ZeroDiag)
     triangularBuffer.diagonal().setZero();
   else
     triangularBuffer.diagonal().setOnes();
 
   gebp_kernel<Scalar, Scalar, Index, ResMapper, Traits::mr, Traits::nr, ConjugateLhs, ConjugateRhs> gebp_kernel;
+  // Panel mode; with stride == depth and offset 0 it packs exactly as plain mode does.
   gemm_pack_lhs<Scalar, Index, LhsMapper, Traits::mr, Traits::LhsProgress, typename Traits::LhsPacket4Packing,
-                LhsStorageOrder>
+                LhsStorageOrder, false, true>
       pack_lhs;
   gemm_pack_rhs<Scalar, Index, RhsMapper, Traits::nr, RhsStorageOrder> pack_rhs;
 
@@ -124,35 +146,63 @@ EIGEN_DONT_INLINE void product_triangular_matrix_matrix<
 
     // the block diagonal, if any:
     if (IsLower || actual_k2 < rows) {
-      // for each small vertical panels of lhs
-      for (Index k1 = 0; k1 < actual_kc; k1 += panelWidth) {
-        Index actualPanelWidth = std::min<Index>(actual_kc - k1, panelWidth);
-        Index lengthTarget = IsLower ? actual_kc - k1 - actualPanelWidth : k1;
-        Index startBlock = actual_k2 + k1;
-        Index blockBOffset = k1;
-
-        // => GEBP with the micro triangular block
-        // The trick is to pack this micro block while filling the opposite triangular part with zeros.
-        // To this end we do an extra triangular copy to a small temporary buffer
-        for (Index k = 0; k < actualPanelWidth; ++k) {
-          EIGEN_IF_CONSTEXPR (SetDiag) triangularBuffer.coeffRef(k, k) = lhs(startBlock + k, startBlock + k);
-          for (Index i = IsLower ? k + 1 : 0; IsLower ? i < actualPanelWidth : i < k; ++i)
-            triangularBuffer.coeffRef(i, k) = lhs(startBlock + i, startBlock + k);
+      // The trick is to pack each micro triangular block while filling the opposite triangular part with zeros.
+      // To this end we do an extra triangular copy to a small temporary buffer
+      const auto packTriangle = [&](Scalar* dst, Index k1, Index width, Index stride, Index offset) {
+        const Index start = actual_k2 + k1;
+        for (Index k = 0; k < width; ++k) {
+          EIGEN_IF_CONSTEXPR (SetDiag) triangularBuffer.coeffRef(k, k) = lhs(start + k, start + k);
+          for (Index i = IsLower ? k + 1 : 0; IsLower ? i < width : i < k; ++i)
+            triangularBuffer.coeffRef(i, k) = lhs(start + i, start + k);
         }
-        pack_lhs(blockA, LhsMapper(triangularBuffer.data(), triangularBuffer.outerStride()), actualPanelWidth,
-                 actualPanelWidth);
+        pack_lhs(dst, LhsMapper(triangularBuffer.data(), triangularBuffer.outerStride()), width, width, stride, offset);
+      };
+      // Each group of horizontal panels that fits blockA is packed in the vertical order, whose tall column segments
+      // stream from memory, at stride actual_kc.
+      if (horizontal) {
+        const Index groupRows = mc / panelWidth * panelWidth;
+        for (Index g0 = 0; g0 < actual_kc; g0 += groupRows) {
+          const Index g1 = (std::min)(actual_kc, g0 + groupRows);
+          for (Index k1 = IsLower ? 0 : g0; k1 < (IsLower ? g1 : actual_kc); k1 += panelWidth) {
+            const Index width = (std::min)(actual_kc - k1, panelWidth);
+            if (k1 >= g0 && k1 < g1) packTriangle(blockA + (k1 - g0) * actual_kc, k1, width, actual_kc, k1);
+            const Index begin = IsLower ? (std::max)(k1 + width, g0) : g0;
+            const Index end = IsLower ? g1 : (std::min)(k1, g1);
+            if (end > begin)
+              pack_lhs(blockA + (begin - g0) * actual_kc, lhs.getSubMapper(actual_k2 + begin, actual_k2 + k1), width,
+                       end - begin, actual_kc, k1);
+          }
+          for (Index k1 = g0; k1 < g1; k1 += panelWidth) {
+            const Index width = (std::min)(actual_kc - k1, panelWidth);
+            const Index offset = IsLower ? 0 : k1;
+            gebp_kernel(res.getSubMapper(actual_k2 + k1, 0), blockA + (k1 - g0) * actual_kc, blockB, width,
+                        IsLower ? k1 + width : actual_kc - k1, cols, alpha, actual_kc, actual_kc, offset, offset);
+          }
+        }
+      } else {
+        // for each small vertical panels of lhs
+        for (Index k1 = 0; k1 < actual_kc; k1 += panelWidth) {
+          Index actualPanelWidth = std::min<Index>(actual_kc - k1, panelWidth);
+          Index lengthTarget = IsLower ? actual_kc - k1 - actualPanelWidth : k1;
+          Index startBlock = actual_k2 + k1;
+          Index blockBOffset = k1;
 
-        gebp_kernel(res.getSubMapper(startBlock, 0), blockA, blockB, actualPanelWidth, actualPanelWidth, cols, alpha,
-                    actualPanelWidth, actual_kc, 0, blockBOffset);
+          // => GEBP with the micro triangular block
+          packTriangle(blockA, k1, actualPanelWidth, actualPanelWidth, 0);
 
-        // GEBP with remaining micro panel
-        if (lengthTarget > 0) {
-          Index startTarget = IsLower ? actual_k2 + k1 + actualPanelWidth : actual_k2;
-
-          pack_lhs(blockA, lhs.getSubMapper(startTarget, startBlock), actualPanelWidth, lengthTarget);
-
-          gebp_kernel(res.getSubMapper(startTarget, 0), blockA, blockB, lengthTarget, actualPanelWidth, cols, alpha,
+          gebp_kernel(res.getSubMapper(startBlock, 0), blockA, blockB, actualPanelWidth, actualPanelWidth, cols, alpha,
                       actualPanelWidth, actual_kc, 0, blockBOffset);
+
+          // GEBP with remaining micro panel
+          if (lengthTarget > 0) {
+            Index startTarget = IsLower ? actual_k2 + k1 + actualPanelWidth : actual_k2;
+
+            pack_lhs(blockA, lhs.getSubMapper(startTarget, startBlock), actualPanelWidth, lengthTarget,
+                     actualPanelWidth, 0);
+
+            gebp_kernel(res.getSubMapper(startTarget, 0), blockA, blockB, lengthTarget, actualPanelWidth, cols, alpha,
+                        actualPanelWidth, actual_kc, 0, blockBOffset);
+          }
         }
       }
     }
@@ -213,12 +263,19 @@ EIGEN_DONT_INLINE void product_triangular_matrix_matrix<
   Index mc = (std::min)(rows, blocking.mc());  // cache block size along the M direction
 
   std::size_t sizeA = kc * mc;
-  std::size_t sizeB = kc * cols + EIGEN_MAX_ALIGN_BYTES / sizeof(Scalar);
+  // Room for realigning geb below, which moves it by less than one packet: more than EIGEN_MAX_ALIGN_BYTES when
+  // packets are wider than the allocation alignment (RVV with LMUL > 1, or a lowered EIGEN_MAX_ALIGN_BYTES).
+  std::size_t sizeB = kc * cols + PacketBytes / sizeof(Scalar);
 
   ei_declare_aligned_stack_constructed_variable(Scalar, blockA, sizeA, blocking.blockA());
   ei_declare_aligned_stack_constructed_variable(Scalar, blockB, sizeB, blocking.blockB());
 
-  Matrix<Scalar, SmallPanelWidth, SmallPanelWidth, RhsStorageOrder> triangularBuffer;
+  static constexpr int PanelCapacity =
+      (EIGEN_STACK_ALLOCATION_LIMIT == 0 ||
+       SmallPanelWidth * SmallPanelWidth * sizeof(Scalar) <= EIGEN_STACK_ALLOCATION_LIMIT)
+          ? int(SmallPanelWidth)
+          : Dynamic;
+  Matrix<Scalar, PanelCapacity, PanelCapacity, RhsStorageOrder> triangularBuffer(SmallPanelWidth, SmallPanelWidth);
   triangularBuffer.setZero();
   EIGEN_IF_CONSTEXPR ((Mode & ZeroDiag) == ZeroDiag)
     triangularBuffer.diagonal().setZero();
@@ -313,6 +370,31 @@ struct triangular_product_impl<Mode, LhsIsTriangular, Lhs, false, Rhs, false> {
     using RhsScalar = typename Rhs::Scalar;
     using Scalar = typename Dest::Scalar;
 
+    if (a_lhs.rows() == 0 || a_lhs.cols() == 0 || a_rhs.cols() == 0) return;
+    // Reuse GEMM's generic crossover: below it, packing costs more than a coefficient-based product.
+    if (a_lhs.rows() + a_lhs.cols() + a_rhs.cols() < EIGEN_GEMM_TO_COEFFBASED_THRESHOLD) {
+      constexpr bool lower = (Mode & Lower) != 0;
+      constexpr bool implicitDiag = (Mode & (UnitDiag | ZeroDiag)) != 0;
+      evaluator<Lhs> lhs(a_lhs);
+      evaluator<Rhs> rhs(a_rhs);
+      const Index depth = a_lhs.cols();
+      for (Index j = 0; j < a_rhs.cols(); ++j) {
+        for (Index i = 0; i < a_lhs.rows(); ++i) {
+          const Index diagonal = LhsIsTriangular ? i : j;
+          const bool prefix = LhsIsTriangular ? lower : !lower;
+          const Index begin = prefix ? 0 : diagonal + Index(implicitDiag);
+          const Index end = prefix ? (numext::mini)(depth, diagonal + Index(!implicitDiag)) : depth;
+          Scalar sum(0);
+          for (Index k = begin; k < end; ++k) sum += lhs.coeff(i, k) * rhs.coeff(k, j);
+          EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) != 0) {
+            if (diagonal < depth) sum += LhsIsTriangular ? rhs.coeff(i, j) : lhs.coeff(i, j);
+          }
+          dst.coeffRef(i, j) += alpha * sum;
+        }
+      }
+      return;
+    }
+
     using LhsBlasTraits = internal::blas_traits<Lhs>;
     using ActualLhsType = typename LhsBlasTraits::DirectLinearAccessType;
     using ActualLhsTypeCleaned = internal::remove_all_t<ActualLhsType>;
@@ -322,12 +404,6 @@ struct triangular_product_impl<Mode, LhsIsTriangular, Lhs, false, Rhs, false> {
 
     internal::add_const_on_value_type_t<ActualLhsType> lhs = LhsBlasTraits::extract(a_lhs);
     internal::add_const_on_value_type_t<ActualRhsType> rhs = RhsBlasTraits::extract(a_rhs);
-
-    // Empty product, return early.  Otherwise, we get `nullptr` use errors below when we try to access
-    // coeffRef(0,0).
-    if (lhs.size() == 0 || rhs.size() == 0) {
-      return;
-    }
 
     LhsScalar lhs_alpha = LhsBlasTraits::extractScalarFactor(a_lhs);
     RhsScalar rhs_alpha = RhsBlasTraits::extractScalarFactor(a_rhs);
@@ -343,31 +419,53 @@ struct triangular_product_impl<Mode, LhsIsTriangular, Lhs, false, Rhs, false> {
     Index stripedDepth = LhsIsTriangular ? ((!IsLower) ? lhs.cols() : (std::min)(lhs.cols(), lhs.rows()))
                                          : ((IsLower) ? rhs.rows() : (std::min)(rhs.rows(), rhs.cols()));
 
-    BlockingType blocking(stripedRows, stripedCols, stripedDepth, 1, false);
-
-    internal::product_triangular_matrix_matrix<
+    using Trmm = internal::product_triangular_matrix_matrix<
         Scalar, Index, Mode, LhsIsTriangular,
         (internal::traits<ActualLhsTypeCleaned>::Flags & RowMajorBit) ? RowMajor : ColMajor,
         LhsBlasTraits::NeedToConjugate,
         (internal::traits<ActualRhsTypeCleaned>::Flags & RowMajorBit) ? RowMajor : ColMajor,
         RhsBlasTraits::NeedToConjugate, (internal::traits<Dest>::Flags & RowMajorBit) ? RowMajor : ColMajor,
-        Dest::InnerStrideAtCompileTime>::run(stripedRows, stripedCols, stripedDepth,                     // sizes
-                                             &lhs.coeffRef(0, 0), lhs.outerStride(),                     // lhs info
-                                             &rhs.coeffRef(0, 0), rhs.outerStride(),                     // rhs info
-                                             &dst.coeffRef(0, 0), dst.innerStride(), dst.outerStride(),  // result info
-                                             actualAlpha, blocking);
+        Dest::InnerStrideAtCompileTime>;
+    const auto runWith = [&](level3_blocking<Scalar, Scalar>& blocking) {
+      Trmm::run(stripedRows, stripedCols, stripedDepth,                     // sizes
+                &lhs.coeffRef(0, 0), lhs.outerStride(),                     // lhs info
+                &rhs.coeffRef(0, 0), rhs.outerStride(),                     // rhs info
+                &dst.coeffRef(0, 0), dst.innerStride(), dst.outerStride(),  // result info
+                actualAlpha, blocking);
+    };
 
-    // Apply correction if the diagonal is unit and a scalar factor was nested:
+#ifdef EIGEN_VECTORIZE_AVX512
+    // The AVX512 physical-L1 cap on kc already keeps the micro-panels in L1, so on large outputs BlockingType's
+    // extra KcFactor = 4 makes depth blocks too short to amortize result loads/stores; small and narrow products
+    // still favor it. Fixed-size blocking packs the whole product into inline buffers and ignores KcFactor, so only
+    // dynamic blocking can change; a second fixed-size blocking object would double the stack frame.
+    constexpr bool DynamicBlocking = Lhs::MaxRowsAtCompileTime == Dynamic || Rhs::MaxColsAtCompileTime == Dynamic ||
+                                     Lhs::MaxColsAtCompileTime == Dynamic;
+    if (DynamicBlocking && (is_same<Scalar, float>::value || is_same<Scalar, double>::value) &&
+        gebp_traits<Scalar, Scalar>::nr == 8 && stripedRows >= 512 && stripedCols >= 512) {
+      using LargeBlockingType = internal::gemm_blocking_space<(Dest::Flags & RowMajorBit) ? RowMajor : ColMajor, Scalar,
+                                                              Scalar, Dynamic, Dynamic, Dynamic, 1>;
+      LargeBlockingType blocking(stripedRows, stripedCols, stripedDepth, 1, false);
+      runWith(blocking);
+    } else
+#endif
+    {
+      BlockingType blocking(stripedRows, stripedCols, stripedDepth, 1, false);
+      runWith(blocking);
+    }
+
+    // A factor s nested in a unit triangle reached the kernel through actualAlpha, so the unit diagonal
+    // contributed alpha * s * other instead of alpha * other: subtract alpha * (s - 1) * other.
     EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) == UnitDiag) {
       EIGEN_IF_CONSTEXPR (LhsIsTriangular) {
         if (!numext::is_exactly_one(lhs_alpha)) {
           Index diagSize = (std::min)(lhs.rows(), lhs.cols());
-          dst.topRows(diagSize) -= ((lhs_alpha - LhsScalar(1)) * a_rhs).topRows(diagSize);
+          dst.matrix().topRows(diagSize) -= ((alpha * (lhs_alpha - LhsScalar(1))) * a_rhs).topRows(diagSize);
         }
       } else {
         if (!numext::is_exactly_one(rhs_alpha)) {
           Index diagSize = (std::min)(rhs.rows(), rhs.cols());
-          dst.leftCols(diagSize) -= (rhs_alpha - RhsScalar(1)) * a_lhs.leftCols(diagSize);
+          dst.matrix().leftCols(diagSize) -= (alpha * (rhs_alpha - RhsScalar(1))) * a_lhs.leftCols(diagSize);
         }
       }
     }

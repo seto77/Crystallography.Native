@@ -49,13 +49,17 @@ class MaxSizeVector {
     }
     EIGEN_CATCH(...) {
       // Construction failed, destruct in reverse order:
-      for (; (i + 1) > 0; --i) {
+      for (; i > 0; --i) {
         m_data[i - 1].~T();
       }
       internal::handmade_aligned_free(m_data);
       EIGEN_THROW;
     }
   }
+
+  // The vector owns its buffer, so a member-wise copy would free it twice.
+  MaxSizeVector(const MaxSizeVector&) = delete;
+  MaxSizeVector& operator=(const MaxSizeVector&) = delete;
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE ~MaxSizeVector() {
     for (size_t i = m_size; i > 0; --i) {
@@ -78,13 +82,15 @@ class MaxSizeVector {
   // Append new elements (up to reserved size).
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void push_back(const T& t) {
     eigen_assert(m_size < m_reserve);
-    new (&m_data[m_size++]) T(t);
+    new (&m_data[m_size]) T(t);
+    ++m_size;
   }
 
   template <class X>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void emplace_back(const X& x) {
     eigen_assert(m_size < m_reserve);
-    new (&m_data[m_size++]) T(x);
+    new (&m_data[m_size]) T(x);
+    ++m_size;
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T& operator[](size_t i) const {

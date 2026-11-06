@@ -97,13 +97,36 @@ class Homogeneous : public MatrixBase<Homogeneous<MatrixType, Direction_> >, int
     return Product<Transform<Scalar, Dim, Mode, Options>, Homogeneous>(lhs, rhs);
   }
 
+  /** Reduces all coefficients, including the appended ones. An empty vector's
+   * homogeneous expression contains one coefficient equal to one.
+   */
   template <typename Func>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename internal::result_of<Func(Scalar, Scalar)>::type redux(
       const Func& func) const {
-    return func(m_matrix.redux(func), Scalar(1));
+    return redux_impl(func, internal::bool_constant<MatrixType::MaxSizeAtCompileTime == 0>());
   }
 
  protected:
+  template <typename Func>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename internal::result_of<Func(Scalar, Scalar)>::type redux_impl(
+      const Func& func, std::true_type) const {
+    // Reduce the appended coefficients, not the empty underlying expression.
+    return Base::redux(func);
+  }
+
+  template <typename Func>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename internal::result_of<Func(Scalar, Scalar)>::type redux_impl(
+      const Func& func, std::false_type) const {
+    EIGEN_IF_CONSTEXPR (MatrixType::SizeAtCompileTime == Dynamic) {
+      if (m_matrix.size() == 0) return Base::redux(func);
+    }
+    // One appended coefficient per column (Vertical) or per row (Horizontal) of m_matrix.
+    using Ones = std::conditional_t<int(Direction) == Vertical, typename internal::plain_row_type<MatrixType>::type,
+                                    typename internal::plain_col_type<MatrixType>::type>;
+    return func(m_matrix.redux(func),
+                Ones::Ones(int(Direction) == Vertical ? m_matrix.cols() : m_matrix.rows()).redux(func));
+  }
+
   typename MatrixType::Nested m_matrix;
 };
 

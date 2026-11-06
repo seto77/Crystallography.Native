@@ -27,12 +27,13 @@ struct assign_op {
   EIGEN_DEVICE_FUNC constexpr void assignCoeff(DstScalar& a, const SrcScalar& b) const { a = b; }
 
   template <int Alignment, typename Packet>
-  EIGEN_STRONG_INLINE void assignPacket(DstScalar* a, const Packet& b) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void assignPacket(DstScalar* a, const Packet& b) const {
     pstoret<DstScalar, Packet, Alignment>(a, b);
   }
 
   template <int Alignment, typename Packet>
-  EIGEN_STRONG_INLINE void assignPacketSegment(DstScalar* a, const Packet& b, Index begin, Index count) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void assignPacketSegment(DstScalar* a, const Packet& b, Index begin,
+                                                                 Index count) const {
     pstoretSegment<DstScalar, Packet, Alignment>(a, b, begin, count);
   }
 };
@@ -62,13 +63,14 @@ struct compound_assign_op {
   }
 
   template <int Alignment, typename Packet>
-  EIGEN_STRONG_INLINE void assignPacket(DstScalar* a, const Packet& b) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void assignPacket(DstScalar* a, const Packet& b) const {
     assign_op<DstScalar, DstScalar>().template assignPacket<Alignment, Packet>(
         a, Func().packetOp(ploadt<Packet, Alignment>(a), b));
   }
 
   template <int Alignment, typename Packet>
-  EIGEN_STRONG_INLINE void assignPacketSegment(DstScalar* a, const Packet& b, Index begin, Index count) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void assignPacketSegment(DstScalar* a, const Packet& b, Index begin,
+                                                                 Index count) const {
     assign_op<DstScalar, DstScalar>().template assignPacketSegment<Alignment, Packet>(
         a, Func().packetOp(ploadtSegment<Packet, Alignment>(a, begin, count), b), begin, count);
   }
@@ -97,7 +99,11 @@ struct functor_traits<add_assign_op<DstScalar, SrcScalar>> : add_assign_op<DstSc
  *
  */
 template <typename DstScalar, typename SrcScalar = DstScalar>
-struct sub_assign_op : compound_assign_op<DstScalar, SrcScalar, scalar_difference_op<DstScalar, SrcScalar>> {};
+struct sub_assign_op : compound_assign_op<DstScalar, SrcScalar, scalar_difference_op<DstScalar, SrcScalar>> {
+  // Inner and matrix-vector products can bypass scalar_difference_op.
+  EIGEN_STATIC_ASSERT((!std::is_same<DstScalar, bool>::value || !std::is_same<SrcScalar, bool>::value),
+                      BOOLEAN_SUBTRACTION_IS_NOT_SUPPORTED__CAST_TO_A_SIGNED_INTEGER_TYPE)
+};
 
 template <typename DstScalar, typename SrcScalar>
 struct functor_traits<sub_assign_op<DstScalar, SrcScalar>> : sub_assign_op<DstScalar, SrcScalar>::traits {};

@@ -186,9 +186,7 @@ EIGEN_STRONG_INLINE void prefetch<std::complex<float> >(const std::complex<float
 
 template <>
 EIGEN_STRONG_INLINE std::complex<float> pfirst<Packet2cf>(const Packet2cf& a) {
-  alignas(alignof(__m64)) std::complex<float> res;
-  _mm_storel_pi((__m64*)&res, a.v);
-  return res;
+  return std::complex<float>(_mm_cvtss_f32(a.v), _mm_cvtss_f32(_mm_shuffle_ps(a.v, a.v, _MM_SHUFFLE(1, 1, 1, 1))));
 }
 
 template <>
@@ -342,11 +340,6 @@ pset1<Packet1cd>(const std::complex<double>& from) { /* here we really have to u
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet1cd ploaddup<Packet1cd>(const std::complex<double>* from) {
-  return pset1<Packet1cd>(*from);
-}
-
-template <>
 EIGEN_STRONG_INLINE void pstore<std::complex<double> >(std::complex<double>* to, const Packet1cd& from) {
   EIGEN_DEBUG_ALIGNED_STORE _mm_store_pd((double*)to, from.v);
 }
@@ -365,21 +358,6 @@ EIGEN_STRONG_INLINE std::complex<double> pfirst<Packet1cd>(const Packet1cd& a) {
   EIGEN_ALIGN16 double res[2];
   _mm_store_pd(res, a.v);
   return std::complex<double>(res[0], res[1]);
-}
-
-template <>
-EIGEN_STRONG_INLINE Packet1cd preverse(const Packet1cd& a) {
-  return a;
-}
-
-template <>
-EIGEN_STRONG_INLINE std::complex<double> predux<Packet1cd>(const Packet1cd& a) {
-  return pfirst(a);
-}
-
-template <>
-EIGEN_STRONG_INLINE std::complex<double> predux_mul<Packet1cd>(const Packet1cd& a) {
-  return pfirst(a);
 }
 
 EIGEN_MAKE_CONJ_HELPER_CPLX_REAL(Packet1cd, Packet2d)
@@ -439,10 +417,6 @@ template <>
 EIGEN_STRONG_INLINE Packet2cf pnmadd(const Packet2cf& a, const Packet2cf& b, const Packet2cf& c) {
   return pnegate(pmsub(a, b, c));
 }
-template <>
-EIGEN_STRONG_INLINE Packet2cf pnmsub(const Packet2cf& a, const Packet2cf& b, const Packet2cf& c) {
-  return pnegate(pmadd(a, b, c));
-}
 // std::complex<double>
 template <>
 EIGEN_STRONG_INLINE Packet1cd pmadd(const Packet1cd& a, const Packet1cd& b, const Packet1cd& c) {
@@ -463,10 +437,6 @@ EIGEN_STRONG_INLINE Packet1cd pmsub(const Packet1cd& a, const Packet1cd& b, cons
 template <>
 EIGEN_STRONG_INLINE Packet1cd pnmadd(const Packet1cd& a, const Packet1cd& b, const Packet1cd& c) {
   return pnegate(pmsub(a, b, c));
-}
-template <>
-EIGEN_STRONG_INLINE Packet1cd pnmsub(const Packet1cd& a, const Packet1cd& b, const Packet1cd& c) {
-  return pnegate(pmadd(a, b, c));
 }
 #endif
 

@@ -47,8 +47,8 @@ typedef svint32_t PacketXi __attribute__((arm_sve_vector_bits(EIGEN_ARM64_SVE_VL
 
 template <>
 struct packet_traits<numext::int32_t> : default_packet_traits {
-  typedef PacketXi type;
-  typedef PacketXi half;  // Half not implemented yet
+  using type = PacketXi;
+  using half = PacketXi;  // Half not implemented yet
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -80,8 +80,8 @@ struct packet_traits<numext::int32_t> : default_packet_traits {
 
 template <>
 struct unpacket_traits<PacketXi> {
-  typedef numext::int32_t type;
-  typedef PacketXi half;  // Half not yet implemented
+  using type = numext::int32_t;
+  using half = PacketXi;  // Half not yet implemented
   enum {
     size = sve_packet_size_selector<numext::int32_t, EIGEN_ARM64_SVE_VL>::size,
     alignment = sve_packet_alignment_selector<EIGEN_ARM64_SVE_VL>::alignment,
@@ -119,11 +119,6 @@ EIGEN_STRONG_INLINE PacketXi psub<PacketXi>(const PacketXi& a, const PacketXi& b
 template <>
 EIGEN_STRONG_INLINE PacketXi pnegate(const PacketXi& a) {
   return svneg_s32_x(svptrue_b32(), a);
-}
-
-template <>
-EIGEN_STRONG_INLINE PacketXi pconj(const PacketXi& a) {
-  return a;
 }
 
 template <>
@@ -266,18 +261,29 @@ EIGEN_STRONG_INLINE void pstoreu<numext::int32_t>(numext::int32_t* to, const Pac
   EIGEN_DEBUG_UNALIGNED_STORE svst1_s32(svptrue_b32(), to, from);
 }
 
+// The 32-bit gathers and scatters address lane i through the int32 index i * stride. Where that would overflow, the
+// lanes are addressed one at a time.
+EIGEN_STRONG_INLINE bool sve_s32index_fits(Index stride) {
+  const Index max_stride = Index(NumTraits<numext::int32_t>::highest()) / Index(EIGEN_ARM64_SVE_VL / 32 - 1);
+  return stride <= max_stride && stride >= -max_stride;
+}
+
 template <>
 EIGEN_DEVICE_FUNC inline PacketXi pgather<numext::int32_t, PacketXi>(const numext::int32_t* from, Index stride) {
+  if (!sve_s32index_fits(stride))
+    return pgather_partial<numext::int32_t, PacketXi>(from, stride, unpacket_traits<PacketXi>::size);
   // Index format: {base=0, base+stride, base+stride*2, base+stride*3, ...}
-  svint32_t indices = svindex_s32(0, stride);
+  svint32_t indices = svindex_s32(0, numext::int32_t(stride));
   return svld1_gather_s32index_s32(svptrue_b32(), from, indices);
 }
 
 template <>
 EIGEN_DEVICE_FUNC inline void pscatter<numext::int32_t, PacketXi>(numext::int32_t* to, const PacketXi& from,
                                                                   Index stride) {
+  if (!sve_s32index_fits(stride))
+    return pscatter_partial<numext::int32_t, PacketXi>(to, from, stride, unpacket_traits<PacketXi>::size);
   // Index format: {base=0, base+stride, base+stride*2, base+stride*3, ...}
-  svint32_t indices = svindex_s32(0, stride);
+  svint32_t indices = svindex_s32(0, numext::int32_t(stride));
   svst1_scatter_s32index_s32(svptrue_b32(), to, indices, from);
 }
 
@@ -300,6 +306,11 @@ EIGEN_STRONG_INLINE PacketXi pabs(const PacketXi& a) {
 template <>
 EIGEN_STRONG_INLINE numext::int32_t predux<PacketXi>(const PacketXi& a) {
   return static_cast<numext::int32_t>(svaddv_s32(svptrue_b32(), a));
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const PacketXi& a) {
+  return svptest_any(svptrue_b32(), svcmpne_n_s32(svptrue_b32(), a, 0));
 }
 
 template <>
@@ -347,8 +358,8 @@ typedef svint64_t PacketXl __attribute__((arm_sve_vector_bits(EIGEN_ARM64_SVE_VL
 
 template <>
 struct packet_traits<numext::int64_t> : default_packet_traits {
-  typedef PacketXl type;
-  typedef PacketXl half;  // Half not implemented yet
+  using type = PacketXl;
+  using half = PacketXl;  // Half not implemented yet
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -372,8 +383,8 @@ struct packet_traits<numext::int64_t> : default_packet_traits {
 
 template <>
 struct unpacket_traits<PacketXl> {
-  typedef numext::int64_t type;
-  typedef PacketXl half;  // Half not yet implemented
+  using type = numext::int64_t;
+  using half = PacketXl;  // Half not yet implemented
   enum {
     size = sve_packet_size_selector<numext::int64_t, EIGEN_ARM64_SVE_VL>::size,
     alignment = sve_packet_alignment_selector<EIGEN_ARM64_SVE_VL>::alignment,
@@ -411,11 +422,6 @@ EIGEN_STRONG_INLINE PacketXl psub<PacketXl>(const PacketXl& a, const PacketXl& b
 template <>
 EIGEN_STRONG_INLINE PacketXl pnegate(const PacketXl& a) {
   return svneg_s64_x(svptrue_b64(), a);
-}
-
-template <>
-EIGEN_STRONG_INLINE PacketXl pconj(const PacketXl& a) {
-  return a;
 }
 
 template <>
@@ -634,8 +640,8 @@ typedef svfloat32_t PacketXf __attribute__((arm_sve_vector_bits(EIGEN_ARM64_SVE_
 
 template <>
 struct packet_traits<float> : default_packet_traits {
-  typedef PacketXf type;
-  typedef PacketXf half;
+  using type = PacketXf;
+  using half = PacketXf;
 
   enum {
     Vectorizable = 1,
@@ -682,9 +688,9 @@ struct packet_traits<float> : default_packet_traits {
 
 template <>
 struct unpacket_traits<PacketXf> {
-  typedef float type;
-  typedef PacketXf half;  // Half not yet implemented
-  typedef PacketXi integer_packet;
+  using type = float;
+  using half = PacketXf;  // Half not yet implemented
+  using integer_packet = PacketXi;
 
   enum {
     size = sve_packet_size_selector<float, EIGEN_ARM64_SVE_VL>::size,
@@ -727,11 +733,6 @@ EIGEN_STRONG_INLINE PacketXf pnegate(const PacketXf& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE PacketXf pconj(const PacketXf& a) {
-  return a;
-}
-
-template <>
 EIGEN_STRONG_INLINE PacketXf pmul<PacketXf>(const PacketXf& a, const PacketXf& b) {
   return svmul_f32_x(svptrue_b32(), a, b);
 }
@@ -742,18 +743,18 @@ EIGEN_STRONG_INLINE PacketXf pdiv<PacketXf>(const PacketXf& a, const PacketXf& b
 }
 
 template <>
+struct is_fused_madd<PacketXf> : true_type {};
+template <>
 EIGEN_STRONG_INLINE PacketXf pmadd(const PacketXf& a, const PacketXf& b, const PacketXf& c) {
   return svmla_f32_x(svptrue_b32(), c, a, b);
 }
 
 template <>
-EIGEN_STRONG_INLINE PacketXf pmin<PacketXf>(const PacketXf& a, const PacketXf& b) {
-  return svmin_f32_x(svptrue_b32(), a, b);
-}
+struct pminmax_propagates_nan<PacketXf> : bool_constant<true> {};
 
 template <>
-EIGEN_STRONG_INLINE PacketXf pmin<PropagateNaN, PacketXf>(const PacketXf& a, const PacketXf& b) {
-  return pmin<PacketXf>(a, b);
+EIGEN_STRONG_INLINE PacketXf pmin<PacketXf>(const PacketXf& a, const PacketXf& b) {
+  return svmin_f32_x(svptrue_b32(), a, b);
 }
 
 template <>
@@ -764,11 +765,6 @@ EIGEN_STRONG_INLINE PacketXf pmin<PropagateNumbers, PacketXf>(const PacketXf& a,
 template <>
 EIGEN_STRONG_INLINE PacketXf pmax<PacketXf>(const PacketXf& a, const PacketXf& b) {
   return svmax_f32_x(svptrue_b32(), a, b);
-}
-
-template <>
-EIGEN_STRONG_INLINE PacketXf pmax<PropagateNaN, PacketXf>(const PacketXf& a, const PacketXf& b) {
-  return pmax<PacketXf>(a, b);
 }
 
 template <>
@@ -900,15 +896,19 @@ EIGEN_STRONG_INLINE void pstoreu<float>(float* to, const PacketXf& from) {
 
 template <>
 EIGEN_DEVICE_FUNC inline PacketXf pgather<float, PacketXf>(const float* from, Index stride) {
+  if (!sve_s32index_fits(stride))
+    return pgather_partial<float, PacketXf>(from, stride, unpacket_traits<PacketXf>::size);
   // Index format: {base=0, base+stride, base+stride*2, base+stride*3, ...}
-  svint32_t indices = svindex_s32(0, stride);
+  svint32_t indices = svindex_s32(0, numext::int32_t(stride));
   return svld1_gather_s32index_f32(svptrue_b32(), from, indices);
 }
 
 template <>
 EIGEN_DEVICE_FUNC inline void pscatter<float, PacketXf>(float* to, const PacketXf& from, Index stride) {
+  if (!sve_s32index_fits(stride))
+    return pscatter_partial<float, PacketXf>(to, from, stride, unpacket_traits<PacketXf>::size);
   // Index format: {base=0, base+stride, base+stride*2, base+stride*3, ...}
-  svint32_t indices = svindex_s32(0, stride);
+  svint32_t indices = svindex_s32(0, numext::int32_t(stride));
   svst1_scatter_s32index_f32(svptrue_b32(), to, indices, from);
 }
 
@@ -938,6 +938,24 @@ EIGEN_STRONG_INLINE PacketXf pfrexp<PacketXf>(const PacketXf& a, PacketXf& expon
 template <>
 EIGEN_STRONG_INLINE float predux<PacketXf>(const PacketXf& a) {
   return svaddv_f32(svptrue_b32(), a);
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_any(const PacketXf& a) {
+  const svuint32_t bits = svreinterpret_u32_f32(a);
+  return svptest_any(svptrue_b32(), svcmpne_n_u32(svptrue_b32(), bits, 0));
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_all(const PacketXf& a) {
+  const svbool_t all = svptrue_b32();
+  return !svptest_any(all, svcmpeq_n_f32(all, a, 0.0f));
+}
+
+template <>
+EIGEN_STRONG_INLINE Index predux_count(const PacketXf& a) {
+  const svbool_t all = svptrue_b32();
+  return static_cast<Index>(svcntp_b32(all, svcmpne_n_f32(all, a, 0.0f)));
 }
 
 // Other reduction functions:
@@ -983,7 +1001,8 @@ EIGEN_DEVICE_FUNC inline void ptranspose(PacketBlock<PacketXf, N>& kernel) {
 
 template <>
 EIGEN_STRONG_INLINE PacketXf pldexp<PacketXf>(const PacketXf& a, const PacketXf& exponent) {
-  return pldexp_generic(a, exponent);
+  // fscale is a * 2^n rounded once; the conversion saturates, and a saturated n over- or underflows every finite a.
+  return svscale_f32_x(svptrue_b32(), a, svcvt_s32_f32_x(svptrue_b32(), exponent));
 }
 
 template <>
@@ -1000,8 +1019,8 @@ typedef svfloat64_t PacketXd __attribute__((arm_sve_vector_bits(EIGEN_ARM64_SVE_
 
 template <>
 struct packet_traits<double> : default_packet_traits {
-  typedef PacketXd type;
-  typedef PacketXd half;  // Half not implemented yet
+  using type = PacketXd;
+  using half = PacketXd;  // Half not implemented yet
 
   enum {
     Vectorizable = 1,
@@ -1028,13 +1047,9 @@ struct packet_traits<double> : default_packet_traits {
     HasRsqrt = 1,
     // asin and acos are absent from EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_DOUBLE,
     // so they stay scalar.
-    //
-    // sin, cos and tan stay off despite being available: psin, pcos and ptan
-    // return the magnitude with the sign dropped under -ffast-math with GCC.
-    // Turning them on here would extend that to double, where the scalar path
-    // is correct today. tanh, exp, log, atan and cbrt are unaffected -- checked
-    // against the scalar reference under -ffast-math -- so they are on. See
-    // https://gitlab.com/libeigen/eigen/-/issues/3132.
+    HasSin = EIGEN_FAST_MATH,
+    HasCos = EIGEN_FAST_MATH,
+    HasTan = EIGEN_FAST_MATH,
     HasATan = 1,
     HasATanh = 1,
     HasLog = 1,
@@ -1049,9 +1064,9 @@ struct packet_traits<double> : default_packet_traits {
 
 template <>
 struct unpacket_traits<PacketXd> {
-  typedef double type;
-  typedef PacketXd half;  // Half not yet implemented
-  typedef PacketXl integer_packet;
+  using type = double;
+  using half = PacketXd;  // Half not yet implemented
+  using integer_packet = PacketXl;
 
   enum {
     size = sve_packet_size_selector<double, EIGEN_ARM64_SVE_VL>::size,
@@ -1100,11 +1115,6 @@ EIGEN_STRONG_INLINE PacketXd pnegate(const PacketXd& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE PacketXd pconj(const PacketXd& a) {
-  return a;
-}
-
-template <>
 EIGEN_STRONG_INLINE PacketXd pmul<PacketXd>(const PacketXd& a, const PacketXd& b) {
   return svmul_f64_x(svptrue_b64(), a, b);
 }
@@ -1115,18 +1125,18 @@ EIGEN_STRONG_INLINE PacketXd pdiv<PacketXd>(const PacketXd& a, const PacketXd& b
 }
 
 template <>
+struct is_fused_madd<PacketXd> : true_type {};
+template <>
 EIGEN_STRONG_INLINE PacketXd pmadd(const PacketXd& a, const PacketXd& b, const PacketXd& c) {
   return svmla_f64_x(svptrue_b64(), c, a, b);
 }
 
 template <>
-EIGEN_STRONG_INLINE PacketXd pmin<PacketXd>(const PacketXd& a, const PacketXd& b) {
-  return svmin_f64_x(svptrue_b64(), a, b);
-}
+struct pminmax_propagates_nan<PacketXd> : bool_constant<true> {};
 
 template <>
-EIGEN_STRONG_INLINE PacketXd pmin<PropagateNaN, PacketXd>(const PacketXd& a, const PacketXd& b) {
-  return pmin<PacketXd>(a, b);
+EIGEN_STRONG_INLINE PacketXd pmin<PacketXd>(const PacketXd& a, const PacketXd& b) {
+  return svmin_f64_x(svptrue_b64(), a, b);
 }
 
 template <>
@@ -1137,11 +1147,6 @@ EIGEN_STRONG_INLINE PacketXd pmin<PropagateNumbers, PacketXd>(const PacketXd& a,
 template <>
 EIGEN_STRONG_INLINE PacketXd pmax<PacketXd>(const PacketXd& a, const PacketXd& b) {
   return svmax_f64_x(svptrue_b64(), a, b);
-}
-
-template <>
-EIGEN_STRONG_INLINE PacketXd pmax<PropagateNaN, PacketXd>(const PacketXd& a, const PacketXd& b) {
-  return pmax<PacketXd>(a, b);
 }
 
 template <>
@@ -1305,6 +1310,24 @@ EIGEN_STRONG_INLINE double predux<PacketXd>(const PacketXd& a) {
 }
 
 template <>
+EIGEN_STRONG_INLINE bool predux_any(const PacketXd& a) {
+  const svuint64_t bits = svreinterpret_u64_f64(a);
+  return svptest_any(svptrue_b64(), svcmpne_n_u64(svptrue_b64(), bits, 0));
+}
+
+template <>
+EIGEN_STRONG_INLINE bool predux_all(const PacketXd& a) {
+  const svbool_t all = svptrue_b64();
+  return !svptest_any(all, svcmpeq_n_f64(all, a, 0.0));
+}
+
+template <>
+EIGEN_STRONG_INLINE Index predux_count(const PacketXd& a) {
+  const svbool_t all = svptrue_b64();
+  return static_cast<Index>(svcntp_b64(all, svcmpne_n_f64(all, a, 0.0)));
+}
+
+template <>
 EIGEN_STRONG_INLINE double predux_mul<PacketXd>(const PacketXd& a) {
   // Multiply the vector by its reverse.
   svfloat64_t prod = svmul_f64_x(svptrue_b64(), a, svrev_f64(a));
@@ -1350,7 +1373,7 @@ EIGEN_STRONG_INLINE PacketXd pfrexp<PacketXd>(const PacketXd& a, PacketXd& expon
 
 template <>
 EIGEN_STRONG_INLINE PacketXd pldexp<PacketXd>(const PacketXd& a, const PacketXd& exponent) {
-  return pldexp_generic(a, exponent);
+  return svscale_f64_x(svptrue_b64(), a, svcvt_s64_f64_x(svptrue_b64(), exponent));  // see pldexp<PacketXf>
 }
 
 template <>
@@ -1365,6 +1388,86 @@ EIGEN_STRONG_INLINE PacketXd prsqrt<PacketXd>(const PacketXd& a) {
   // which is slow enough here to lose to the scalar loop.
   return generic_rsqrt_newton_step<PacketXd, /*Steps=*/3>::run(a, svrsqrte_f64(a));
 }
+
+/*---------------- load/store segment support ----------------*/
+
+// Predicates with lanes [begin, begin + count) active. begin is a literal 0 at the assignment
+// call sites, so that branch folds and the common case is a single whilelt.
+EIGEN_STRONG_INLINE svbool_t sve_segment_predicate_b32(Index begin, Index count) {
+  eigen_assert(begin >= 0 && count >= 0 && begin + count <= EIGEN_ARM64_SVE_VL / 32);
+  if (begin == 0) return svwhilelt_b32(uint64_t(0), uint64_t(count));
+  return svnot_b_z(svwhilelt_b32(uint64_t(0), uint64_t(begin + count)), svwhilelt_b32(uint64_t(0), uint64_t(begin)));
+}
+
+EIGEN_STRONG_INLINE svbool_t sve_segment_predicate_b64(Index begin, Index count) {
+  eigen_assert(begin >= 0 && count >= 0 && begin + count <= EIGEN_ARM64_SVE_VL / 64);
+  if (begin == 0) return svwhilelt_b64(uint64_t(0), uint64_t(count));
+  return svnot_b_z(svwhilelt_b64(uint64_t(0), uint64_t(begin + count)), svwhilelt_b64(uint64_t(0), uint64_t(begin)));
+}
+
+/*---------------- int32 ----------------*/
+
+template <>
+struct has_packet_segment<PacketXi> : std::true_type {};
+
+template <>
+inline PacketXi ploaduSegment<PacketXi>(const numext::int32_t* from, Index begin, Index count) {
+  return svld1_s32(sve_segment_predicate_b32(begin, count), from);
+}
+
+template <>
+inline void pstoreuSegment<numext::int32_t, PacketXi>(numext::int32_t* to, const PacketXi& from, Index begin,
+                                                      Index count) {
+  svst1_s32(sve_segment_predicate_b32(begin, count), to, from);
+}
+
+/*---------------- int64 ----------------*/
+
+template <>
+struct has_packet_segment<PacketXl> : std::true_type {};
+
+template <>
+inline PacketXl ploaduSegment<PacketXl>(const numext::int64_t* from, Index begin, Index count) {
+  return svld1_s64(sve_segment_predicate_b64(begin, count), from);
+}
+
+template <>
+inline void pstoreuSegment<numext::int64_t, PacketXl>(numext::int64_t* to, const PacketXl& from, Index begin,
+                                                      Index count) {
+  svst1_s64(sve_segment_predicate_b64(begin, count), to, from);
+}
+
+/*---------------- float ----------------*/
+
+template <>
+struct has_packet_segment<PacketXf> : std::true_type {};
+
+template <>
+inline PacketXf ploaduSegment<PacketXf>(const float* from, Index begin, Index count) {
+  return svld1_f32(sve_segment_predicate_b32(begin, count), from);
+}
+
+template <>
+inline void pstoreuSegment<float, PacketXf>(float* to, const PacketXf& from, Index begin, Index count) {
+  svst1_f32(sve_segment_predicate_b32(begin, count), to, from);
+}
+
+/*---------------- double ----------------*/
+
+template <>
+struct has_packet_segment<PacketXd> : std::true_type {};
+
+template <>
+inline PacketXd ploaduSegment<PacketXd>(const double* from, Index begin, Index count) {
+  return svld1_f64(sve_segment_predicate_b64(begin, count), from);
+}
+
+template <>
+inline void pstoreuSegment<double, PacketXd>(double* to, const PacketXd& from, Index begin, Index count) {
+  svst1_f64(sve_segment_predicate_b64(begin, count), to, from);
+}
+
+/*---------------- end load/store segment support ----------------*/
 
 }  // namespace internal
 }  // namespace Eigen

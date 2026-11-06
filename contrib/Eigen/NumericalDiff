@@ -1,0 +1,61 @@
+// This file is part of Eigen, a lightweight C++ template library
+// for linear algebra.
+//
+// Copyright (C) 2009 Thomas Capricelli <orzel@freehackers.org>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_NUMERICALDIFF_MODULE_H
+#define EIGEN_NUMERICALDIFF_MODULE_H
+
+#include "../../Eigen/Core"
+
+namespace Eigen {
+
+/**
+ * \defgroup NumericalDiff_Module Numerical differentiation module
+ * \brief Finite-difference Jacobians and differentiation weights.
+ *
+ * \code
+ * #include <contrib/Eigen/NumericalDiff>
+ * \endcode
+ *
+ * See http://en.wikipedia.org/wiki/Numerical_differentiation
+ *
+ * Warning : this should NOT be confused with automatic differentiation, which
+ * is a different method and has its own module in Eigen : \ref
+ * AutoDiff_Module.
+ *
+ * This module provides the following classes:
+ * - \ref NumericalDiff extends a functor with Jacobian computation using
+ *   \c Forward or \c Central finite differences at a fixed step.
+ * - \ref Ridders stores a functor and computes its Jacobian using adaptive
+ *   central differences and Richardson extrapolation, with optional error estimates.
+ * - \ref Stencil computes finite-difference weights for arbitrary fixed-size
+ *   grids and derivative orders, using points and a step size chosen by the caller.
+ *
+ * Also, the \ref NonLinearOptimization_Module needs this in order to
+ * provide full features compatibility with the original (c)minpack
+ * package.
+ *
+ */
+}
+
+//@{
+
+#include "../../Eigen/src/Core/util/DisableStupidWarnings.h"
+
+// IWYU pragma: begin_exports
+#include "src/NumericalDiff/NumericalDiff.h"
+#include "src/NumericalDiff/Stencil.h"
+#include "src/NumericalDiff/Ridders.h"
+// IWYU pragma: end_exports
+
+#include "../../Eigen/src/Core/util/ReenableStupidWarnings.h"
+
+//@}
+
+#endif  // EIGEN_NUMERICALDIFF_MODULE_H

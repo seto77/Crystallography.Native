@@ -82,9 +82,7 @@ EIGEN_STRONG_INLINE Packet4f pcast<Packet8h, Packet4f>(const Packet8h& a) {
 
 template <>
 EIGEN_STRONG_INLINE Packet32h pcast<Packet16f, Packet32h>(const Packet16f& a, const Packet16f& b) {
-  __m512 result = _mm512_castsi512_ps(_mm512_castsi256_si512(_mm256_castph_si256(_mm512_cvtxps_ph(a))));
-  result = _mm512_insertf32x8(result, _mm256_castph_ps(_mm512_cvtxps_ph(b)), 1);
-  return _mm512_castps_ph(result);
+  return _mm512_castps_ph(cat256(_mm256_castph_ps(_mm512_cvtxps_ph(a)), _mm256_castph_ps(_mm512_cvtxps_ph(b))));
 }
 template <>
 EIGEN_STRONG_INLINE Packet16h pcast<Packet8f, Packet16h>(const Packet8f& a, const Packet8f& b) {
@@ -123,6 +121,23 @@ EIGEN_STRONG_INLINE Packet16h pcast<Packet16s, Packet16h>(const Packet16s& a) {
 template <>
 EIGEN_STRONG_INLINE Packet8h pcast<Packet8s, Packet8h>(const Packet8s& a) {
   return _mm_cvtepi16_ph(a);
+}
+
+template <>
+EIGEN_STRONG_INLINE Packet32h pcast<Packet16b, Packet32h>(const Packet16b& a, const Packet16b& b) {
+  __m256i ab = _eigen_mm256_set_m128i(b, a);
+  __mmask32 mask = _mm256_cmpneq_epi8_mask(ab, _mm256_setzero_si256());
+  return _mm512_castsi512_ph(_mm512_maskz_set1_epi16(mask, 0x3c00));
+}
+template <>
+EIGEN_STRONG_INLINE Packet16h pcast<Packet16b, Packet16h>(const Packet16b& a) {
+  __mmask16 mask = _mm_cmpneq_epi8_mask(a, _mm_setzero_si128());
+  return _mm256_castsi256_ph(_mm256_maskz_set1_epi16(mask, 0x3c00));
+}
+template <>
+EIGEN_STRONG_INLINE Packet8h pcast<Packet16b, Packet8h>(const Packet16b& a) {
+  __mmask16 mask = _mm_cmpneq_epi8_mask(a, _mm_setzero_si128());
+  return _mm_castsi128_ph(_mm_maskz_set1_epi16(static_cast<__mmask8>(mask), 0x3c00));
 }
 
 }  // namespace internal

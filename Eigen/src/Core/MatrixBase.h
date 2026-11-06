@@ -163,13 +163,13 @@ class MatrixBase : public DenseBase<Derived> {
       const MatrixBase<OtherDerived>& other) const;
 
   template <typename OtherDerived>
-  Derived& operator*=(const EigenBase<OtherDerived>& other);
+  EIGEN_DEVICE_FUNC Derived& operator*=(const EigenBase<OtherDerived>& other);
 
   template <typename OtherDerived>
-  void applyOnTheLeft(const EigenBase<OtherDerived>& other);
+  EIGEN_DEVICE_FUNC void applyOnTheLeft(const EigenBase<OtherDerived>& other);
 
   template <typename OtherDerived>
-  void applyOnTheRight(const EigenBase<OtherDerived>& other);
+  EIGEN_DEVICE_FUNC void applyOnTheRight(const EigenBase<OtherDerived>& other);
 
   template <typename DiagonalDerived>
   EIGEN_DEVICE_FUNC const Product<Derived, DiagonalDerived, LazyProduct> operator*(
@@ -455,27 +455,28 @@ class MatrixBase : public DenseBase<Derived> {
   ///////// SparseCore module /////////
 
   template <typename OtherDerived>
-  EIGEN_STRONG_INLINE const typename SparseMatrixBase<OtherDerived>::template CwiseProductDenseReturnType<Derived>::Type
+  EIGEN_STRONG_INLINE const CwiseBinaryOp<internal::scalar_product_op<Scalar, typename OtherDerived::Scalar>,
+                                          const Derived, const OtherDerived>
   cwiseProduct(const SparseMatrixBase<OtherDerived>& other) const {
-    return other.cwiseProduct(derived());
+    return {derived(), other.derived()};
   }
 
   ///////// MatrixFunctions module /////////
 
   using StemFunction = typename internal::stem_function<Scalar>::type;
-#define EIGEN_MATRIX_FUNCTION(ReturnType, Name, Description)                                                        \
-  /** \returns an expression of the matrix Description of \c *this. \brief This function requires the <a            \
-   * href="unsupported/group__MatrixFunctions__Module.html"> unsupported MatrixFunctions module</a>. To compute the \
-   * coefficient-wise Description use ArrayBase::##Name . */                                                        \
+#define EIGEN_MATRIX_FUNCTION(ReturnType, Name, Description)                                                \
+  /** \returns an expression of the matrix Description of \c *this. \brief This function requires the <a    \
+   * href="contrib/group__MatrixFunctions__Module.html"> contrib MatrixFunctions module</a>. To compute the \
+   * coefficient-wise Description use ArrayBase::##Name . */                                                \
   const ReturnType<Derived> Name() const;
-#define EIGEN_MATRIX_FUNCTION_1(ReturnType, Name, Description, Argument)                                            \
-  /** \returns an expression of the matrix Description of \c *this. \brief This function requires the <a            \
-   * href="unsupported/group__MatrixFunctions__Module.html"> unsupported MatrixFunctions module</a>. To compute the \
-   * coefficient-wise Description use ArrayBase::##Name . */                                                        \
+#define EIGEN_MATRIX_FUNCTION_1(ReturnType, Name, Description, Argument)                                    \
+  /** \returns an expression of the matrix Description of \c *this. \brief This function requires the <a    \
+   * href="contrib/group__MatrixFunctions__Module.html"> contrib MatrixFunctions module</a>. To compute the \
+   * coefficient-wise Description use ArrayBase::##Name . */                                                \
   const ReturnType<Derived> Name(Argument) const;
 
   EIGEN_MATRIX_FUNCTION(MatrixExponentialReturnValue, exp, exponential)
-  /** \brief Helper function for the <a href="unsupported/group__MatrixFunctions__Module.html"> unsupported
+  /** \brief Helper function for the <a href="contrib/group__MatrixFunctions__Module.html"> contrib
    * MatrixFunctions module</a>.*/
   const MatrixFunctionReturnValue<Derived> matrixFunction(StemFunction f) const;
   EIGEN_MATRIX_FUNCTION(MatrixFunctionReturnValue, cosh, hyperbolic cosine)
@@ -530,7 +531,7 @@ class MatrixBase : public DenseBase<Derived> {
  */
 template <typename Derived>
 template <typename OtherDerived>
-inline Derived& MatrixBase<Derived>::operator*=(const EigenBase<OtherDerived>& other) {
+EIGEN_DEVICE_FUNC inline Derived& MatrixBase<Derived>::operator*=(const EigenBase<OtherDerived>& other) {
   other.derived().applyThisOnTheRight(derived());
   return derived();
 }
@@ -543,7 +544,7 @@ inline Derived& MatrixBase<Derived>::operator*=(const EigenBase<OtherDerived>& o
  */
 template <typename Derived>
 template <typename OtherDerived>
-inline void MatrixBase<Derived>::applyOnTheRight(const EigenBase<OtherDerived>& other) {
+EIGEN_DEVICE_FUNC inline void MatrixBase<Derived>::applyOnTheRight(const EigenBase<OtherDerived>& other) {
   other.derived().applyThisOnTheRight(derived());
 }
 
@@ -554,7 +555,7 @@ inline void MatrixBase<Derived>::applyOnTheRight(const EigenBase<OtherDerived>& 
  */
 template <typename Derived>
 template <typename OtherDerived>
-inline void MatrixBase<Derived>::applyOnTheLeft(const EigenBase<OtherDerived>& other) {
+EIGEN_DEVICE_FUNC inline void MatrixBase<Derived>::applyOnTheLeft(const EigenBase<OtherDerived>& other) {
   other.derived().applyThisOnTheLeft(derived());
 }
 

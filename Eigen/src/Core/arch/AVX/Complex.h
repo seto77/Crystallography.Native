@@ -30,8 +30,8 @@ struct Packet4cf {
 #ifndef EIGEN_VECTORIZE_AVX512
 template <>
 struct packet_traits<std::complex<float> > : default_packet_traits {
-  typedef Packet4cf type;
-  typedef Packet2cf half;
+  using type = Packet4cf;
+  using half = Packet2cf;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
@@ -56,9 +56,9 @@ struct packet_traits<std::complex<float> > : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet4cf> {
-  typedef std::complex<float> type;
-  typedef Packet2cf half;
-  typedef Packet8f as_real;
+  using type = std::complex<float>;
+  using half = Packet2cf;
+  using as_real = Packet8f;
   enum {
     size = 4,
     alignment = Aligned32,
@@ -253,8 +253,8 @@ struct Packet2cd {
 #ifndef EIGEN_VECTORIZE_AVX512
 template <>
 struct packet_traits<std::complex<double> > : default_packet_traits {
-  typedef Packet2cd type;
-  typedef Packet1cd half;
+  using type = Packet2cd;
+  using half = Packet1cd;
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 0,
@@ -279,9 +279,9 @@ struct packet_traits<std::complex<double> > : default_packet_traits {
 
 template <>
 struct unpacket_traits<Packet2cd> {
-  typedef std::complex<double> type;
-  typedef Packet1cd half;
-  typedef Packet4d as_real;
+  using type = std::complex<double>;
+  using half = Packet1cd;
+  using as_real = Packet4d;
   enum {
     size = 2,
     alignment = Aligned32,
@@ -365,6 +365,8 @@ EIGEN_STRONG_INLINE Packet2cd pset1<Packet2cd>(const std::complex<double>& from)
   return Packet2cd(_mm256_broadcast_pd((const __m128d*)(const void*)&from));
 }
 
+// The generic ploaddup broadcasts a copy made by pload1_scalar, which keeps GCC from folding
+// the load into vbroadcastf128's memory operand; binding *from directly does not.
 template <>
 EIGEN_STRONG_INLINE Packet2cd ploaddup<Packet2cd>(const std::complex<double>* from) {
   return pset1<Packet2cd>(*from);
@@ -492,10 +494,6 @@ template <>
 EIGEN_STRONG_INLINE Packet4cf pnmadd(const Packet4cf& a, const Packet4cf& b, const Packet4cf& c) {
   return pnegate(pmsub(a, b, c));
 }
-template <>
-EIGEN_STRONG_INLINE Packet4cf pnmsub(const Packet4cf& a, const Packet4cf& b, const Packet4cf& c) {
-  return pnegate(pmadd(a, b, c));
-}
 // std::complex<double>
 template <>
 EIGEN_STRONG_INLINE Packet2cd pmadd(const Packet2cd& a, const Packet2cd& b, const Packet2cd& c) {
@@ -517,15 +515,9 @@ template <>
 EIGEN_STRONG_INLINE Packet2cd pnmadd(const Packet2cd& a, const Packet2cd& b, const Packet2cd& c) {
   return pnegate(pmsub(a, b, c));
 }
-template <>
-EIGEN_STRONG_INLINE Packet2cd pnmsub(const Packet2cd& a, const Packet2cd& b, const Packet2cd& c) {
-  return pnegate(pmadd(a, b, c));
-}
 #endif
 
 /*---------------- load/store segment support ----------------*/
-
-/*---------------- std::complex<float> ----------------*/
 
 template <>
 struct has_packet_segment<Packet2cf> : std::true_type {};
@@ -534,8 +526,22 @@ template <>
 struct has_packet_segment<Packet4cf> : std::true_type {};
 
 template <>
+struct has_packet_segment<Packet2cd> : std::true_type {};
+
+// With AVX-512VL these packets use k-masked loads and stores instead; see AVX512/Complex.h.
+#ifndef EIGEN_VECTORIZE_AVX512VL
+
+/*---------------- std::complex<float> ----------------*/
+
+template <>
 inline Packet2cf ploaduSegment<Packet2cf>(const std::complex<float>* from, Index begin, Index count) {
-  return (Packet2cf)_mm_maskload_ps(&numext::real_ref(*from), segment_mask_2x64(begin, count));
+  eigen_assert(begin >= 0 && begin <= 2 && count >= 0 && count <= 2 - begin);
+  if (count == 2) return ploadu<Packet2cf>(from);
+  if (count == 0) return Packet2cf(_mm_setzero_ps());
+  // A single complex<float> needs only a 64-bit load, not a masked 128-bit load.
+  const void* address = from + begin;
+  const __m128 value = _mm_castsi128_ps(_mm_loadl_epi64(static_cast<const __m128i*>(address)));
+  return Packet2cf(begin == 0 ? value : _mm_movelh_ps(_mm_setzero_ps(), value));
 }
 
 template <>
@@ -558,9 +564,6 @@ inline void pstoreuSegment<std::complex<float>, Packet4cf>(std::complex<float>* 
 /*---------------- std::complex<double> ----------------*/
 
 template <>
-struct has_packet_segment<Packet2cd> : std::true_type {};
-
-template <>
 inline Packet2cd ploaduSegment<Packet2cd>(const std::complex<double>* from, Index begin, Index count) {
   return (Packet2cd)_mm256_maskload_pd(&numext::real_ref(*from), segment_mask_4x64(2 * begin, 2 * count));
 }
@@ -570,6 +573,8 @@ inline void pstoreuSegment<std::complex<double>, Packet2cd>(std::complex<double>
                                                             Index begin, Index count) {
   _mm256_maskstore_pd(&numext::real_ref(*to), segment_mask_4x64(2 * begin, 2 * count), from.v);
 }
+
+#endif  // EIGEN_VECTORIZE_AVX512VL
 
 /*---------------- end load/store segment support ----------------*/
 

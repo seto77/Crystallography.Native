@@ -52,7 +52,6 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
   /*
     Setup and type definitions.
   */
-  using numext::abs;
   using Scalar = typename Dest::Scalar;
   using RealScalar = typename Dest::RealScalar;
   using VectorType = Matrix<Scalar, Dynamic, 1>;
@@ -72,6 +71,7 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
       rhs_norm is needed for other calculations anyways, this exit is a freebie.
     */
     x.setZero();
+    iters = 0;
     tol_error = 0.0;
     return true;
   }
@@ -85,6 +85,7 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
     */
     lu_solver.compute(DenseMatrixType(mat));
     x = lu_solver.solve(rhs);
+    iters = 0;
     tol_error = (rhs - mat * x).stableNorm() / rhs_norm;
     return true;
   }
@@ -104,7 +105,7 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
   */
   // Set up the initial residual
   VectorType x0 = x;
-  r.col(0) = rhs - mat * x;
+  r.col(0).noalias() = rhs - mat * x;
   x.setZero();  // The final solution will be x0+x
 
   tol_error = r.col(0).stableNorm();
@@ -132,7 +133,7 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
       u.col(0) = w;
       h_FOM(col_index, col_index - 1) = u.col(0).stableNorm();
 
-      if (abs(h_FOM(col_index, col_index - 1)) != RealScalar(0)) {
+      if (numext::abs(h_FOM(col_index, col_index - 1)) != RealScalar(0)) {
         /*
         This only happens if u is NOT exactly zero. In case it is exactly zero
         it would imply that that this u has no component in the direction of the
@@ -226,20 +227,20 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
       // Obtain the update coefficients alpha
       if (j == 1) {
         // alpha=inverse(sigma)*(R_T*r_0);
-        alpha.noalias() = lu_solver.solve(R_T * r.col(0));
+        alpha = lu_solver.solve(R_T * r.col(0));
       } else {
         // alpha=inverse(sigma)*(AR_T*r_{j-2})
-        alpha.noalias() = lu_solver.solve(AR_T * precond.solve(r.col(j - 2)));
+        alpha = lu_solver.solve(AR_T * precond.solve(r.col(j - 2)));
       }
 
       // Obtain new solution and residual from this update
       update.noalias() = U.topRows(N) * alpha;
-      r.col(0) -= mat * precond.solve(update);
+      r.col(0).noalias() -= mat * precond.solve(update);
       x += update;
 
       for (Index i = 1; i <= j - 2; ++i) {
         // This only affects the case L>2
-        r.col(i) -= U.block(N * (i + 1), 0, N, S) * alpha;
+        r.col(i).noalias() -= U.block(N * (i + 1), 0, N, S) * alpha;
       }
       if (j > 1) {
         // r=[r;A*r_{j-2}]
@@ -256,8 +257,8 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
       bool break_normalization = false;
       for (Index q = 1; q <= S; ++q) {
         if (q == 1) {
-          // u = r;
-          u.leftCols(j + 1) = r.leftCols(j + 1);
+          // u = [r_0, ..., r_{j-1}]; u_j is computed below.
+          u.leftCols(j) = r.leftCols(j);
         } else {
           // u=[u_1;u_2;...;u_j]
           u.leftCols(j) = u.middleCols(1, j);
@@ -297,11 +298,15 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
           u.leftCols(j + 1) /= normalization_constant;
         }
 
-        V.col(q - 1).head(N * (j + 1)).noalias() = u.leftCols(j + 1).reshaped();
+        V.col(q - 1).head(N * (j + 1)) = u.leftCols(j + 1).reshaped();
       }
 
       if (!break_normalization) {
-        U = V;
+        U.topRows(N * (j + 1)) = V.topRows(N * (j + 1));
+      } else {
+        // Zero block row j rather than leaving it uninitialized (k == 0) or keeping a stale
+        // block from the previous cycle (k >= 1), so the next step's sigma and alpha are zero.
+        U.middleRows(N * j, N).setZero();
       }
     }
     if (reset_while) {
@@ -315,12 +320,12 @@ bool idrstabl(const MatrixType &mat, const Rhs &rhs, Dest &x, const Precondition
             The polynomial step
     */
     ColPivHouseholderQR<DenseMatrixType> qr_solver(r.rightCols(L));
-    gamma.noalias() = qr_solver.solve(r.col(0));
+    gamma = qr_solver.solve(r.col(0));
 
     // Update solution and residual using the "minimized residual coefficients"
     update.noalias() = r.leftCols(L) * gamma;
     x += update;
-    r.col(0) -= mat * precond.solve(update);
+    r.col(0).noalias() -= mat * precond.solve(update);
 
     // Update iteration info
     ++k;

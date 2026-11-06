@@ -127,6 +127,11 @@ template <typename Scalar_>
 class SkewSymmetricMatrix3;
 template <int SizeAtCompileTime, int MaxSizeAtCompileTime = SizeAtCompileTime, typename IndexType = int>
 class PermutationMatrix;
+template <typename Scalar_, int SizeAtCompileTime, int MaxSizeAtCompileTime = SizeAtCompileTime,
+          typename StorageIndex_ = int>
+class ScaledPermutationMatrix;
+template <typename Derived>
+class ScaledPermutationBase;
 template <int SizeAtCompileTime, int MaxSizeAtCompileTime = SizeAtCompileTime, typename IndexType = int>
 class Transpositions;
 template <typename Derived>
@@ -192,14 +197,6 @@ template <typename XprType, DirectionType Direction>
 class subvector_stl_iterator;
 template <typename XprType, DirectionType Direction>
 class subvector_stl_reverse_iterator;
-template <typename DecompositionType>
-struct kernel_retval_base;
-template <typename DecompositionType>
-struct kernel_retval;
-template <typename DecompositionType>
-struct image_retval_base;
-template <typename DecompositionType>
-struct image_retval;
 }  // end namespace internal
 
 namespace internal {
@@ -211,6 +208,10 @@ class BandMatrix;
 namespace internal {
 template <typename Lhs, typename Rhs>
 struct product_type;
+template <typename Derived, typename Func, typename Identity>
+EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE typename Derived::Scalar redux_with_identity(const DenseBase<Derived>& xpr,
+                                                                                   const Func& func,
+                                                                                   Identity&& identity);
 
 /** \internal
  * \class product_evaluator

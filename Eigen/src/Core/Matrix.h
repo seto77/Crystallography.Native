@@ -247,6 +247,11 @@ class Matrix : public PlainObjectBase<Matrix<Scalar_, Rows_, Cols_, Options_, Ma
    * For dynamic-size matrices, creates an empty matrix of size 0. Does not allocate any array. Such a matrix
    * is called a null matrix. An existing matrix can also be turned into a null matrix by resizing it to 0.
    *
+   * Unless \c EIGEN_INITIALIZE_MATRICES_BY_ZERO or \c EIGEN_INITIALIZE_MATRICES_BY_NAN is defined, this constructor is
+   * defaulted, so value-initialization (<tt>Matrix m{};</tt>, <tt>Matrix()</tt>, or <tt>m()</tt> in a member
+   * initializer list) zero-initializes the whole object first, including the unused part of a fixed-maximum-size
+   * inline buffer. Default-initialization (<tt>Matrix m;</tt>) only default-initializes the coefficients.
+   *
    * \sa resize(Index,Index)
    */
 #if defined(EIGEN_INITIALIZE_COEFFS)
@@ -389,9 +394,12 @@ class Matrix : public PlainObjectBase<Matrix<Scalar_, Rows_, Cols_, Options_, Ma
   EIGEN_DEVICE_FUNC constexpr Matrix(const Matrix&) = default;
 
   /** \brief Copy constructor for generic expressions.
+   * For coefficient-wise dense expressions, implicit conversion requires compatible scalar types.
+   * Use \c .cast<NewScalar>() to convert between scalar types.
    * \sa MatrixBase::operator=(const EigenBase<OtherDerived>&)
    */
-  template <typename OtherDerived>
+  template <typename OtherDerived,
+            std::enable_if_t<internal::is_valid_dense_conversion<Scalar, OtherDerived>::value, int> = 0>
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Matrix(const EigenBase<OtherDerived>& other)
       : Base(other.derived()) {}
 
@@ -451,21 +459,21 @@ class Matrix : public PlainObjectBase<Matrix<Scalar_, Rows_, Cols_, Options_, Ma
 #define EIGEN_MAKE_TYPEDEFS(Type, TypeSuffix, Size, SizeSuffix)    \
   /** \ingroup matrixtypedefs */                                   \
   /** \brief `Size`&times;`Size` matrix of type `Type`. */         \
-  typedef Matrix<Type, Size, Size> Matrix##SizeSuffix##TypeSuffix; \
+  using Matrix##SizeSuffix##TypeSuffix = Matrix<Type, Size, Size>; \
   /** \ingroup matrixtypedefs */                                   \
   /** \brief `Size`&times;`1` vector of type `Type`. */            \
-  typedef Matrix<Type, Size, 1> Vector##SizeSuffix##TypeSuffix;    \
+  using Vector##SizeSuffix##TypeSuffix = Matrix<Type, Size, 1>;    \
   /** \ingroup matrixtypedefs */                                   \
   /** \brief `1`&times;`Size` vector of type `Type`. */            \
-  typedef Matrix<Type, 1, Size> RowVector##SizeSuffix##TypeSuffix;
+  using RowVector##SizeSuffix##TypeSuffix = Matrix<Type, 1, Size>;
 
 #define EIGEN_MAKE_FIXED_TYPEDEFS(Type, TypeSuffix, Size)          \
   /** \ingroup matrixtypedefs */                                   \
   /** \brief `Size`&times;`Dynamic` matrix of type `Type`. */      \
-  typedef Matrix<Type, Size, Dynamic> Matrix##Size##X##TypeSuffix; \
+  using Matrix##Size##X##TypeSuffix = Matrix<Type, Size, Dynamic>; \
   /** \ingroup matrixtypedefs */                                   \
   /** \brief `Dynamic`&times;`Size` matrix of type `Type`. */      \
-  typedef Matrix<Type, Dynamic, Size> Matrix##X##Size##TypeSuffix;
+  using Matrix##X##Size##TypeSuffix = Matrix<Type, Dynamic, Size>;
 
 #define EIGEN_MAKE_TYPEDEFS_ALL_SIZES(Type, TypeSuffix) \
   EIGEN_MAKE_TYPEDEFS(Type, TypeSuffix, 2, 2)           \

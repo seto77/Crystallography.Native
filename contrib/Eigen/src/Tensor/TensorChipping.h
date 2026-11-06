@@ -1,0 +1,710 @@
+// This file is part of Eigen, a lightweight C++ template library
+// for linear algebra.
+//
+// Copyright (C) 2014 Benoit Steiner <benoit.steiner.goog@gmail.com>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_TENSOR_TENSOR_CHIPPING_H
+#define EIGEN_TENSOR_TENSOR_CHIPPING_H
+
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
+namespace Eigen {
+
+namespace internal {
+template <DenseIndex DimId, typename XprType>
+struct traits<TensorChippingOp<DimId, XprType> > : public traits<XprType> {
+  using Scalar = typename XprType::Scalar;
+  using XprTraits = traits<XprType>;
+  using StorageKind = typename XprTraits::StorageKind;
+  using Index = typename XprTraits::Index;
+  static constexpr int NumDimensions = XprTraits::NumDimensions - 1;
+  static constexpr int Layout = XprTraits::Layout;
+  using PointerType = typename XprTraits::PointerType;
+};
+
+template <DenseIndex DimId, typename XprType>
+struct eval<TensorChippingOp<DimId, XprType>, Eigen::Dense> {
+  using type = const TensorChippingOp<DimId, XprType> EIGEN_DEVICE_REF;
+};
+
+template <DenseIndex DimId>
+struct DimensionId {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE DimensionId(DenseIndex dim) {
+    EIGEN_UNUSED_VARIABLE(dim);
+    eigen_assert(dim == DimId);
+  }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE DenseIndex actualDim() const { return DimId; }
+};
+template <>
+struct DimensionId<Dynamic> {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE DimensionId(DenseIndex dim) : actual_dim(dim) { eigen_assert(dim >= 0); }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE DenseIndex actualDim() const { return actual_dim; }
+
+ private:
+  const DenseIndex actual_dim;
+};
+
+template <typename EvalT, typename PacketT, typename IndexType, typename = void>
+struct chipping_has_partial_packet : bool_constant<false> {};
+
+template <typename EvalT, typename PacketT, typename IndexType>
+struct chipping_has_partial_packet<
+    EvalT, PacketT, IndexType,
+    void_t<decltype(std::declval<const EvalT>().template partialPacket<PacketT>(
+        std::declval<IndexType>(), std::declval<typename unpacket_traits<PacketT>::mask_t>()))>>
+    : bool_constant<unpacket_traits<PacketT>::masked_load_available &&
+                    std::is_same<PacketT, decltype(std::declval<const EvalT>().template partialPacket<PacketT>(
+                                              std::declval<IndexType>(),
+                                              std::declval<typename unpacket_traits<PacketT>::mask_t>()))>::value> {};
+
+template <typename EvalT, typename PacketT, typename IndexType,
+          bool HasPartial = chipping_has_partial_packet<EvalT, PacketT, IndexType>::value>
+struct chipping_forward_partial_packet {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const EvalT& impl, IndexType index,
+                                                           typename unpacket_traits<PacketT>::mask_t umask) {
+    return impl.template partialPacket<PacketT>(index, umask);
+  }
+};
+
+template <typename EvalT, typename PacketT, typename IndexType>
+struct chipping_forward_partial_packet<EvalT, PacketT, IndexType, false> {
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const EvalT&, IndexType,
+                                                           typename unpacket_traits<PacketT>::mask_t) {
+    eigen_assert(false && "unreachable");
+    return pset1<PacketT>(typename unpacket_traits<PacketT>::type(0));
+  }
+};
+
+template <typename EvalT, int LoadMode, typename PacketT, typename IndexType, typename = void>
+struct chipping_has_packet_t : bool_constant<false> {};
+
+template <typename EvalT, int LoadMode, typename PacketT, typename IndexType>
+struct chipping_has_packet_t<
+    EvalT, LoadMode, PacketT, IndexType,
+    void_t<decltype(std::declval<const EvalT>().template packet<LoadMode, PacketT>(std::declval<IndexType>()))>>
+    : bool_constant<std::is_same<PacketT, decltype(std::declval<const EvalT>().template packet<LoadMode, PacketT>(
+                                              std::declval<IndexType>()))>::value> {};
+
+template <int LoadMode, typename PacketT, typename ArgEvaluator,
+          bool SamePacket = std::is_same<PacketT, typename ArgEvaluator::PacketReturnType>::value,
+          bool HasPacketT = chipping_has_packet_t<ArgEvaluator, LoadMode, PacketT, typename ArgEvaluator::Index>::value,
+          bool IsRawPointer = std::is_convertible<
+              typename ArgEvaluator::EvaluatorPointerType,
+              const std::remove_const_t<std::remove_reference_t<typename ArgEvaluator::CoeffReturnType>>*>::value>
+struct chipping_packet_load {
+  using Index = typename ArgEvaluator::Index;
+  using Scalar = std::remove_const_t<std::remove_reference_t<typename ArgEvaluator::CoeffReturnType>>;
+  static constexpr int kSize = unpacket_traits<PacketT>::size;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const ArgEvaluator& impl, Index index) {
+    EIGEN_ALIGN_TO_BOUNDARY(unpacket_traits<PacketT>::alignment) Scalar values[kSize];
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < kSize; ++i) {
+      values[i] = impl.coeff(index + i);
+    }
+    return pload<PacketT>(values);
+  }
+};
+
+template <int LoadMode, typename PacketT, typename ArgEvaluator, bool HasPacketT, bool IsRawPointer>
+struct chipping_packet_load<LoadMode, PacketT, ArgEvaluator, true, HasPacketT, IsRawPointer> {
+  using Index = typename ArgEvaluator::Index;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const ArgEvaluator& impl, Index index) {
+    return impl.template packet<LoadMode>(index);
+  }
+};
+
+template <int LoadMode, typename PacketT, typename ArgEvaluator, bool IsRawPointer>
+struct chipping_packet_load<LoadMode, PacketT, ArgEvaluator, false, true, IsRawPointer> {
+  using Index = typename ArgEvaluator::Index;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const ArgEvaluator& impl, Index index) {
+    return impl.template packet<LoadMode, PacketT>(index);
+  }
+};
+
+template <int LoadMode, typename PacketT, typename ArgEvaluator>
+struct chipping_packet_load<LoadMode, PacketT, ArgEvaluator, false, false, true> {
+  using Index = typename ArgEvaluator::Index;
+  using Scalar = std::remove_const_t<std::remove_reference_t<typename ArgEvaluator::CoeffReturnType>>;
+
+  static EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketT run(const ArgEvaluator& impl, Index index) {
+    const Scalar* src_ptr = impl.data();
+    EIGEN_IF_CONSTEXPR (!static_cast<bool>(ArgEvaluator::RawAccess)) {
+      if (src_ptr == nullptr) {
+        return chipping_packet_load<LoadMode, PacketT, ArgEvaluator, false, false, false>::run(impl, index);
+      }
+    }
+    return ploadt_ro<PacketT, Unaligned>(src_ptr + index);
+  }
+};
+
+}  // end namespace internal
+
+/** A chip is a thin slice, corresponding to a column or a row in a 2-d tensor.
+ * \ingroup Tensor_Module
+ */
+template <DenseIndex DimId, typename XprType>
+class TensorChippingOp : public TensorBase<TensorChippingOp<DimId, XprType> > {
+ public:
+  using Base = TensorBase<TensorChippingOp<DimId, XprType>>;
+  using Scalar = typename Eigen::internal::traits<TensorChippingOp>::Scalar;
+  using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
+  using CoeffReturnType = typename XprType::CoeffReturnType;
+  using Nested = typename Eigen::internal::ref_selector<TensorChippingOp>::type;
+  using StorageKind = typename Eigen::internal::traits<TensorChippingOp>::StorageKind;
+  using Index = typename Eigen::internal::traits<TensorChippingOp>::Index;
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorChippingOp(const XprType& expr, const Index offset, const Index dim)
+      : m_xpr(expr), m_offset(offset), m_dim(dim) {
+    eigen_assert(dim < XprType::NumDimensions && dim >= 0 && "Chip_Dim_out_of_range");
+  }
+
+  EIGEN_DEVICE_FUNC const Index offset() const { return m_offset; }
+  EIGEN_DEVICE_FUNC const Index dim() const { return m_dim.actualDim(); }
+
+  EIGEN_DEVICE_FUNC const internal::remove_all_t<typename XprType::Nested>& expression() const { return m_xpr; }
+
+  EIGEN_INHERIT_ASSIGNMENT_OPERATORS(TensorChippingOp)
+
+ protected:
+  typename XprType::Nested m_xpr;
+  const Index m_offset;
+  const internal::DimensionId<DimId> m_dim;
+};
+
+// Eval as rvalue
+template <DenseIndex DimId, typename ArgType, typename Device>
+struct TensorEvaluator<const TensorChippingOp<DimId, ArgType>, Device> {
+  using XprType = TensorChippingOp<DimId, ArgType>;
+  static constexpr int NumInputDims =
+      internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
+  static constexpr int NumDims = NumInputDims - 1;
+  using Index = typename XprType::Index;
+  using Dimensions = DSizes<Index, NumDims>;
+  using Scalar = typename XprType::Scalar;
+  using CoeffReturnType = typename XprType::CoeffReturnType;
+  using PacketReturnType = typename PacketType<CoeffReturnType, Device>::type;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  using Storage = StorageMemory<CoeffReturnType, Device>;
+  using EvaluatorPointerType = typename Storage::Type;
+  static constexpr int Layout = TensorEvaluator<ArgType, Device>::Layout;
+
+  enum {
+    // Alignment can't be guaranteed at compile time since it depends on the
+    // slice offsets.
+    IsAligned = false,
+    PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
+    BlockAccess = TensorEvaluator<ArgType, Device>::BlockAccess,
+    // Chipping of outer-most dimension is a trivial operation, because we can
+    // read and write directly from the underlying tensor using a single offset.
+    IsOuterChipping = (Layout == ColMajor && DimId == NumInputDims - 1) || (Layout == RowMajor && DimId == 0),
+    // Chipping inner-most dimension.
+    IsInnerChipping = (Layout == ColMajor && DimId == 0) || (Layout == RowMajor && DimId == NumInputDims - 1),
+    // Prefer block access if the underlying expression prefers it, otherwise
+    // only if chipping is not trivial.
+    PreferBlockAccess = TensorEvaluator<ArgType, Device>::PreferBlockAccess || !IsOuterChipping,
+    CoordAccess = false,  // to be implemented
+    RawAccess = false
+  };
+
+  using ScalarNoConst = std::remove_const_t<Scalar>;
+
+  //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
+  using TensorBlockDesc = internal::TensorBlockDescriptor<NumDims, Index>;
+  using TensorBlockScratch = internal::TensorBlockScratchAllocator<Device>;
+
+  using ArgTensorBlockDesc = internal::TensorBlockDescriptor<NumInputDims, Index>;
+  using ArgTensorBlock = typename TensorEvaluator<const ArgType, Device>::TensorBlock;
+
+  using TensorBlock = typename internal::TensorMaterializedBlock<ScalarNoConst, NumDims, Layout, Index>;
+  //===--------------------------------------------------------------------===//
+
+  EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device)
+      : m_impl(op.expression(), device), m_dim(op.dim()), m_device(device) {
+    EIGEN_STATIC_ASSERT((NumInputDims >= 1), YOU_MADE_A_PROGRAMMING_MISTAKE);
+
+    const typename TensorEvaluator<ArgType, Device>::Dimensions& input_dims = m_impl.dimensions();
+    eigen_assert(NumInputDims > m_dim.actualDim() && op.offset() < input_dims[m_dim.actualDim()]);
+
+    int j = 0;
+    for (int i = 0; i < NumInputDims; ++i) {
+      if (i != m_dim.actualDim()) {
+        m_dimensions[j] = input_dims[i];
+        ++j;
+      }
+    }
+
+    m_stride = 1;
+    m_inputStride = 1;
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+      for (int i = 0; i < m_dim.actualDim(); ++i) {
+        m_stride *= input_dims[i];
+        m_inputStride *= input_dims[i];
+      }
+    } else {
+      for (int i = NumInputDims - 1; i > m_dim.actualDim(); --i) {
+        m_stride *= input_dims[i];
+        m_inputStride *= input_dims[i];
+      }
+    }
+    m_inputStride *= input_dims[m_dim.actualDim()];
+    m_inputOffset = m_stride * op.offset();
+
+    // Check if chipping is effectively inner or outer: product of dimensions
+    // before or after the chipped dimension is `1`, or the chipped dimension itself has size `1`.
+    Index after_chipped_dim_product = 1;
+    for (int i = static_cast<int>(m_dim.actualDim()) + 1; i < NumInputDims; ++i) {
+      after_chipped_dim_product *= input_dims[i];
+    }
+
+    Index before_chipped_dim_product = 1;
+    for (int i = 0; i < m_dim.actualDim(); ++i) {
+      before_chipped_dim_product *= input_dims[i];
+    }
+
+    const bool is_trivial_chip_dim = input_dims[m_dim.actualDim()] == 1;
+    EIGEN_IF_CONSTEXPR (static_cast<int>(Layout) == static_cast<int>(ColMajor)) {
+      m_isEffectivelyInnerChipping = (before_chipped_dim_product == 1) && !is_trivial_chip_dim;
+      m_isEffectivelyOuterChipping = (after_chipped_dim_product == 1) || is_trivial_chip_dim;
+    } else {
+      m_isEffectivelyInnerChipping = (after_chipped_dim_product == 1) && !is_trivial_chip_dim;
+      m_isEffectivelyOuterChipping = (before_chipped_dim_product == 1) || is_trivial_chip_dim;
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
+
+  EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType) {
+    m_impl.evalSubExprsIfNeeded(nullptr);
+    return true;
+  }
+
+#ifdef EIGEN_USE_THREADS
+  template <typename EvalSubExprsCallback>
+  EIGEN_STRONG_INLINE void evalSubExprsIfNeededAsync(EvaluatorPointerType /*data*/, EvalSubExprsCallback done) {
+    m_impl.evalSubExprsIfNeededAsync(nullptr, [done](bool) { done(true); });
+  }
+#endif  // EIGEN_USE_THREADS
+
+  EIGEN_STRONG_INLINE void cleanup() { m_impl.cleanup(); }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType coeff(Index index) const {
+    return m_impl.coeff(srcCoeff(index));
+  }
+
+  template <int LoadMode, typename PacketReturnTypeT = PacketReturnType>
+  EIGEN_DEVICE_FUNC EIGEN_ALWAYS_INLINE PacketReturnTypeT packet(Index index) const {
+    constexpr int RequestedPacketSize = internal::unpacket_traits<PacketReturnTypeT>::size;
+    EIGEN_STATIC_ASSERT((RequestedPacketSize <= PacketSize), YOU_MADE_A_PROGRAMMING_MISTAKE);
+    eigen_assert(index >= 0 && index + RequestedPacketSize - 1 < dimensions().TotalSize());
+
+    EIGEN_IF_CONSTEXPR (IsInnerChipping) {
+      return packetInnerChipping<LoadMode, PacketReturnTypeT>(index);
+    } else EIGEN_IF_CONSTEXPR (IsOuterChipping) {
+      return packetOuterChipping<LoadMode, PacketReturnTypeT>(index);
+    } else if (m_isEffectivelyInnerChipping) {
+      // index * m_inputStride is linear in the caller's loop index; keep clang-19+ LSR
+      // from hoisting per-lane induction variables across this runtime branch.
+      Index opaqueIndex = index;
+#if EIGEN_COMP_CLANG >= 1900 && !defined(__apple_build_version__) && !defined(EIGEN_GPU_COMPILE_PHASE) && \
+    !defined(EIGEN_SYCL_DEVICE_ONLY)
+      __asm__("" : "+r"(opaqueIndex));
+#endif
+      return packetInnerChipping<LoadMode, PacketReturnTypeT>(opaqueIndex);
+    } else if (m_isEffectivelyOuterChipping) {
+      return packetOuterChipping<LoadMode, PacketReturnTypeT>(index);
+    } else {
+      const Index idx = index / m_stride;
+      const Index rem = index - idx * m_stride;
+      Index inputIndex = idx * m_inputStride + m_inputOffset + rem;
+      if (EIGEN_PREDICT_TRUE(rem + RequestedPacketSize <= m_stride)) {
+        return internal::chipping_packet_load<LoadMode, PacketReturnTypeT, TensorEvaluator<ArgType, Device>>::run(
+            m_impl, inputIndex);
+      } else {
+        EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnTypeT>::alignment)
+        std::remove_const_t<CoeffReturnType> values[RequestedPacketSize];
+        const Index strideDelta = m_inputStride - m_stride;
+        Index lane_in_slice = rem;
+        EIGEN_UNROLL_LOOP
+        for (int i = 0; i < RequestedPacketSize; ++i) {
+          values[i] = m_impl.coeff(inputIndex);
+          ++inputIndex;
+          if (++lane_in_slice == m_stride) {
+            lane_in_slice = 0;
+            inputIndex += strideDelta;
+          }
+        }
+        return internal::pload<PacketReturnTypeT>(values);
+      }
+    }
+  }
+
+  template <
+      typename PacketReturnTypeT,
+      std::enable_if_t<PacketAccess && internal::unpacket_traits<PacketReturnTypeT>::masked_load_available, int> = 0>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnTypeT
+  partialPacket(Index index, typename internal::unpacket_traits<PacketReturnTypeT>::mask_t umask) const {
+    using MaskT = typename internal::unpacket_traits<PacketReturnTypeT>::mask_t;
+    using RawCoeffType = std::remove_const_t<CoeffReturnType>;
+    using ArgEval = TensorEvaluator<ArgType, Device>;
+    constexpr int RequestedPacketSize = internal::unpacket_traits<PacketReturnTypeT>::size;
+    constexpr int kMaskBits = static_cast<int>(CHAR_BIT * sizeof(MaskT));
+    constexpr bool kHasImplPartial = internal::chipping_has_partial_packet<ArgEval, PacketReturnTypeT, Index>::value;
+
+    EIGEN_IF_CONSTEXPR (RequestedPacketSize < kMaskBits) {
+      umask &= static_cast<MaskT>((MaskT(1) << (RequestedPacketSize < kMaskBits ? RequestedPacketSize : 0)) - 1);
+    }
+    if (umask == 0) {
+      return internal::pset1<PacketReturnTypeT>(CoeffReturnType(0));
+    }
+
+    const Index first_lane = static_cast<Index>(internal::ctz(umask));
+    const Index last_lane = static_cast<Index>(kMaskBits - 1 - internal::clz(umask));
+    const Index active_start = index + first_lane;
+    const Index active_count = last_lane - first_lane + 1;
+    eigen_assert(active_start >= 0 && active_start + active_count - 1 < dimensions().TotalSize());
+
+    if (isOuterChipping()) {
+      const Index target_index = index + m_inputOffset;
+      if (kHasImplPartial && EIGEN_PREDICT_TRUE(target_index >= 0)) {
+        return internal::chipping_forward_partial_packet<ArgEval, PacketReturnTypeT, Index>::run(m_impl, target_index,
+                                                                                                 umask);
+      }
+      EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnTypeT>::alignment)
+      RawCoeffType values[RequestedPacketSize];
+      EIGEN_UNROLL_LOOP
+      for (int i = 0; i < RequestedPacketSize; ++i) {
+        values[i] = RawCoeffType(0);
+      }
+      const Index srcOffset = srcCoeffOuterChipping(active_start);
+      for (Index lane = first_lane; lane <= last_lane; ++lane) {
+        if ((umask >> lane) & MaskT(1)) {
+          values[lane] = m_impl.coeff(srcOffset + (lane - first_lane));
+        }
+      }
+      return internal::pload<PacketReturnTypeT>(values);
+    }
+
+    if (isInnerChipping()) {
+      EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnTypeT>::alignment)
+      RawCoeffType values[RequestedPacketSize];
+      EIGEN_UNROLL_LOOP
+      for (int i = 0; i < RequestedPacketSize; ++i) {
+        values[i] = RawCoeffType(0);
+      }
+      Index inputIndex = srcCoeffInnerChipping(active_start);
+      for (Index lane = first_lane; lane <= last_lane; ++lane) {
+        if ((umask >> lane) & MaskT(1)) {
+          values[lane] = m_impl.coeff(inputIndex);
+        }
+        inputIndex += m_inputStride;
+      }
+      return internal::pload<PacketReturnTypeT>(values);
+    }
+
+    const Index idx = active_start / m_stride;
+    const Index rem = active_start - idx * m_stride;
+    const Index sliceBase = idx * m_inputStride + m_inputOffset;
+    if (EIGEN_PREDICT_TRUE(rem + active_count <= m_stride)) {
+      const Index target_index = sliceBase + rem - first_lane;
+      if (kHasImplPartial && EIGEN_PREDICT_TRUE(target_index >= 0)) {
+        return internal::chipping_forward_partial_packet<ArgEval, PacketReturnTypeT, Index>::run(m_impl, target_index,
+                                                                                                 umask);
+      }
+    }
+
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnTypeT>::alignment)
+    RawCoeffType values[RequestedPacketSize];
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < RequestedPacketSize; ++i) {
+      values[i] = RawCoeffType(0);
+    }
+    const Index strideDelta = m_inputStride - m_stride;
+    Index inputIndex = sliceBase + rem;
+    Index lane_in_slice = rem;
+    for (Index lane = first_lane; lane <= last_lane; ++lane) {
+      if ((umask >> lane) & MaskT(1)) {
+        values[lane] = m_impl.coeff(inputIndex);
+      }
+      ++inputIndex;
+      if (++lane_in_slice == m_stride) {
+        lane_in_slice = 0;
+        inputIndex += strideDelta;
+      }
+    }
+    return internal::pload<PacketReturnTypeT>(values);
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorOpCost costPerCoeff(bool vectorized) const {
+    double cost = 0;
+    if (isOuterChipping()) {
+      cost += TensorOpCost::AddCost<Index>();
+    } else if (isInnerChipping()) {
+      cost += TensorOpCost::MulCost<Index>() + TensorOpCost::AddCost<Index>();
+    } else {
+      cost += 3 * TensorOpCost::MulCost<Index>() + TensorOpCost::DivCost<Index>() + 3 * TensorOpCost::AddCost<Index>();
+    }
+
+    return m_impl.costPerCoeff(vectorized) + TensorOpCost(0, 0, cost, vectorized, PacketSize);
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE internal::TensorBlockResourceRequirements getResourceRequirements() const {
+    const size_t target_size = m_device.lastLevelCacheSize();
+    return internal::TensorBlockResourceRequirements::merge(
+        internal::TensorBlockResourceRequirements::skewed<Scalar>(target_size), m_impl.getResourceRequirements());
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
+                                                          bool root_of_expr_ast = false) const {
+    const Index chip_dim = m_dim.actualDim();
+
+    DSizes<Index, NumInputDims> input_block_dims;
+    input_block_dims[chip_dim] = 1;
+    for (int i = 0; i < NumDims; ++i) {
+      input_block_dims[i < chip_dim ? i : i + 1] = desc.dimension(i);
+    }
+
+    ArgTensorBlockDesc arg_desc(srcCoeff(desc.offset()), input_block_dims);
+
+    // Try to reuse destination buffer for materializing argument block.
+    if (desc.HasDestinationBuffer()) {
+      DSizes<Index, NumInputDims> arg_destination_strides;
+      arg_destination_strides[chip_dim] = 0;  // The size-one chipped dimension does not use its stride.
+      for (int i = 0; i < NumDims; ++i) {
+        arg_destination_strides[i < chip_dim ? i : i + 1] = desc.destination().strides()[i];
+      }
+
+      arg_desc.template AddDestinationBuffer<Layout>(desc.destination().template data<ScalarNoConst>(),
+                                                     arg_destination_strides);
+    }
+
+    ArgTensorBlock arg_block = m_impl.block(arg_desc, scratch, root_of_expr_ast);
+    if (!arg_desc.HasDestinationBuffer()) desc.DropDestinationBuffer();
+
+    if (arg_block.data() != nullptr) {
+      // Forward argument block buffer if possible.
+      return TensorBlock(arg_block.kind(), arg_block.data(), desc.dimensions());
+
+    } else {
+      // Assign argument block expression to a buffer.
+
+      // Prepare storage for the materialized chipping result.
+      const typename TensorBlock::Storage block_storage = TensorBlock::prepareStorage(desc, scratch);
+
+      using TensorBlockAssignment =
+          internal::TensorBlockAssignment<ScalarNoConst, NumInputDims, typename ArgTensorBlock::XprType, Index>;
+
+      TensorBlockAssignment::Run(
+          TensorBlockAssignment::target(arg_desc.dimensions(), internal::strides<Layout>(arg_desc.dimensions()),
+                                        block_storage.data()),
+          arg_block.expr());
+
+      return block_storage.AsTensorMaterializedBlock();
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename Storage::Type data() const {
+    typename Storage::Type result = constCast(m_impl.data());
+    if (isOuterChipping() && result) {
+      return result + m_inputOffset;
+    } else {
+      return nullptr;
+    }
+  }
+
+ protected:
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeff(Index index) const {
+    EIGEN_IF_CONSTEXPR (IsInnerChipping) {
+      return srcCoeffInnerChipping(index);
+    } else EIGEN_IF_CONSTEXPR (IsOuterChipping) {
+      return srcCoeffOuterChipping(index);
+    } else if (m_isEffectivelyInnerChipping) {
+      return srcCoeffInnerChipping(index);
+    } else if (m_isEffectivelyOuterChipping) {
+      return srcCoeffOuterChipping(index);
+    } else {
+      const Index idx = index / m_stride;
+      Index inputIndex = idx * m_inputStride + m_inputOffset;
+      index -= idx * m_stride;
+      inputIndex += index;
+      return inputIndex;
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeffInnerChipping(Index index) const {
+    // m_stride is equal to 1, so let's avoid the integer division.
+    eigen_assert(m_stride == 1);
+    return index * m_inputStride + m_inputOffset;
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index srcCoeffOuterChipping(Index index) const {
+    // m_stride > index (or m_stride == m_inputStride when chipped dim has size 1).
+    eigen_assert(m_stride > index || m_stride == m_inputStride);
+    return index + m_inputOffset;
+  }
+
+  template <int LoadMode, typename PacketReturnTypeT = PacketReturnType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnTypeT packetInnerChipping(Index index) const {
+    constexpr int RequestedPacketSize = internal::unpacket_traits<PacketReturnTypeT>::size;
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnTypeT>::alignment)
+    std::remove_const_t<CoeffReturnType> values[RequestedPacketSize];
+    Index inputIndex = srcCoeffInnerChipping(index);
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < RequestedPacketSize; ++i) {
+      values[i] = m_impl.coeff(inputIndex);
+      inputIndex += m_inputStride;
+    }
+    return internal::pload<PacketReturnTypeT>(values);
+  }
+
+  template <int LoadMode, typename PacketReturnTypeT = PacketReturnType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketReturnTypeT packetOuterChipping(Index index) const {
+    return internal::chipping_packet_load<LoadMode, PacketReturnTypeT, TensorEvaluator<ArgType, Device>>::run(
+        m_impl, srcCoeffOuterChipping(index));
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool isInnerChipping() const {
+    return IsInnerChipping || m_isEffectivelyInnerChipping;
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool isOuterChipping() const {
+    return IsOuterChipping || m_isEffectivelyOuterChipping;
+  }
+
+  Dimensions m_dimensions;
+  Index m_stride;
+  Index m_inputOffset;
+  Index m_inputStride;
+  TensorEvaluator<ArgType, Device> m_impl;
+  const internal::DimensionId<DimId> m_dim;
+  const Device EIGEN_DEVICE_REF m_device;
+
+  // If product of all dimensions after or before the chipped dimension is `1`,
+  // or the chipped dimension itself has size `1`, it is effectively the same
+  // as chipping innermost or outermost dimension.
+  bool m_isEffectivelyInnerChipping;
+  bool m_isEffectivelyOuterChipping;
+};
+
+// Eval as lvalue
+template <DenseIndex DimId, typename ArgType, typename Device>
+struct TensorEvaluator<TensorChippingOp<DimId, ArgType>, Device>
+    : public TensorEvaluator<const TensorChippingOp<DimId, ArgType>, Device> {
+  using Base = TensorEvaluator<const TensorChippingOp<DimId, ArgType>, Device>;
+  using XprType = TensorChippingOp<DimId, ArgType>;
+  static constexpr int NumInputDims =
+      internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
+  static constexpr int NumDims = NumInputDims - 1;
+  using Index = typename XprType::Index;
+  using Dimensions = DSizes<Index, NumDims>;
+  using Scalar = typename XprType::Scalar;
+  using CoeffReturnType = typename XprType::CoeffReturnType;
+  using PacketReturnType = typename PacketType<CoeffReturnType, Device>::type;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
+
+  enum {
+    IsAligned = false,
+    PacketAccess = TensorEvaluator<ArgType, Device>::PacketAccess,
+    BlockAccess = TensorEvaluator<ArgType, Device>::RawAccess,
+    Layout = TensorEvaluator<ArgType, Device>::Layout,
+    RawAccess = false
+  };
+
+  //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
+  using TensorBlockDesc = internal::TensorBlockDescriptor<NumDims, Index>;
+  //===--------------------------------------------------------------------===//
+
+  EIGEN_STRONG_INLINE TensorEvaluator(const XprType& op, const Device& device) : Base(op, device) {}
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType& coeffRef(Index index) const {
+    return this->m_impl.coeffRef(this->srcCoeff(index));
+  }
+
+  template <int StoreMode>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacket(Index index, const PacketReturnType& x) const {
+    EIGEN_IF_CONSTEXPR (Base::IsInnerChipping) {
+      writePacketInnerChipping<StoreMode>(index, x);
+    } else EIGEN_IF_CONSTEXPR (Base::IsOuterChipping) {
+      writePacketOuterChipping<StoreMode>(index, x);
+    } else if (this->m_isEffectivelyInnerChipping) {
+      writePacketInnerChipping<StoreMode>(index, x);
+    } else if (this->m_isEffectivelyOuterChipping) {
+      writePacketOuterChipping<StoreMode>(index, x);
+    } else {
+      const Index idx = index / this->m_stride;
+      const Index rem = index - idx * this->m_stride;
+      Index inputIndex = idx * this->m_inputStride + this->m_inputOffset + rem;
+      if (EIGEN_PREDICT_TRUE(rem + PacketSize <= this->m_stride)) {
+        this->m_impl.template writePacket<StoreMode>(inputIndex, x);
+      } else {
+        EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+        std::remove_const_t<CoeffReturnType> values[PacketSize];
+        internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
+        const Index strideDelta = this->m_inputStride - this->m_stride;
+        Index lane_in_slice = rem;
+        EIGEN_UNROLL_LOOP
+        for (int i = 0; i < PacketSize; ++i) {
+          this->m_impl.coeffRef(inputIndex) = values[i];
+          ++inputIndex;
+          if (++lane_in_slice == this->m_stride) {
+            lane_in_slice = 0;
+            inputIndex += strideDelta;
+          }
+        }
+      }
+    }
+  }
+
+  template <typename TensorBlock>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writeBlock(const TensorBlockDesc& desc, const TensorBlock& block) {
+    eigen_assert(this->m_impl.data() != nullptr);
+
+    const Index chip_dim = this->m_dim.actualDim();
+
+    DSizes<Index, NumInputDims> input_block_dims;
+    input_block_dims[chip_dim] = 1;
+    for (int i = 0; i < NumDims; ++i) {
+      input_block_dims[i < chip_dim ? i : i + 1] = desc.dimension(i);
+    }
+
+    using TensorBlockExpr = TensorReshapingOp<const DSizes<Index, NumInputDims>, const typename TensorBlock::XprType>;
+
+    using TensorBlockAssign = internal::TensorBlockAssignment<Scalar, NumInputDims, TensorBlockExpr, Index>;
+
+    TensorBlockAssign::Run(
+        TensorBlockAssign::target(input_block_dims, internal::strides<Layout>(this->m_impl.dimensions()),
+                                  this->m_impl.data(), this->srcCoeff(desc.offset())),
+        block.expr().reshape(input_block_dims));
+  }
+
+ private:
+  template <int StoreMode>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacketInnerChipping(Index index, const PacketReturnType& x) const {
+    EIGEN_ALIGN_TO_BOUNDARY(internal::unpacket_traits<PacketReturnType>::alignment)
+    std::remove_const_t<CoeffReturnType> values[PacketSize];
+    internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
+    Index inputIndex = this->srcCoeffInnerChipping(index);
+    EIGEN_UNROLL_LOOP
+    for (int i = 0; i < PacketSize; ++i) {
+      this->m_impl.coeffRef(inputIndex) = values[i];
+      inputIndex += this->m_inputStride;
+    }
+  }
+
+  template <int StoreMode>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void writePacketOuterChipping(Index index, const PacketReturnType& x) const {
+    this->m_impl.template writePacket<StoreMode>(this->srcCoeffOuterChipping(index), x);
+  }
+};
+
+}  // end namespace Eigen
+
+#endif  // EIGEN_TENSOR_TENSOR_CHIPPING_H

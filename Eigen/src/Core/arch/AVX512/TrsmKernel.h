@@ -53,10 +53,10 @@ namespace internal {
 #define EIGEN_AVX_MAX_K_UNROL (int64_t(4))
 #define EIGEN_AVX_B_LOAD_SETS (int64_t(2))
 #define EIGEN_AVX_MAX_A_BCAST (int64_t(2))
-typedef Packet16f vecFullFloat;
-typedef Packet8d vecFullDouble;
-typedef Packet8f vecHalfFloat;
-typedef Packet4d vecHalfDouble;
+using vecFullFloat = Packet16f;
+using vecFullDouble = Packet8d;
+using vecHalfFloat = Packet8f;
+using vecHalfDouble = Packet4d;
 
 // Compile-time unrolls are implemented here.
 // Note: this depends on macros and typedefs above.
@@ -850,7 +850,6 @@ void triSolveKernelLxK(Scalar* A_arr, Scalar* B_arr, int64_t M, int64_t K, int64
     triSolveKernel<Scalar, vec, 2, isARowMajor, isFWDSolve, isUnitDiag>(A_arr, B_arr, K, LDA, LDB);
   else if (M == 1)
     triSolveKernel<Scalar, vec, 1, isARowMajor, isFWDSolve, isUnitDiag>(A_arr, B_arr, K, LDA, LDB);
-  return;
 }
 
 /**

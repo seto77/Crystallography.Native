@@ -35,21 +35,6 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC Packet8hf ptanh<Packet8hf>(const Packet8hf
 }
 #endif  // EIGEN_ARCH_ARM64 && EIGEN_HAS_ARM64_FP16
 
-EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16(Packet4f, Packet4bf)
-
-template <>
-EIGEN_STRONG_INLINE Packet4bf pfrexp(const Packet4bf& a, Packet4bf& exponent) {
-  Packet4f fexponent;
-  const Packet4bf out = F32ToBf16(pfrexp<Packet4f>(Bf16ToF32(a), fexponent));
-  exponent = F32ToBf16(fexponent);
-  return out;
-}
-
-template <>
-EIGEN_STRONG_INLINE Packet4bf pldexp(const Packet4bf& a, const Packet4bf& exponent) {
-  return F32ToBf16(pldexp<Packet4f>(Bf16ToF32(a), Bf16ToF32(exponent)));
-}
-
 //---------- double ----------
 
 #if EIGEN_ARCH_ARM64

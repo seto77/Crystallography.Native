@@ -248,7 +248,6 @@ void MappedSuperNodalMatrix<Scalar, Index_>::solveInPlace(MatrixBase<Dest>& X) c
 template <typename Scalar, typename Index_>
 template <bool Conjugate, typename Dest>
 void MappedSuperNodalMatrix<Scalar, Index_>::solveTransposedInPlace(MatrixBase<Dest>& X) const {
-  using numext::conj;
   Index n = int(X.rows());
   Index nrhs = Index(X.cols());
   const Scalar* Lval = valuePtr();                                           // Nonzero values
@@ -268,7 +267,7 @@ void MappedSuperNodalMatrix<Scalar, Index_>::solveTransposedInPlace(MatrixBase<D
         ++it;  // Skip the diagonal element
         for (; it; ++it) {
           irow = it.row();
-          X(fsupc, j) -= X(irow, j) * (Conjugate ? conj(it.value()) : it.value());
+          X(fsupc, j) -= X(irow, j) * (Conjugate ? numext::conj(it.value()) : it.value());
         }
       }
     } else {
@@ -291,9 +290,9 @@ void MappedSuperNodalMatrix<Scalar, Index_>::solveTransposedInPlace(MatrixBase<D
                                                                                  OuterStride<>(lda));
       typename Dest::RowsBlockXpr U = X.derived().middleRows(fsupc, nsupc);
       EIGEN_IF_CONSTEXPR (Conjugate)
-        U = U - A.adjoint() * work.topRows(nrow);
+        U.noalias() -= A.adjoint() * work.topRows(nrow);
       else
-        U = U - A.transpose() * work.topRows(nrow);
+        U.noalias() -= A.transpose() * work.topRows(nrow);
 
       // Triangular solve (of transposed diagonal block)
       new (&A) Map<const Matrix<Scalar, Dynamic, Dynamic, ColMajor>, 0, OuterStride<> >(&(Lval[luptr]), nsupc, nsupc,

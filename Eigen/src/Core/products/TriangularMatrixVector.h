@@ -18,6 +18,16 @@ namespace Eigen {
 
 namespace internal {
 
+// GCC 15.1 and 15.2 at -O3 with AVX2 miscompile run() for a real matrix times a complex vector: the SLP vectorizer
+// breaks copies of it specialized for a constant size (#3214). GCC 15.3 is correct. MinGW's GCC 15.2 fails the same
+// way, but EIGEN_COMP_GNUC_STRICT leaves MinGW out.
+#if (EIGEN_COMP_GNUC_STRICT || (EIGEN_COMP_MINGW && !EIGEN_COMP_CLANG)) && EIGEN_COMP_GNUC >= 1500 && \
+    EIGEN_COMP_GNUC < 1530
+#define EIGEN_TRMV_DONT_INLINE EIGEN_DONT_INLINE __attribute__((optimize("no-tree-slp-vectorize")))
+#else
+#define EIGEN_TRMV_DONT_INLINE EIGEN_DONT_INLINE
+#endif
+
 template <typename Index, int Mode, typename LhsScalar, bool ConjLhs, typename RhsScalar, bool ConjRhs,
           int StorageOrder, int Version = Specialized>
 struct triangular_matrix_vector_product;
@@ -28,9 +38,9 @@ struct triangular_matrix_vector_product<Index, Mode, LhsScalar, ConjLhs, RhsScal
   static constexpr bool IsLower = (Mode & Lower) == Lower;
   static constexpr bool HasUnitDiag = (Mode & UnitDiag) == UnitDiag;
   static constexpr bool HasZeroDiag = (Mode & ZeroDiag) == ZeroDiag;
-  static EIGEN_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
-                                    const RhsScalar* rhs_, Index rhsIncr, ResScalar* res_, Index resIncr,
-                                    const RhsScalar& alpha);
+  static EIGEN_TRMV_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
+                                         const RhsScalar* rhs_, Index rhsIncr, ResScalar* res_, Index resIncr,
+                                         const RhsScalar& alpha);
 };
 
 template <typename Index, int Mode, typename LhsScalar, bool ConjLhs, typename RhsScalar, bool ConjRhs, int Version>
@@ -151,9 +161,9 @@ struct triangular_matrix_vector_product<Index, Mode, LhsScalar, ConjLhs, RhsScal
   static constexpr bool IsLower = (Mode & Lower) == Lower;
   static constexpr bool HasUnitDiag = (Mode & UnitDiag) == UnitDiag;
   static constexpr bool HasZeroDiag = (Mode & ZeroDiag) == ZeroDiag;
-  static EIGEN_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
-                                    const RhsScalar* rhs_, Index rhsIncr, ResScalar* res_, Index resIncr,
-                                    const ResScalar& alpha);
+  static EIGEN_TRMV_DONT_INLINE void run(Index _rows, Index _cols, const LhsScalar* lhs_, Index lhsStride,
+                                         const RhsScalar* rhs_, Index rhsIncr, ResScalar* res_, Index resIncr,
+                                         const ResScalar& alpha);
 };
 
 template <typename Index, int Mode, typename LhsScalar, bool ConjLhs, typename RhsScalar, bool ConjRhs, int Version>
@@ -214,6 +224,8 @@ EIGEN_DONT_INLINE void triangular_matrix_vector_product<Index, Mode, LhsScalar, 
   }
 }
 
+#undef EIGEN_TRMV_DONT_INLINE
+
 /***************************************************************************
  * Wrapper to product_triangular_vector
  ***************************************************************************/
@@ -229,7 +241,8 @@ template <int Mode, typename Lhs, typename Rhs>
 struct triangular_product_impl<Mode, true, Lhs, false, Rhs, true> {
   template <typename Dest>
   static void run(Dest& dst, const Lhs& lhs, const Rhs& rhs, const typename Dest::Scalar& alpha) {
-    eigen_assert(dst.rows() == lhs.rows() && dst.cols() == rhs.cols());
+    EIGEN_INTERNAL_ASSERT_SAME_ROWS(dst, lhs);
+    EIGEN_INTERNAL_ASSERT_SAME_COLS(dst, rhs);
 
     internal::trmv_selector<Mode, (int(internal::traits<Lhs>::Flags) & RowMajorBit) ? RowMajor : ColMajor>::run(
         lhs, rhs, dst, alpha);
@@ -240,7 +253,8 @@ template <int Mode, typename Lhs, typename Rhs>
 struct triangular_product_impl<Mode, false, Lhs, true, Rhs, false> {
   template <typename Dest>
   static void run(Dest& dst, const Lhs& lhs, const Rhs& rhs, const typename Dest::Scalar& alpha) {
-    eigen_assert(dst.rows() == lhs.rows() && dst.cols() == rhs.cols());
+    EIGEN_INTERNAL_ASSERT_SAME_ROWS(dst, lhs);
+    EIGEN_INTERNAL_ASSERT_SAME_COLS(dst, rhs);
 
     Transpose<Dest> dstT(dst);
     internal::trmv_selector<(Mode & (UnitDiag | ZeroDiag)) | ((Mode & Lower) ? Upper : Lower),
@@ -255,13 +269,16 @@ struct triangular_product_impl<Mode, false, Lhs, true, Rhs, false> {
 
 namespace internal {
 
+// A factor s nested in a unit triangle reached the kernel through the product's alpha, so the unit diagonal
+// contributed alpha * s * rhs instead of alpha * rhs: subtract alpha * (s - 1) * rhs.
 template <int Mode, typename Lhs, typename Rhs, typename Dest, typename LhsScalar>
 EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void trmv_correct_unit_diagonal(const Lhs& lhs, const Rhs& rhs, Dest& dest,
+                                                                      const typename Dest::Scalar& alpha,
                                                                       const LhsScalar& lhs_alpha) {
   EIGEN_IF_CONSTEXPR ((Mode & UnitDiag) == UnitDiag) {
     if (!numext::is_exactly_one(lhs_alpha)) {
       Index diagSize = (std::min)(lhs.rows(), lhs.cols());
-      dest.head(diagSize) -= (lhs_alpha - LhsScalar(1)) * rhs.head(diagSize);
+      dest.matrix().head(diagSize) -= (alpha * (lhs_alpha - LhsScalar(1))) * rhs.head(diagSize);
     }
   }
 }
@@ -310,7 +327,7 @@ struct trmv_selector<Mode, ColMajor> {
 
     destPolicy.copy_back(dest, actualDestPtr);
 
-    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, lhs_alpha);
+    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, alpha, lhs_alpha);
   }
 };
 
@@ -357,7 +374,7 @@ struct trmv_selector<Mode, RowMajor> {
                                                                                               dest.innerStride(),
                                                                                               actualAlpha);
 
-    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, lhs_alpha);
+    trmv_correct_unit_diagonal<Mode>(lhs, rhs, dest, alpha, lhs_alpha);
   }
 };
 

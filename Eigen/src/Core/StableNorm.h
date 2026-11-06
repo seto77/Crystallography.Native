@@ -54,18 +54,15 @@ inline void stable_norm_kernel(const ExpressionType& block, Accumulator& ssq, Ac
   Accumulator maxCoeff = block.realView().template cast<Accumulator>().cwiseAbs().template maxCoeff<PropagateNaN>();
 
   if (maxCoeff > scale) {
-    ssq = ssq * numext::abs2(scale / maxCoeff);
-    Accumulator tmp = Accumulator(1) / maxCoeff;
-    if (tmp > NumTraits<Accumulator>::highest()) {
-      invScale = NumTraits<Accumulator>::highest();
-      scale = Accumulator(1) / invScale;
-    } else if (maxCoeff > NumTraits<Accumulator>::highest())  // we got an INF
+    if (maxCoeff > NumTraits<Accumulator>::highest())  // we got an INF
     {
       invScale = Accumulator(1);
       scale = maxCoeff;
     } else {
-      scale = maxCoeff;
-      invScale = tmp;
+      const auto factors = safe_scaling<Accumulator>::compute_ceiling_factors_with_normal_reciprocal(maxCoeff);
+      if (scale > Accumulator(0)) ssq = ssq * numext::abs2(scale * factors.invScale);
+      scale = factors.scale;
+      invScale = factors.invScale;
     }
   } else if (maxCoeff != maxCoeff)  // we got a NaN
   {
@@ -151,10 +148,15 @@ struct stable_norm_matrix_dispatch<MatrixType, Accumulator, true> {
   }
 };
 
-template <typename VectorType, std::enable_if_t<VectorType::IsVectorAtCompileTime, int> = 0>
-typename VectorType::RealScalar stable_norm_impl(const VectorType& vec) {
-  using std::sqrt;
+// Avoid instantiating block reductions for statically empty inputs, including in C++14.
+template <typename Derived, std::enable_if_t<Derived::MaxSizeAtCompileTime == 0, int> = 0>
+typename Derived::RealScalar stable_norm_impl(const Derived&) {
+  return typename Derived::RealScalar(0);
+}
 
+template <typename VectorType,
+          std::enable_if_t<VectorType::IsVectorAtCompileTime && VectorType::MaxSizeAtCompileTime != 0, int> = 0>
+typename VectorType::RealScalar stable_norm_impl(const VectorType& vec) {
   Index n = vec.size();
   if (EIGEN_PREDICT_FALSE(n == 1)) return numext::abs(vec.coeff(0));
 
@@ -166,13 +168,12 @@ typename VectorType::RealScalar stable_norm_impl(const VectorType& vec) {
 
   stable_norm_vector_dispatch<VectorType, Accumulator>::run(vec, ssq, scale, invScale);
 
-  return RealScalar(scale * sqrt(ssq));
+  return RealScalar(scale * numext::sqrt(ssq));
 }
 
-template <typename MatrixType, std::enable_if_t<!MatrixType::IsVectorAtCompileTime, int> = 0>
+template <typename MatrixType,
+          std::enable_if_t<!MatrixType::IsVectorAtCompileTime && MatrixType::MaxSizeAtCompileTime != 0, int> = 0>
 typename MatrixType::RealScalar stable_norm_impl(const MatrixType& mat) {
-  using std::sqrt;
-
   using RealScalar = typename MatrixType::RealScalar;
   using Accumulator = typename stable_norm_accumulator<RealScalar>::type;
   Accumulator scale(0);
@@ -180,7 +181,7 @@ typename MatrixType::RealScalar stable_norm_impl(const MatrixType& mat) {
   Accumulator ssq(0);  // sum of squares
 
   stable_norm_matrix_dispatch<MatrixType, Accumulator>::run(mat, ssq, scale, invScale);
-  return RealScalar(scale * sqrt(ssq));
+  return RealScalar(scale * numext::sqrt(ssq));
 }
 
 inline int stable_norm_floor_div2(int value) { return value / 2 - ((value < 0 && value % 2 != 0) ? 1 : 0); }
@@ -229,7 +230,6 @@ inline typename NumTraits<typename traits<Derived>::Scalar>::Real blueNorm_impl(
   using Accumulator = typename stable_norm_accumulator<RealScalar>::type;
   using Scalar = typename traits<Derived>::Scalar;
   using std::pow;
-  using std::sqrt;
 
   const Derived& vec(_vec.derived());
   if (vec.size() == 0) return RealScalar(0);
@@ -271,8 +271,8 @@ inline typename NumTraits<typename traits<Derived>::Scalar>::Real blueNorm_impl(
     sumsq = abig;
   } else if (asml > Accumulator(0)) {
     if (amed > Accumulator(0) || amed > NumTraits<Accumulator>::highest() || amed != amed) {
-      amed = sqrt(amed);
-      asml = sqrt(asml) / ssml;
+      amed = numext::sqrt(amed);
+      asml = numext::sqrt(asml) / ssml;
       // Spell this as in xNRM2 rather than with min/max: when amed is NaN,
       // it must become ymax so that the final result remains NaN.
       const bool smallIsLarger = asml > amed;
@@ -286,14 +286,15 @@ inline typename NumTraits<typename traits<Derived>::Scalar>::Real blueNorm_impl(
   } else {
     sumsq = amed;
   }
-  return RealScalar(scale * sqrt(sumsq));
+  return RealScalar(scale * numext::sqrt(sumsq));
 }
 
 }  // end namespace internal
 
 /** \returns the \em l2 norm of \c *this avoiding underflow and overflow.
- * This version use a blockwise two passes algorithm:
- *  1 - find the absolute largest coefficient \c s
+ * This version uses a blockwise two-pass algorithm:
+ *  1 - find the absolute largest coefficient and choose a scale \c s (a nearby normal power of two for supported
+ *      binary floating-point accumulators)
  *  2 - compute \f$ s \Vert \frac{*this}{s} \Vert \f$ in a standard way
  *
  * For architecture/scalar types supporting vectorization, this version
@@ -331,10 +332,9 @@ inline typename NumTraits<typename internal::traits<Derived>::Scalar>::Real Matr
 template <typename Derived>
 inline typename NumTraits<typename internal::traits<Derived>::Scalar>::Real MatrixBase<Derived>::hypotNorm() const {
   using Accumulator = typename internal::stable_norm_accumulator<RealScalar>::type;
-  if (size() == 0) return RealScalar(0);
   // Component reduction avoids rounded complex magnitudes and permits promoted accumulation.
-  return RealScalar(
-      derived().realView().template cast<Accumulator>().cwiseAbs().redux(internal::scalar_hypot_op<Accumulator>()));
+  return RealScalar(internal::redux_with_identity(derived().realView().template cast<Accumulator>().cwiseAbs(),
+                                                  internal::scalar_hypot_op<Accumulator>(), 0));
 }
 
 }  // end namespace Eigen

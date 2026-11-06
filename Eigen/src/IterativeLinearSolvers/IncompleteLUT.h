@@ -31,7 +31,6 @@ namespace internal {
 template <typename VectorV, typename VectorI>
 Index QuickSplit(VectorV& row, VectorI& ind, Index ncut) {
   using RealScalar = typename VectorV::RealScalar;
-  using std::abs;
   using std::swap;
   Index mid;
   Index n = row.size(); /* length of the vector */
@@ -44,9 +43,9 @@ Index QuickSplit(VectorV& row, VectorI& ind, Index ncut) {
 
   do {
     mid = first;
-    RealScalar abskey = abs(row(mid));
+    RealScalar abskey = numext::abs(row(mid));
     for (Index j = first + 1; j <= last; j++) {
-      if (abs(row(j)) > abskey) {
+      if (numext::abs(row(j)) > abskey) {
         ++mid;
         swap(row(mid), row(j));
         swap(ind(mid), ind(j));
@@ -393,7 +392,7 @@ Index IncompleteLUT<Scalar, StorageIndex>::computeRowMatching(const MatrixType_&
 template <typename Scalar, typename StorageIndex>
 template <typename MatrixType_>
 void IncompleteLUT<Scalar, StorageIndex>::analyzePattern(const MatrixType_& amat) {
-  eigen_assert((amat.rows() == amat.cols()) && "The factorization should be done on a square matrix");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(amat, "The factorization should be done on a square matrix");
   // 1. Compute a static row permutation that makes the diagonal structurally
   //    nonzero. This is a workaround for the lack of partial pivoting in ILUT.
   //    For matrices that already have a nonzero diagonal, this returns the
@@ -429,11 +428,9 @@ template <typename Scalar, typename StorageIndex>
 template <typename MatrixType_>
 void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
   using internal::convert_index;
-  using std::abs;
-  using std::sqrt;
   using std::swap;
 
-  eigen_assert((amat.rows() == amat.cols()) && "The factorization should be done on a square matrix");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(amat, "The factorization should be done on a square matrix");
   Index n = amat.cols();  // Size of the matrix
   m_lu.resize(n, n);
   // Declare Working vectors and variables
@@ -455,7 +452,7 @@ void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
   u.fill(0);
 
   // number of largest elements to keep in each row:
-  Index fill_in = (amat.nonZeros() * m_fillfactor) / n + 1;
+  Index fill_in = (amat.nonZeros() * m_fillfactor) / numext::maxi(n, Index(1)) + 1;
   if (fill_in > n) fill_in = n;
 
   // number of largest nonzero elements to keep in the L and the U part of the current row:
@@ -502,7 +499,7 @@ void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
       return;
     }
     // Take the 2-norm of the current row as a relative tolerance
-    rownorm = sqrt(rownorm);
+    rownorm = numext::sqrt(rownorm);
 
     // 3 - eliminate the previous nonzero rows
     Index jj = 0;
@@ -531,7 +528,7 @@ void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
       Scalar fact = u(jj) / ki_it.value();
 
       // drop too small elements
-      if (abs(fact) <= m_droptol) {
+      if (numext::abs(fact) <= m_droptol) {
         jj++;
         continue;
       }
@@ -589,7 +586,7 @@ void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
     // store the diagonal element
     // apply a shifting rule to avoid zero pivots (we are doing an incomplete factorization)
     if (u(ii) == Scalar(0)) {
-      u(ii) = sqrt(m_droptol) * rownorm;
+      u(ii) = numext::sqrt(m_droptol) * rownorm;
       ++zero_pivots;
     }
     m_lu.insertBackByOuterInnerUnordered(ii, ii) = u(ii);
@@ -598,7 +595,7 @@ void IncompleteLUT<Scalar, StorageIndex>::factorize(const MatrixType_& amat) {
     // apply the dropping rule first
     len = 0;
     for (Index k = 1; k < sizeu; k++) {
-      if (abs(u(ii + k)) > m_droptol * rownorm) {
+      if (numext::abs(u(ii + k)) > m_droptol * rownorm) {
         ++len;
         u(ii + len) = u(ii + k);
         ju(ii + len) = ju(ii + k);

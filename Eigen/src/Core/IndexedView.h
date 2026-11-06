@@ -180,6 +180,17 @@ class IndexedViewImpl : public internal::generic_xpr_base<IndexedView<XprType, R
     return nestedExpression().coeffRef(m_rowIndices[rowId], m_colIndices[colId]);
   }
 
+  // The two-index overloads above hide the base's linear coeffRef(), so vector views need their own.
+  constexpr Scalar& coeffRef(Index index) {
+    EIGEN_STATIC_ASSERT(Base::IsVectorAtCompileTime, YOU_TRIED_CALLING_A_VECTOR_METHOD_ON_A_MATRIX)
+    return coeffRef(Base::RowsAtCompileTime == 1 ? 0 : index, Base::RowsAtCompileTime == 1 ? index : 0);
+  }
+
+  constexpr const Scalar& coeffRef(Index index) const {
+    EIGEN_STATIC_ASSERT(Base::IsVectorAtCompileTime, YOU_TRIED_CALLING_A_VECTOR_METHOD_ON_A_MATRIX)
+    return coeffRef(Base::RowsAtCompileTime == 1 ? 0 : index, Base::RowsAtCompileTime == 1 ? index : 0);
+  }
+
  protected:
   MatrixTypeNested m_xpr;
   RowIndices m_rowIndices;
@@ -216,7 +227,11 @@ class IndexedViewImpl<XprType, RowIndices, ColIndices, StorageKind, true>
 
   Index outerIncrement() const { return traits<Derived>::IsRowMajor ? rowIncrement() : colIncrement(); }
 
-  std::decay_t<typename XprType::Scalar>* data() {
+  using ScalarWithConstIfNotLvalue =
+      std::conditional_t<is_lvalue<XprType>::value, std::decay_t<typename XprType::Scalar>,
+                         const std::decay_t<typename XprType::Scalar>>;
+
+  ScalarWithConstIfNotLvalue* data() {
     Index row_offset = this->rowIndices()[0] * this->nestedExpression().rowStride();
     Index col_offset = this->colIndices()[0] * this->nestedExpression().colStride();
     return this->nestedExpression().data() + row_offset + col_offset;
@@ -232,14 +247,17 @@ class IndexedViewImpl<XprType, RowIndices, ColIndices, StorageKind, true>
     EIGEN_IF_CONSTEXPR (traits<Derived>::InnerStrideAtCompileTime != Dynamic) {
       return traits<Derived>::InnerStrideAtCompileTime;
     }
-    return innerIncrement() * this->nestedExpression().innerStride();
+    // A vector-shaped view need not share the nested storage order, so step along the view's own inner dimension.
+    return traits<Derived>::IsRowMajor ? colIncrement() * this->nestedExpression().colStride()
+                                       : rowIncrement() * this->nestedExpression().rowStride();
   }
 
   EIGEN_DEVICE_FUNC constexpr Index outerStride() const noexcept {
     EIGEN_IF_CONSTEXPR (traits<Derived>::OuterStrideAtCompileTime != Dynamic) {
       return traits<Derived>::OuterStrideAtCompileTime;
     }
-    return outerIncrement() * this->nestedExpression().outerStride();
+    return traits<Derived>::IsRowMajor ? rowIncrement() * this->nestedExpression().rowStride()
+                                       : colIncrement() * this->nestedExpression().colStride();
   }
 };
 

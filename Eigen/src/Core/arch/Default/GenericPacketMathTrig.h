@@ -85,12 +85,7 @@ inline float trig_reduce_huge(float xf, Eigen::numext::int32_t* quadrant) {
 }
 
 template <TrigFunction Func, typename Packet>
-EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
-#if EIGEN_COMP_GNUC_STRICT
-    __attribute__((optimize("-fno-unsafe-math-optimizations")))
-#endif
-    Packet
-    psincos_float(const Packet& _x) {
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet psincos_float(const Packet& _x) {
   using PacketI = typename unpacket_traits<Packet>::integer_packet;
 
   const Packet cst_2oPI = pset1<Packet>(0.636619746685028076171875f);  // 2/PI
@@ -105,7 +100,7 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
 
   // Rounding trick to find nearest integer:
   Packet y_round = padd(y, cst_rounding_magic);
-  EIGEN_OPTIMIZATION_BARRIER(y_round)
+  pbarrier(y_round);
   PacketI y_int = preinterpret<PacketI>(y_round);  // last 23 digits represent integer (if abs(x)<2^24)
   y = psub(y_round, cst_rounding_magic);           // nearest integer to x * (2/pi)
 
@@ -127,10 +122,11 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
   // and 2 ULP up to:
   constexpr float huge_th = (Func == TrigFunction::Sin) ? 25966.f : 18838.f;
   x = pmadd(y, pset1<Packet>(-1.5703125), x);  // = 0xbfc90000
-  EIGEN_OPTIMIZATION_BARRIER(x)
+  pbarrier(x);
   x = pmadd(y, pset1<Packet>(-0.000483989715576171875), x);  // = 0xb9fdc000
-  EIGEN_OPTIMIZATION_BARRIER(x)
-  x = pmadd(y, pset1<Packet>(1.62865035235881805419921875e-07), x);                      // = 0x342ee000
+  pbarrier(x);
+  x = pmadd(y, pset1<Packet>(1.62865035235881805419921875e-07), x);  // = 0x342ee000
+  pbarrier(x);
   x = pmadd(y, pset1<Packet>(5.5644315544167710640977020375430583953857421875e-11), x);  // = 0x2e74b9ee
 
 // For the record, the following set of coefficients maintain 2ULP up
@@ -267,17 +263,24 @@ Packet trig_reduce_small_double(const Packet& x, const Packet& q) {
 
   // Compute q * pio2_1 exactly as a double-word using Dekker's algorithm.
   Packet qp_hi, qp_lo;
-  twoprod(cst_pio2_1<Packet>(), q, qp_hi, qp_lo);
+  twoprod<Packet, true>(cst_pio2_1<Packet>(), q, qp_hi, qp_lo);
 
   // Error-free addition of x and qp_hi using Knuth's 2sum.
   // Returns t_hi + t_lo = x + qp_hi exactly, with t_hi = fl(x + qp_hi).
-  Packet t_hi = padd(x, qp_hi);
-  Packet v = psub(t_hi, x);
-  Packet t_lo = padd(psub(x, psub(t_hi, v)), psub(qp_hi, v));
+  Packet t_hi, t_lo;
+  twosum(x, qp_hi, t_hi, t_lo);
 
-  // Accumulate the low part of the product and the remaining pi/2 terms.
-  t_lo = padd(t_lo, qp_lo);
-  t_lo = pmadd(cst_pio2_2<Packet>(), q, t_lo);
+  // Near a multiple of pi/2, t_hi + qp_lo cancels against q * pio2_2 too, so that product is formed exactly as well
+  // and the two large terms are added by 2sum: only terms of order u * |q * pio2_2| are rounded.
+  Packet qp2_hi, qp2_lo;
+  twoprod<Packet, true>(cst_pio2_2<Packet>(), q, qp2_hi, qp2_lo);
+  Packet a_hi, a_lo, b_lo;
+  twosum(t_hi, qp_lo, a_hi, a_lo);
+  twosum(a_hi, qp2_hi, t_hi, b_lo);
+  t_lo = padd(t_lo, padd(a_lo, b_lo));
+
+  // Accumulate the low part of the product and the remaining pi/2 term.
+  t_lo = padd(t_lo, qp2_lo);
   t_lo = pmadd(cst_pio2_3<Packet>(), q, t_lo);
 
   return padd(t_hi, t_lo);
@@ -285,12 +288,7 @@ Packet trig_reduce_small_double(const Packet& x, const Packet& q) {
 }
 
 template <TrigFunction Func, typename Packet>
-EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
-#if EIGEN_COMP_GNUC_STRICT
-    __attribute__((optimize("-fno-unsafe-math-optimizations")))
-#endif
-    Packet
-    psincos_double(const Packet& x) {
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet psincos_double(const Packet& x) {
   using PacketI = typename unpacket_traits<Packet>::integer_packet;
   using ScalarI = typename unpacket_traits<PacketI>::type;
 
@@ -318,7 +316,7 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
   if (EIGEN_PREDICT_FALSE(predux_any(pcmp_le(pset1<Packet>(small_th), x_abs)))) {
     // Medium path: use double-word product x * (2/pi) for precise quadrant computation.
     Packet prod_hi, prod_lo;
-    twoprod(x_abs, cst_2oPI_hi, prod_hi, prod_lo);
+    twoprod<Packet, true>(x_abs, cst_2oPI_hi, prod_hi, prod_lo);
     // Correction for 2/pi truncation: add x * lo(2/pi)
     prod_lo = pmadd(x_abs, cst_2oPI_lo, prod_lo);
 
@@ -335,9 +333,26 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS
   } else {
     // Small path: simple reduction with triple-double pi/2 split.
     Packet qval_noround = pmul(x_abs, cst_2oPI_hi);
+#ifdef EIGEN_HAS_SINGLE_INSTRUCTION_MADD
     q_int = pcast<Packet, PacketI>(padd(qval_noround, pset1<Packet>(0.5)));
     Packet q = pcast<PacketI, Packet>(q_int);
     s = trig_reduce_small_double(x_abs, q);
+#else
+    // Only q_int & 3 is consumed below. In round-to-nearest mode, the bias leaves q in its low bits.
+    const Packet bias = pset1<Packet>(6755399441055744.0);  // 1.5 * 2^52.
+    Packet biased_q = padd(qval_noround, bias);
+    pbarrier(biased_q);
+    q_int = preinterpret<PacketI>(biased_q);
+    const Packet q = psub(biased_q, bias);
+    // |x| < 15 implies q <= 10. The first two 49-bit parts give exact q*c products;
+    // the third leaves < 2^-155 error in pi/2. Generated with MPFR at 256 bits:
+    // c1 = trunc49(pi/2), c2 = trunc49(pi/2-c1), c3 = RN53(pi/2-c1-c2).
+    s = pmadd(q, pset1<Packet>(-1.5707963267948948), x_abs);
+    pbarrier(s);
+    s = pmadd(q, pset1<Packet>(-1.837589179357618e-15), s);
+    pbarrier(s);
+    s = pmadd(q, pset1<Packet>(-8.4784276603688996e-32), s);
+#endif
   }
 
   Packet ss = pmul(s, s);
@@ -602,7 +617,7 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet generic_atan(const Pa
 // Hyperbolic Functions
 //----------------------------------------------------------------------
 
-#ifdef EIGEN_FAST_MATH
+#if EIGEN_FAST_MATH
 
 /** \internal \returns the hyperbolic tan of \a a (coeff-wise)
     Doesn't do anything fancy, just a 9/8-degree rational interpolant which
@@ -620,12 +635,13 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS T ptanh_float(const T& a_x) 
   // floating point argument such that the approximation is exactly 1.
   // This saves clamping the value at the end.
 #ifdef EIGEN_VECTORIZE_FMA
-  const T plus_clamp = pset1<T>(8.01773357391357422f);
-  const T minus_clamp = pset1<T>(-8.01773357391357422f);
+  constexpr float kClamp = 8.01773357391357422f;
 #else
-  const T plus_clamp = pset1<T>(7.90738964080810547f);
-  const T minus_clamp = pset1<T>(-7.90738964080810547f);
+  constexpr bool kUsesFma = is_scalar<T>::value && bool(EIGEN_SCALAR_MADD_USE_FMA) && has_fma<T>::value;
+  constexpr float kClamp = kUsesFma ? 8.01773357391357422f : 7.90738964080810547f;
 #endif
+  const T plus_clamp = pset1<T>(kClamp);
+  const T minus_clamp = pset1<T>(-kClamp);
   const T x = pmax(pmin(a_x, plus_clamp), minus_clamp);
 
   // The following rational approximation was generated by rminimax
@@ -673,32 +689,31 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS T ptanh_float(const T& x) {
   //     --type="[3,4]" --numF="[SG]" --denF="[SG]" --log --dispCoeff="dec" --output=tanhf.solly
   constexpr float alpha[] = {-1.46725140511989593505859375e-02f, -3.333333432674407958984375e-01f};
   constexpr float beta[] = {1.570280082523822784423828125e-02, 4.4401752948760986328125e-01, 1.0f};
-  const T x2 = pmul(x, x);
-  const T x3 = pmul(x2, x);
-  const T p = ppolevl<T, 1>::run(x2, alpha);
-  const T q = ppolevl<T, 2>::run(x2, beta);
-  const T small_tanh = pmadd(x3, pdiv(p, q), x);
-
   const T sign_mask = psignmask<T>();
+  const T x_sign = pand(sign_mask, x);
   const T abs_x = pandnot(x, sign_mask);
   constexpr float kSmallThreshold = 1.25f;
   const T large_mask = pcmp_lt(pset1<T>(kSmallThreshold), abs_x);
+  // The large elements enter the polynomial as 0, so that x^2 cannot overflow nor P/Q become inf/inf.
+  const T x_small = pandnot(x, large_mask);
+  const T x2 = pmul(x_small, x_small);
+  const T x3 = pmul(x2, x_small);
+  const T p = ppolevl<T, 1>::run(x2, alpha);
+  const T q = ppolevl<T, 2>::run(x2, beta);
+  // x^3 P/Q has the sign opposite to x, so the sum rounds tanh(-0) to +0; the sign of x restores it.
+  const T small_tanh = por(x_sign, pmadd(x3, pdiv(p, q), x_small));
   // Fast exit if all elements are small.
   if (!predux_any(large_mask)) {
     return small_tanh;
   }
 
-  //  Compute as 1 - (2 / (1 + exp(2*x)))
+  // Compute as 1 - (2 / (1 + exp(2*x))) for |x| clamped to 16, where it rounds to 1; the clamp keeps exp(2*x) from
+  // overflowing. The small elements, NaN included, enter exp as 0, which cannot raise FE_INVALID.
   const T one = pset1<T>(1.0f);
   const T two = pset1<T>(2.0f);
-  const T s = pexp_float<T, true>(pmul(two, abs_x));
-  const T abs_tanh = psub(one, pdiv(two, padd(s, one)));
-
-  // Handle infinite inputs and set sign bit.
   constexpr float kHugeThreshold = 16.0f;
-  const T huge_mask = pcmp_lt(pset1<T>(kHugeThreshold), abs_x);
-  const T x_sign = pand(sign_mask, x);
-  const T large_tanh = por(x_sign, pselect(huge_mask, one, abs_tanh));
+  const T s = pexp_float<T, true>(pmul(two, pmin(pselect(large_mask, abs_x, pzero(x)), pset1<T>(kHugeThreshold))));
+  const T large_tanh = por(x_sign, psub(one, pdiv(two, padd(s, one))));
   return pselect(large_mask, large_tanh, small_tanh);
 }
 
@@ -707,7 +722,7 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS T ptanh_float(const T& x) {
 /** \internal \returns the hyperbolic tan of \a a (coeff-wise)
     This uses a 19/18-degree rational interpolant which
     is accurate up to a couple of ulps in the (approximate) range [-18.7, 18.7],
-    outside of which tanh(x) = +/-1 in single precision. The input is clamped
+    outside of which tanh(x) = +/-1 in double precision. The input is clamped
     to the range [-c, c]. The value c is chosen as the smallest value where
     the approximation evaluates to exactly 1.
 
@@ -720,12 +735,13 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS T ptanh_double(const T& a_x)
   // floating point argument such that the approximation is exactly 1.
   // This saves clamping the value at the end.
 #ifdef EIGEN_VECTORIZE_FMA
-  const T plus_clamp = pset1<T>(17.6610191624600077);
-  const T minus_clamp = pset1<T>(-17.6610191624600077);
+  constexpr double kClamp = 17.6610191624600077;
 #else
-  const T plus_clamp = pset1<T>(17.714196154005176);
-  const T minus_clamp = pset1<T>(-17.714196154005176);
+  constexpr bool kUsesFma = is_scalar<T>::value && bool(EIGEN_SCALAR_MADD_USE_FMA) && has_fma<T>::value;
+  constexpr double kClamp = kUsesFma ? 17.6610191624600077 : 17.714196154005176;
 #endif
+  const T plus_clamp = pset1<T>(kClamp);
+  const T minus_clamp = pset1<T>(-kClamp);
   const T x = pmax(pmin(a_x, plus_clamp), minus_clamp);
   // The following rational approximation was generated by rminimax
   // (https://gitlab.inria.fr/sfilip/rminimax) using the following

@@ -57,6 +57,14 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet4d ptan<Packet4d>(cons
   return _mm256_insertf128_pd(_mm256_castpd128_pd256(ptan(_mm256_castpd256_pd128(x))),
                               ptan(_mm256_extractf128_pd(x, 1)), 1);
 }
+
+// AVX-only Packet4d has no integer packet. Classify the bits using the SSE halves
+// so subnormals survive DAZ and NaNs survive fast-math.
+template <>
+EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet4d psign<Packet4d>(const Packet4d& x) {
+  return _mm256_insertf128_pd(_mm256_castpd128_pd256(psign(_mm256_castpd256_pd128(x))),
+                              psign(_mm256_extractf128_pd(x, 1)), 1);
+}
 #endif
 EIGEN_GENERIC_PACKET_FUNCTION(atan, Packet4d)
 EIGEN_GENERIC_PACKET_FUNCTION(exp2, Packet4d)
@@ -80,18 +88,23 @@ EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet4d psqrt<Packet4d>(con
 #if EIGEN_FAST_MATH
 template <>
 EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS Packet8f prsqrt<Packet8f>(const Packet8f& a) {
-  // _mm256_rsqrt_ps returns -inf for negative denormals.
-  // _mm512_rsqrt**_ps returns -NaN for negative denormals.  We may want
-  // consistency here.
-  // const Packet8f rsqrt = pselect(pcmp_lt(a, pzero(a)),
-  //                                pset1<Packet8f>(-NumTraits<float>::quiet_NaN()),
-  //                                _mm256_rsqrt_ps(a));
-  return generic_rsqrt_newton_step<Packet8f, /*Steps=*/1>::run(a, _mm256_rsqrt_ps(a));
+  // vrsqrtps reads a subnormal a as zero, giving e = +-inf. a * e, the Newton step's first product, is therefore +inf
+  // for subnormal a, and finite or NaN for every other a; those lanes take 1 / sqrt(a) instead. Under DAZ the multiply
+  // reads a subnormal as zero too, and the estimate's +-inf is the DAZ result.
+  const Packet8f e = _mm256_rsqrt_ps(a);
+  const Packet8f r = generic_rsqrt_newton_step<Packet8f, /*Steps=*/1>::run(a, e);
+  const Packet8f redo = pcmp_eq(pmul(a, e), pset1<Packet8f>(NumTraits<float>::infinity()));
+  return predux_any(redo) ? pselect(redo, pdiv(pset1<Packet8f>(1.0f), psqrt(a)), r) : r;
 }
 
 template <>
 EIGEN_STRONG_INLINE Packet8f preciprocal<Packet8f>(const Packet8f& a) {
-  return generic_reciprocal_newton_step<Packet8f, /*Steps=*/1>::run(a, _mm256_rcp_ps(a));
+  // generic_reciprocal_newton_step, with its NaN-or-zero test as a single compare: r == 0 or unordered.
+  const Packet8f one = pset1<Packet8f>(1.0f);
+  const Packet8f x = _mm256_rcp_ps(a);
+  const Packet8f refined = pmadd(x, pnmadd(a, x, one), x);
+  const Packet8f redo = _mm256_cmp_ps(refined, _mm256_setzero_ps(), _CMP_EQ_UQ);
+  return predux_any(redo) ? pselect(redo, pdiv(one, a), refined) : refined;
 }
 
 #endif
@@ -111,9 +124,11 @@ EIGEN_STRONG_INLINE Packet8h pldexp(const Packet8h& a, const Packet8h& exponent)
 
 template <>
 EIGEN_STRONG_INLINE Packet8bf pfrexp(const Packet8bf& a, Packet8bf& exponent) {
+  // Both results are exact: the mantissa keeps the input's significand, and the exponent is a
+  // small integer.
   Packet8f fexponent;
-  const Packet8bf out = F32ToBf16(pfrexp<Packet8f>(Bf16ToF32(a), fexponent));
-  exponent = F32ToBf16(fexponent);
+  const Packet8bf out = F32ToBf16Truncate(pfrexp<Packet8f>(Bf16ToF32(a), fexponent));
+  exponent = F32ToBf16Truncate(fexponent);
   return out;
 }
 
@@ -123,6 +138,7 @@ EIGEN_STRONG_INLINE Packet8bf pldexp(const Packet8bf& a, const Packet8bf& expone
 }
 
 EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16(Packet8f, Packet8bf)
+EIGEN_INSTANTIATE_GENERIC_SQRT_FUNCS_BF16(Packet8f, Packet8bf)
 
 #ifndef EIGEN_VECTORIZE_AVX512FP16
 EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_F16(Packet8f, Packet8h)

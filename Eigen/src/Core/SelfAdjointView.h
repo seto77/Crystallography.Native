@@ -33,8 +33,45 @@ namespace Eigen {
  */
 
 namespace internal {
+
+// Requires 0 <= i < j < matrix.rows(). The row prefixes may contain already-computed factors.
+template <typename MatrixType>
+EIGEN_DEVICE_FUNC void selfadjoint_swap_lower(MatrixType& matrix, Index i, Index j) {
+  using Scalar = typename MatrixType::Scalar;
+  const Index size = matrix.rows();
+  eigen_internal_assert(matrix.cols() == size && i >= 0 && i < j && j < size);
+  matrix.template block<1, Dynamic>(i, 0, 1, i).swap(matrix.template block<1, Dynamic>(j, 0, 1, i));
+  for (Index k = i + 1; k < j; ++k) {
+    const Scalar value = matrix.coeff(k, i);
+    matrix.coeffRef(k, i) = numext::conj(matrix.coeff(j, k));
+    matrix.coeffRef(j, k) = numext::conj(value);
+  }
+  matrix.template block<Dynamic, 1>(j + 1, i, size - j - 1, 1)
+      .swap(matrix.template block<Dynamic, 1>(j + 1, j, size - j - 1, 1));
+  EIGEN_IF_CONSTEXPR (NumTraits<Scalar>::IsComplex) {
+    matrix.coeffRef(j, i) = numext::conj(matrix.coeff(j, i));
+  }
+  numext::swap(matrix.coeffRef(i, i), matrix.coeffRef(j, j));
+}
+
+// Consumes an owning copy of the permutation, disjoint from matrix.
+template <typename MatrixType, typename PermutationType>
+EIGEN_DEVICE_FUNC void selfadjoint_apply_permutation_lower(MatrixType& matrix, PermutationType& remaining) {
+  const Index size = matrix.rows();
+  for (Index i = 0; i < size; ++i) {
+    while (Index(remaining.indices().coeff(i)) != i) {
+      const Index j = convert_index<Index>(remaining.indices().coeff(i));
+      // Earlier indices are fixed, so j > i. Each swap removes one edge from the permutation cycle.
+      // If P(j) == j as well, index j repeats and this loop would not terminate.
+      eigen_assert(i < j && j < size && Index(remaining.indices().coeff(j)) != j && "indices are not a permutation");
+      selfadjoint_swap_lower(matrix, i, j);
+      numext::swap(remaining.indices().coeffRef(i), remaining.indices().coeffRef(j));
+    }
+  }
+}
+
 template <typename MatrixType, unsigned int UpLo>
-struct traits<SelfAdjointView<MatrixType, UpLo> > : traits<MatrixType> {
+struct traits<SelfAdjointView<MatrixType, UpLo>> : traits<MatrixType> {
   using MatrixTypeNested = typename ref_selector<MatrixType>::non_const_type;
   using MatrixTypeNestedCleaned = remove_all_t<MatrixTypeNested>;
   using ExpressionType = MatrixType;
@@ -129,11 +166,76 @@ class SelfAdjointView : public TriangularBase<SelfAdjointView<MatrixType_, UpLo>
     return *this;
   }
 
+  /** Replaces this view's matrix \f$ S \f$ by \f$ P S P^T \f$ in place, where \a permutation represents \f$ P \f$.
+   * Only the referenced triangle is read or written; the opposite triangle is unchanged. Complex coefficients
+   * crossing the diagonal are conjugated. The matrix must be square and the permutation must have matching size.
+   * The operation takes \f$ O(n^2) \f$ time and \f$ O(n) \f$ auxiliary storage for a copy of the permutation.
+   *
+   * \returns a reference to \c *this, retaining its self-adjoint structure.
+   *
+   * \code
+   * A.selfadjointView<Lower>().applyPermutation(P);
+   * \endcode
+   */
+  template <typename PermutationDerived>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyPermutation(const PermutationBase<PermutationDerived>& permutation) {
+    typename PermutationDerived::PlainPermutationType remaining(permutation);
+    return applyPermutationInPlace(remaining);
+  }
+
+  /** Applies an inverse (or transposed) permutation in place. \sa applyPermutation() */
+  template <typename PermutationDerived>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyPermutation(
+      const InverseImpl<PermutationDerived, PermutationStorage>& permutation) {
+    typename PermutationDerived::PlainPermutationType remaining(permutation);
+    return applyPermutationInPlace(remaining);
+  }
+
+  /** Applies the permutation represented by a sequence of transpositions in place.
+   * The indices are copied before any matrix writes, including when they alias the matrix.
+   * The operation takes \f$ O(n^2) \f$ time and \f$ O(n) \f$ auxiliary storage.
+   * \sa applyPermutation(), applyTransposition()
+   */
+  template <typename TranspositionsDerived>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyPermutation(const TranspositionsBase<TranspositionsDerived>& transpositions) {
+    return applyTranspositions<false>(transpositions);
+  }
+
+  /** Applies an inverse (or transposed) sequence of transpositions in place. \sa applyPermutation() */
+  template <typename TranspositionsDerived>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyPermutation(
+      const Transpose<TranspositionsBase<TranspositionsDerived>>& transpositions) {
+    return applyTranspositions<true>(transpositions.nestedExpression());
+  }
+
+  /** Interchanges rows and columns \a i and \a j of this self-adjoint view in place.
+   * Only the referenced triangle is read or written; complex coefficients crossing the diagonal are conjugated.
+   * The matrix must be square and both indices must lie in [0, rows()). Equal indices leave the view unchanged.
+   * The operation takes \f$ O(n) \f$ time and \f$ O(1) \f$ auxiliary storage, without heap allocation.
+   * \returns a reference to \c *this.
+   * \sa applyPermutation()
+   */
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyTransposition(Index i, Index j) {
+    EIGEN_STATIC_ASSERT_LVALUE(MatrixType);
+    eigen_assert(this->rows() == this->cols() && i >= 0 && j >= 0 && i < this->rows() && j < this->rows());
+    if (i == j) return *this;
+    if (i > j) numext::swap(i, j);
+    EIGEN_IF_CONSTEXPR (UpLo == Lower) {
+      internal::selfadjoint_swap_lower(m_matrix, i, j);
+    } else {
+      auto transposed = m_matrix.transpose();
+      internal::selfadjoint_swap_lower(transposed, i, j);
+    }
+    return *this;
+  }
+
   /** \internal */
   EIGEN_DEVICE_FUNC constexpr const MatrixTypeNestedCleaned& _expression() const noexcept { return m_matrix; }
 
   EIGEN_DEVICE_FUNC constexpr const MatrixTypeNestedCleaned& nestedExpression() const noexcept { return m_matrix; }
-  EIGEN_DEVICE_FUNC constexpr MatrixTypeNestedCleaned& nestedExpression() noexcept { return m_matrix; }
+  EIGEN_DEVICE_FUNC constexpr std::remove_reference_t<MatrixTypeNested>& nestedExpression() noexcept {
+    return m_matrix;
+  }
 
   EIGEN_DEVICE_FUNC const SelfAdjointView<
       const EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(MatrixType, Scalar, internal::scalar_product_op), UpLo>
@@ -215,71 +317,8 @@ class SelfAdjointView : public TriangularBase<SelfAdjointView<MatrixType_, UpLo>
    * (complex) scalars the unstored entries are conjugates of stored ones, and
    * since |conj(x)| = |x| the result matches the L1 norm of the full matrix.
    */
-  EIGEN_DEVICE_FUNC RealScalar l1Norm() const {
-#ifdef EIGEN_GPU_COMPILE_PHASE
-    // The panel accumulator below is per-thread local storage on a device, so it would cost every
-    // kernel instantiating this kPanelSize scalars of stack and the registers to address them.
-    return l1NormPerColumn();
-#else
-    // For a self-adjoint matrix |a_ij| = |a_ji|, so the stored triangle of a row-major matrix is
-    // the transposed, column-major, complementary one and yields the same norm read the fast way.
-    EIGEN_IF_CONSTEXPR (bool(MatrixType::IsRowMajor)) {
-      return l1NormColumnwise<TransposeMode>(m_matrix.transpose());
-    } else {
-      return l1NormColumnwise<UpLo>(m_matrix);
-    }
-#endif
-  }
+  EIGEN_DEVICE_FUNC RealScalar l1Norm() const { return internal::selfadjoint_l1_norm<UpLo>(m_matrix); }
 
- private:
-  // Reading the mirrored term of column j as a row of the stored triangle costs a stride-n
-  // traversal of a column-major matrix. Instead accumulate column sums a panel at a time:
-  // |a_ij| from a column left of the panel is added to the sum of column i, which walks that
-  // column. Only the panel's diagonal block keeps the row traversal, where it is cache resident,
-  // and a panel-sized accumulator stays a stack object.
-  template <int Mode, typename Mat>
-  EIGEN_DEVICE_FUNC static RealScalar l1NormColumnwise(const Mat& m) {
-    static constexpr int kPanelSize = 64;
-    RealScalar norm = RealScalar(0);
-    const Index n = m.rows();
-    Matrix<RealScalar, kPanelSize, 1> sums;
-    for (Index p = 0; p < n; p += kPanelSize) {
-      const Index len = numext::mini(Index(kPanelSize), n - p);
-      EIGEN_IF_CONSTEXPR (Mode == Lower) {
-        for (Index j = 0; j < len; ++j)
-          sums.coeffRef(j) =
-              m.col(p + j).tail(n - p - j).template lpNorm<1>() + m.row(p + j).segment(p, j).template lpNorm<1>();
-        for (Index j = 0; j < p; ++j) sums.head(len) += m.col(j).segment(p, len).cwiseAbs();
-      } else {
-        for (Index j = 0; j < len; ++j)
-          sums.coeffRef(j) = m.col(p + j).head(p + j + 1).template lpNorm<1>() +
-                             m.row(p + j).segment(p + j + 1, len - j - 1).template lpNorm<1>();
-        for (Index j = p + len; j < n; ++j) sums.head(len) += m.col(j).segment(p, len).cwiseAbs();
-      }
-      norm = numext::maxi(norm, sums.head(len).maxCoeff());
-    }
-    return norm;
-  }
-
-  // Workspace-free form, one column sum at a time; the mirrored term is read as a row.
-  EIGEN_DEVICE_FUNC RealScalar l1NormPerColumn() const {
-    RealScalar norm = RealScalar(0);
-    const Index n = m_matrix.rows();
-    for (Index col = 0; col < n; ++col) {
-      RealScalar abs_col_sum;
-      EIGEN_IF_CONSTEXPR (UpLo == Lower) {
-        abs_col_sum =
-            m_matrix.col(col).tail(n - col).template lpNorm<1>() + m_matrix.row(col).head(col).template lpNorm<1>();
-      } else {
-        abs_col_sum =
-            m_matrix.col(col).head(col).template lpNorm<1>() + m_matrix.row(col).tail(n - col).template lpNorm<1>();
-      }
-      norm = numext::maxi(norm, abs_col_sum);
-    }
-    return norm;
-  }
-
- public:
   /////////// Cholesky module ///////////
 
   LLT<PlainObject, UpLo> llt() const;
@@ -293,6 +332,34 @@ class SelfAdjointView : public TriangularBase<SelfAdjointView<MatrixType_, UpLo>
 
   EIGEN_DEVICE_FUNC EigenvaluesReturnType eigenvalues() const;
   EIGEN_DEVICE_FUNC RealScalar operatorNorm() const;
+
+ private:
+  template <typename PermutationType>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyPermutationInPlace(PermutationType& remaining) {
+    EIGEN_STATIC_ASSERT_LVALUE(MatrixType);
+    eigen_assert(this->rows() == this->cols() && this->rows() == remaining.size());
+    EIGEN_IF_CONSTEXPR (UpLo == Lower) {
+      internal::selfadjoint_apply_permutation_lower(m_matrix, remaining);
+    } else {
+      auto transposed = m_matrix.transpose();
+      internal::selfadjoint_apply_permutation_lower(transposed, remaining);
+    }
+    return *this;
+  }
+
+  template <bool Reverse, typename TranspositionsDerived>
+  EIGEN_DEVICE_FUNC SelfAdjointView& applyTranspositions(
+      const TranspositionsBase<TranspositionsDerived>& transpositions) {
+    EIGEN_STATIC_ASSERT_LVALUE(MatrixType);
+    eigen_assert(this->rows() == this->cols() && this->rows() == transpositions.size());
+    const typename TranspositionsDerived::IndicesType::PlainObject indices(transpositions.indices());
+    const Index size = this->rows();
+    for (Index k = 0; k < size; ++k) {
+      const Index i = Reverse ? size - 1 - k : k;
+      applyTransposition(i, internal::convert_index<Index>(indices.coeff(i)));
+    }
+    return *this;
+  }
 
  protected:
   MatrixTypeNested m_matrix;
@@ -311,6 +378,23 @@ struct evaluator_traits<SelfAdjointView<MatrixType, Mode> > {
   using Kind = typename storage_kind_to_evaluator_kind<typename MatrixType::StorageKind>::Kind;
   using Shape = SelfAdjointShape;
 };
+
+// GCC PR target/124138 (https://gcc.gnu.org/PR124138): since GCC 4.9, avx_vpermilp_parallel accepted selectors 4-7
+// for elements 2 and 3 of a V8DF permutation, emitting the lane-crossing {0, 1, 2, 6, 4, 5, 6, 7} as vpermilpd, which
+// yields {0, 1, 2, 2, 4, 5, 6, 7}. SLP forms that permutation from the unrolled mirrored stores of a 4x4 double copy,
+// at -O2 since GCC 12. Hiding the copied value from the vectorizer avoids it; the loop used for larger sizes is
+// unaffected. Fixed in GCC 14.4, 15.3 and 16, and on the GCC 13 branch after 13.4.
+template <bool Unrolled, typename Scalar>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void selfadjoint_mirror_barrier(Scalar&) {}
+#if EIGEN_COMP_GNUC_STRICT && defined(__AVX512F__) && !defined(EIGEN_GPU_COMPILE_PHASE) && \
+    (EIGEN_GNUC_STRICT_LESS_THAN(13, 5, 0) ||                                              \
+     (EIGEN_GNUC_STRICT_AT_LEAST(14, 0, 0) && EIGEN_GNUC_STRICT_LESS_THAN(14, 4, 0)) ||    \
+     (EIGEN_GNUC_STRICT_AT_LEAST(15, 0, 0) && EIGEN_GNUC_STRICT_LESS_THAN(15, 3, 0)))
+template <>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void selfadjoint_mirror_barrier<true, double>(double& value) {
+  EIGEN_OPTIMIZATION_BARRIER(value);
+}
+#endif
 
 template <int UpLo, int SetOpposite, typename DstEvaluatorTypeT, typename SrcEvaluatorTypeT, typename Functor,
           int Version>
@@ -338,6 +422,7 @@ class triangular_dense_assignment_kernel<UpLo, SelfAdjoint, SetOpposite, DstEval
   EIGEN_DEVICE_FUNC void assignCoeff(Index row, Index col) {
     eigen_internal_assert(row != col);
     Scalar tmp = m_src.coeff(row, col);
+    selfadjoint_mirror_barrier<triangular_assignment_unrolls<DstEvaluatorType, SrcEvaluatorType>::value>(tmp);
     m_functor.assignCoeff(m_dst.coeffRef(row, col), tmp);
     m_functor.assignCoeff(m_dst.coeffRef(col, row), numext::conj(tmp));
   }

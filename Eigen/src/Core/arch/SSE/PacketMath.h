@@ -479,7 +479,7 @@ EIGEN_STRONG_INLINE Packet2d plset<Packet2d>(const double& a) {
 }
 template <>
 EIGEN_STRONG_INLINE Packet2l plset<Packet2l>(const int64_t& a) {
-  return _mm_add_epi32(pset1<Packet2l>(a), _mm_set_epi64x(1, 0));
+  return _mm_add_epi64(pset1<Packet2l>(a), _mm_set_epi64x(1, 0));
 }
 template <>
 EIGEN_STRONG_INLINE Packet4i plset<Packet4i>(const int& a) {
@@ -597,23 +597,6 @@ EIGEN_STRONG_INLINE Packet4i pnegate(const Packet4i& a) {
 }
 
 template <>
-EIGEN_STRONG_INLINE Packet4f pconj(const Packet4f& a) {
-  return a;
-}
-template <>
-EIGEN_STRONG_INLINE Packet2d pconj(const Packet2d& a) {
-  return a;
-}
-template <>
-EIGEN_STRONG_INLINE Packet2l pconj(const Packet2l& a) {
-  return a;
-}
-template <>
-EIGEN_STRONG_INLINE Packet4i pconj(const Packet4i& a) {
-  return a;
-}
-
-template <>
 EIGEN_STRONG_INLINE Packet4f pmul<Packet4f>(const Packet4f& a, const Packet4f& b) {
   return _mm_mul_ps(a, b);
 }
@@ -689,9 +672,13 @@ EIGEN_STRONG_INLINE Packet4i pdiv<Packet4i>(const Packet4i& a, const Packet4i& b
 
 #ifdef EIGEN_VECTORIZE_FMA
 template <>
+struct is_fused_madd<Packet4f> : true_type {};
+template <>
 EIGEN_STRONG_INLINE Packet4f pmadd(const Packet4f& a, const Packet4f& b, const Packet4f& c) {
   return _mm_fmadd_ps(a, b, c);
 }
+template <>
+struct is_fused_madd<Packet2d> : true_type {};
 template <>
 EIGEN_STRONG_INLINE Packet2d pmadd(const Packet2d& a, const Packet2d& b, const Packet2d& c) {
   return _mm_fmadd_pd(a, b, c);
@@ -1202,10 +1189,6 @@ EIGEN_STRONG_INLINE Packet4i psignbit(const Packet4i& a) {
   return _mm_srai_epi32(a, 31);
 }
 template <>
-EIGEN_STRONG_INLINE Packet4ui psignbit(const Packet4ui& a) {
-  return pzero(a);
-}
-template <>
 EIGEN_STRONG_INLINE Packet2l psignbit(const Packet2l& a) {
   Packet4i tmp = psignbit<Packet4i>(Packet4i(a));
   return Packet2l(_mm_shuffle_epi32(tmp, (shuffle_mask<1, 1, 3, 3>::mask)));
@@ -1273,11 +1256,6 @@ EIGEN_STRONG_INLINE Packet4i pabs(const Packet4i& a) {
   return _mm_sub_epi32(_mm_xor_si128(a, signbit), signbit);
 #endif
 }
-template <>
-EIGEN_STRONG_INLINE Packet4ui pabs(const Packet4ui& a) {
-  return a;
-}
-
 #ifdef EIGEN_VECTORIZE_SSE4_1
 template <>
 EIGEN_STRONG_INLINE Packet4f pround<Packet4f>(const Packet4f& a) {
@@ -1427,14 +1405,6 @@ EIGEN_STRONG_INLINE Packet2d ploads<Packet2d>(const double* from) {
 template <>
 EIGEN_STRONG_INLINE Packet4f ploaddup<Packet4f>(const float* from) {
   return vec4f_swizzle1(_mm_castsi128_ps(ploadu_si64(reinterpret_cast<const void*>(from))), 0, 0, 1, 1);
-}
-template <>
-EIGEN_STRONG_INLINE Packet2d ploaddup<Packet2d>(const double* from) {
-  return pset1<Packet2d>(from[0]);
-}
-template <>
-EIGEN_STRONG_INLINE Packet2l ploaddup<Packet2l>(const int64_t* from) {
-  return pset1<Packet2l>(from[0]);
 }
 template <>
 EIGEN_STRONG_INLINE Packet4i ploaddup<Packet4i>(const int* from) {
@@ -1601,6 +1571,10 @@ EIGEN_STRONG_INLINE bool pfirst<Packet16b>(const Packet16b& a) {
 
 template <>
 EIGEN_STRONG_INLINE Packet4f pgather<float, Packet4f>(const float* from, Index stride) {
+  if (stride == 2) {
+    // Overlap the loads so the second ends at the last gathered coefficient, from[6].
+    return _mm_shuffle_ps(_mm_loadu_ps(from), _mm_loadu_ps(from + 3), _MM_SHUFFLE(3, 1, 2, 0));
+  }
   return _mm_set_ps(from[3 * stride], from[2 * stride], from[1 * stride], from[0 * stride]);
 }
 template <>
@@ -1751,20 +1725,19 @@ EIGEN_STRONG_INLINE Packet4f pldexp<Packet4f>(const Packet4f& a, const Packet4f&
 // supported by SSE, and has more range than is needed for exponents.
 template <>
 EIGEN_STRONG_INLINE Packet2d pldexp<Packet2d>(const Packet2d& a, const Packet2d& exponent) {
-  // Clamp exponent to [-2099, 2099]
+  // The single-rounding split of pldexp_generic on the two low int32 lanes. Interleaving t and e - t puts each
+  // biased pair in one 64-bit lane, t + 2 * bias low: shifting left by 51 drops the high half, and shifting right by
+  // 32 first selects it.
   const Packet2d max_exponent = pset1<Packet2d>(2099.0);
-  const Packet2d e = pmin(pmax(exponent, pnegate(max_exponent)), max_exponent);
-
-  // Convert e to integer and swizzle to low-order bits.
-  const Packet4i ei = vec4i_swizzle1(_mm_cvtpd_epi32(e), 0, 3, 1, 3);
-
-  // Preserve the sequential 4-way split; see pldexp_generic.
-  const Packet4i bias = _mm_set_epi32(0, 1023, 0, 1023);
-  const Packet4i b = parithmetic_shift_right<2>(ei);                                  // floor(e/4)
-  const Packet4i b_remainder = psub(psub(ei, b), padd(b, b));                         // e - 3b (depth 2)
-  const Packet2d c1 = _mm_castsi128_pd(_mm_slli_epi64(padd(b, bias), 52));            // 2^b
-  const Packet2d c2 = _mm_castsi128_pd(_mm_slli_epi64(padd(b_remainder, bias), 52));  // 2^(e - 3b)
-  return pmul(pmul(pmul(pmul(a, c1), c1), c1), c2);                                   // a * 2^e
+  const Packet2d last_max = pset1<Packet2d>(1022.0);
+  const Packet4i e = _mm_cvttpd_epi32(pmin(pmax(exponent, pnegate(max_exponent)), max_exponent));
+  const Packet4i b = _mm_cvttpd_epi32(pmin(pmax(exponent, pnegate(last_max)), last_max));
+  const Packet4i t = pandnot(psub(e, b), pset1<Packet4i>(1));  // even
+  const Packet4i biased =
+      padd(Packet4i(_mm_unpacklo_epi32(t, psub(e, t))), Packet4i(_mm_set_epi32(1023, 2046, 1023, 2046)));
+  const Packet2d c1 = _mm_castsi128_pd(_mm_slli_epi64(biased, 51));                      // 2^(t/2)
+  const Packet2d c2 = _mm_castsi128_pd(_mm_slli_epi64(_mm_srli_epi64(biased, 32), 52));  // 2^(e - t)
+  return pldexp_apply_factors(a, c1, c2);                                                // a * 2^e
 }
 
 // We specialize pldexp here, since the generic implementation uses Packet2l, which is not well

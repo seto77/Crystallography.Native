@@ -140,9 +140,7 @@ template <typename Scalar, int OuterStride>
 class plainobjectbase_evaluator_data {
  public:
   EIGEN_DEVICE_FUNC constexpr plainobjectbase_evaluator_data(const Scalar* ptr, Index outerStride) : data(ptr) {
-#ifndef EIGEN_INTERNAL_DEBUGGING
     EIGEN_UNUSED_VARIABLE(outerStride);
-#endif
     eigen_internal_assert(outerStride == OuterStride);
   }
   EIGEN_DEVICE_FUNC constexpr Index outerStride() const noexcept { return OuterStride; }
@@ -1171,6 +1169,102 @@ struct unary_evaluator<CwiseUnaryView<UnaryOp, ArgType, StrideType>, IndexBased>
   Data m_d;
 };
 
+// Read-only component evaluators can gather from contiguous std::complex storage. In particular,
+// PacketAccessBit on a custom expression does not imply array-oriented component access.
+template <typename XprType, int Component,
+          bool Vectorizable = bool(traits<typename XprType::NestedExpression>::Flags & DirectAccessBit) &&
+                              inner_stride_at_compile_time<typename XprType::NestedExpression>::value == 1 &&
+                              (std::is_same<typename XprType::Scalar, float>::value ||
+                               std::is_same<typename XprType::Scalar, double>::value) &&
+                              packet_traits<typename XprType::Scalar>::Vectorizable &&
+                              std::is_same<typename XprType::Scalar, typename unpacket_traits<typename packet_traits<
+                                                                         typename XprType::Scalar>::type>::type>::value>
+struct complex_component_evaluator : unary_evaluator<XprType> {
+  using Base = unary_evaluator<XprType>;
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit complex_component_evaluator(const XprType& xpr)
+      : Base(xpr) {}
+};
+
+template <typename XprType, int Component>
+struct complex_component_evaluator<XprType, Component, true> : unary_evaluator<XprType> {
+  using Base = unary_evaluator<XprType>;
+  using Scalar = typename XprType::Scalar;
+  // Not named ArgType: MSVC 19.29 resolves the derived evaluator specializations' ArgType template
+  // parameter to this member through the dependent base, and it drops the nested expression's const.
+  using NestedXpr = typename XprType::NestedExpression;
+  // Blocks must delegate packet reads here rather than reinterpret this stride-2 view as a contiguous Map.
+  static constexpr unsigned int Flags = (Base::Flags & ~DirectAccessBit) | PacketAccessBit;
+  static constexpr int Alignment = 0;
+
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit complex_component_evaluator(const XprType& xpr)
+      : Base(xpr),
+        m_data(reinterpret_cast<const Scalar*>(xpr.nestedExpression().data())),
+        m_outerStride(xpr.nestedExpression().outerStride()) {}
+
+  template <int LoadMode, typename PacketType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packet(Index index) const {
+    return pgather<Scalar, PacketType>(m_data + 2 * index + Component, 2);
+  }
+
+  template <int LoadMode, typename PacketType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packet(Index row, Index col) const {
+    const Index index = XprType::IsRowMajor ? row * m_outerStride.value() + col : col * m_outerStride.value() + row;
+    return packet<LoadMode, PacketType>(index);
+  }
+
+  template <int LoadMode, typename PacketType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packetSegment(Index index, Index begin, Index count) const {
+    Scalar values[unpacket_traits<PacketType>::size] = {};
+    for (Index i = begin; i < begin + count; ++i) values[i] = Base::coeff(index + i);
+    return ploadu<PacketType>(values);
+  }
+
+  template <int LoadMode, typename PacketType>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packetSegment(Index row, Index col, Index begin, Index count) const {
+    Scalar values[unpacket_traits<PacketType>::size] = {};
+    for (Index i = begin; i < begin + count; ++i)
+      values[i] = Base::coeff(row + (XprType::IsRowMajor ? 0 : i), col + (XprType::IsRowMajor ? i : 0));
+    return ploadu<PacketType>(values);
+  }
+
+ private:
+  const Scalar* m_data;
+  const variable_if_dynamic<Index, outer_stride_at_compile_time<NestedXpr>::value> m_outerStride;
+};
+
+template <typename Real, typename ArgType>
+struct evaluator<CwiseUnaryOp<scalar_real_op<std::complex<Real>>, ArgType>>
+    : complex_component_evaluator<CwiseUnaryOp<scalar_real_op<std::complex<Real>>, ArgType>, 0> {
+  using XprType = CwiseUnaryOp<scalar_real_op<std::complex<Real>>, ArgType>;
+  using Base = complex_component_evaluator<XprType, 0>;
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit evaluator(const XprType& xpr) : Base(xpr) {}
+};
+
+// Writable views keep scalar stores: assignment functors require contiguous destination packets.
+template <typename Real, typename ArgType>
+struct evaluator<const CwiseUnaryView<scalar_real_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>>
+    : complex_component_evaluator<CwiseUnaryView<scalar_real_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>, 0> {
+  using XprType = CwiseUnaryView<scalar_real_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>;
+  using Base = complex_component_evaluator<XprType, 0>;
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit evaluator(const XprType& xpr) : Base(xpr) {}
+};
+
+template <typename Real, typename ArgType>
+struct evaluator<CwiseUnaryOp<scalar_imag_op<std::complex<Real>>, ArgType>>
+    : complex_component_evaluator<CwiseUnaryOp<scalar_imag_op<std::complex<Real>>, ArgType>, 1> {
+  using XprType = CwiseUnaryOp<scalar_imag_op<std::complex<Real>>, ArgType>;
+  using Base = complex_component_evaluator<XprType, 1>;
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit evaluator(const XprType& xpr) : Base(xpr) {}
+};
+
+template <typename Real, typename ArgType>
+struct evaluator<const CwiseUnaryView<scalar_imag_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>>
+    : complex_component_evaluator<CwiseUnaryView<scalar_imag_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>, 1> {
+  using XprType = CwiseUnaryView<scalar_imag_ref_op<std::complex<Real>>, ArgType, Stride<0, 0>>;
+  using Base = complex_component_evaluator<XprType, 1>;
+  EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE explicit evaluator(const XprType& xpr) : Base(xpr) {}
+};
+
 // -------------------- Map --------------------
 
 // FIXME: consider using Derived::PlainObject for PlainObjectType.
@@ -1327,7 +1421,7 @@ struct evaluator<Ref<PlainObjectType, RefOptions, StrideType>>
 // -------------------- Block --------------------
 
 template <typename ArgType, int BlockRows, int BlockCols, bool InnerPanel,
-          bool HasDirectAccess = has_direct_access<ArgType>::value>
+          bool HasDirectAccess = has_direct_access<ArgType>::value && bool(evaluator<ArgType>::Flags & DirectAccessBit)>
 struct block_evaluator;
 
 template <typename ArgType, int BlockRows, int BlockCols, bool InnerPanel>
@@ -1356,18 +1450,27 @@ struct evaluator<Block<ArgType, BlockRows, BlockCols, InnerPanel>>
                                                             : int(outer_stride_at_compile_time<ArgType>::value),
     OuterStrideAtCompileTime = HasSameStorageOrderAsArgType ? int(outer_stride_at_compile_time<ArgType>::value)
                                                             : int(inner_stride_at_compile_time<ArgType>::value),
-    MaskPacketAccessBit = (InnerStrideAtCompileTime == 1 || HasSameStorageOrderAsArgType) ? PacketAccessBit : 0,
+    // Matches block_evaluator's dispatch. Direct-access blocks use mapbase_evaluator's contiguous loads; the others
+    // forward to the parent's packet method, which only loads along the parent's inner direction.
+    ArgHasDirectAccess = bool(has_direct_access<ArgType>::value) && bool(evaluator<ArgType>::Flags & DirectAccessBit),
+    MaskPacketAccessBit =
+        (ArgHasDirectAccess ? InnerStrideAtCompileTime == 1 : bool(HasSameStorageOrderAsArgType)) ? PacketAccessBit : 0,
 
+    ArgInnerSize = ArgTypeIsRowMajor ? int(ArgType::ColsAtCompileTime) : int(ArgType::RowsAtCompileTime),
+    // InnerPanel is deduced from the parent's traits, so it only holds in the parent evaluator's storage order. A block
+    // spanning its parent's fixed inner size is an inner panel too, e.g. block<6, 4>(0, j) of a 6x6 matrix.
+    IsInnerPanel = HasSameStorageOrderAsArgType && (InnerPanel || (InnerSize != Dynamic && InnerSize == ArgInnerSize)),
     FlagsLinearAccessBit = (RowsAtCompileTime == 1 || ColsAtCompileTime == 1 ||
-                            (InnerPanel && (evaluator<ArgType>::Flags & LinearAccessBit)))
+                            (IsInnerPanel && (evaluator<ArgType>::Flags & LinearAccessBit)))
                                ? LinearAccessBit
                                : 0,
     FlagsRowMajorBit = XprType::Flags & RowMajorBit,
-    Flags0 = evaluator<ArgType>::Flags & ((HereditaryBits & ~RowMajorBit) | DirectAccessBit | MaskPacketAccessBit),
+    Flags0 = evaluator<ArgType>::Flags &
+             ((HereditaryBits & ~RowMajorBit) | (ArgHasDirectAccess ? DirectAccessBit : 0) | MaskPacketAccessBit),
     Flags = Flags0 | FlagsLinearAccessBit | FlagsRowMajorBit,
 
     PacketAlignment = unpacket_traits<PacketScalar>::alignment,
-    Alignment0 = (InnerPanel && (OuterStrideAtCompileTime != Dynamic) && (OuterStrideAtCompileTime != 0) &&
+    Alignment0 = (IsInnerPanel && (OuterStrideAtCompileTime != Dynamic) && (OuterStrideAtCompileTime != 0) &&
                   (((OuterStrideAtCompileTime * int(sizeof(Scalar))) % int(PacketAlignment)) == 0))
                      ? int(PacketAlignment)
                      : 0,

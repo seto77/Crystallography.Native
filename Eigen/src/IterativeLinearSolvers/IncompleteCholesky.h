@@ -204,7 +204,6 @@ class IncompleteCholesky : public SparseSolverBase<IncompleteCholesky<Scalar, Up
 template <typename Scalar, int UpLo_, typename OrderingType>
 template <typename MatrixType_>
 void IncompleteCholesky<Scalar, UpLo_, OrderingType>::factorize(const MatrixType_& mat) {
-  using std::sqrt;
   eigen_assert(m_analysisIsOk && "analyzePattern() should be called first");
 
   // Dropping strategy : Keep only the p largest elements per column, where p is the number of elements in the column of
@@ -240,7 +239,7 @@ void IncompleteCholesky<Scalar, UpLo_, OrderingType>::factorize(const MatrixType
   Map<VectorSx> vals(m_L.valuePtr(), nnz);           // values
   Map<VectorIx> rowIdx(m_L.innerIndexPtr(), nnz);    // Row indices
   Map<VectorIx> colPtr(m_L.outerIndexPtr(), n + 1);  // Pointer to the beginning of each column
-  VectorIx firstElt(n - 1);  // for each j, points to the next entry in vals that will be used in the factorization
+  VectorIx firstElt(n);      // for each j, points to the next entry in vals that will be used in the factorization
   VectorList listCol(n);     // listCol(j) is a linked list of columns to update column j
   VectorSx col_vals(n);      // Store the nonzero values in each column
   VectorIx col_irow(n);      // Row indices of nonzero elements in each column
@@ -342,7 +341,7 @@ void IncompleteCholesky<Scalar, UpLo_, OrderingType>::factorize(const MatrixType
         break;
       }
 
-      RealScalar rdiag = sqrt(numext::real(diag));
+      RealScalar rdiag = numext::sqrt(numext::real(diag));
       vals[colPtr[j]] = rdiag;
       for (Index k = 0; k < col_nnz; ++k) {
         Index i = col_irow[k];

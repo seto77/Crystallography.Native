@@ -21,6 +21,28 @@ namespace Eigen {
 
 namespace internal {
 
+// A singleton stored column never uses its outer stride, but BLAS still checks ld >= max(1, inner).
+// Normalize before narrowing: an unused stride need not fit BlasIndex.
+template <int StorageOrder, typename Index>
+EIGEN_STRONG_INLINE BlasIndex blas_leading_dim(Index rows, Index cols, Index stride) {
+  const Index inner = StorageOrder == ColMajor ? rows : cols;
+  const Index outer = StorageOrder == ColMajor ? cols : rows;
+  return convert_index<BlasIndex>(outer <= 1 ? numext::maxi(inner, Index(1)) : stride);
+}
+
+template <int StorageOrder, typename Index>
+EIGEN_STRONG_INLINE bool blas_compatible_stride(Index rows, Index cols, Index stride) {
+  const Index inner = StorageOrder == ColMajor ? rows : cols;
+  const Index outer = StorageOrder == ColMajor ? cols : rows;
+  return outer <= 1 || stride >= numext::maxi(inner, Index(1));
+}
+
+// BLAS rejects zero increments even when the vector has only one coefficient.
+template <typename Index>
+EIGEN_STRONG_INLINE BlasIndex blas_vector_increment(Index size, Index stride) {
+  return convert_index<BlasIndex>(size <= 1 ? Index(1) : stride);
+}
+
 // forward declarations
 template <typename LhsScalar, typename RhsScalar, typename Index, typename DataMapper, int mr, int nr,
           bool ConjugateLhs = false, bool ConjugateRhs = false>
@@ -34,8 +56,12 @@ template <typename Scalar, typename Index, typename DataMapper, int Pack1, int P
           bool Conjugate = false, bool PanelMode = false>
 struct gemm_pack_lhs;
 
+// LhsStorage and RhsStorage are the scalar types the operands are stored in. The packers convert each coefficient to
+// LhsScalar or RhsScalar as they read it, so that A.cast<float>() * B.cast<float>() runs the float kernel on half
+// operands without materializing the casts.
 template <typename Index, typename LhsScalar, int LhsStorageOrder, bool ConjugateLhs, typename RhsScalar,
-          int RhsStorageOrder, bool ConjugateRhs, int ResStorageOrder, int ResInnerStride>
+          int RhsStorageOrder, bool ConjugateRhs, int ResStorageOrder, int ResInnerStride,
+          typename LhsStorage = LhsScalar, typename RhsStorage = RhsScalar>
 struct general_matrix_matrix_product;
 
 template <typename Index, typename LhsScalar, typename LhsMapper, int LhsStorageOrder, bool ConjugateLhs,
@@ -456,6 +482,102 @@ class const_blas_data_mapper : public blas_data_mapper<const Scalar, Index, Stor
   }
 };
 
+// Loads a Packet from the SrcScalar coefficients at `from`, each converted as cast<SrcScalar, Scalar> converts it.
+// Vectorized when a source packet of as many coefficients casts to Packet, as in the core_cast_op evaluator.
+template <typename SrcScalar, typename Packet, typename = void>
+struct cast_ploadu_impl {
+  using Scalar = typename unpacket_traits<Packet>::type;
+  static constexpr int Size = unpacket_traits<Packet>::size;
+  static EIGEN_ALWAYS_INLINE Packet run(const SrcScalar* from) {
+    Scalar to[Size];
+    for (int i = 0; i < Size; ++i) to[i] = cast<SrcScalar, Scalar>(from[i]);
+    return ploadu<Packet>(to);
+  }
+};
+template <typename SrcScalar, typename Packet>
+struct cast_ploadu_impl<
+    SrcScalar, Packet,
+    std::enable_if_t<type_casting_traits<SrcScalar, typename unpacket_traits<Packet>::type>::VectorizedCast &&
+                     find_packet_by_size<SrcScalar, unpacket_traits<Packet>::size>::value>> {
+  using SrcPacket = typename find_packet_by_size<SrcScalar, unpacket_traits<Packet>::size>::type;
+  static EIGEN_ALWAYS_INLINE Packet run(const SrcScalar* from) {
+    return pcast<SrcPacket, Packet>(ploadu<SrcPacket>(from));
+  }
+};
+#ifdef EIGEN_VECTORIZE_VSX
+// Packet8bf is its own half, so no bfloat16 packet holds four coefficients. pcast<Packet8bf, Packet4f> widens the
+// first four, so splatting them as one 64-bit lane suffices.
+template <>
+struct cast_ploadu_impl<bfloat16, Packet4f> {
+  static EIGEN_ALWAYS_INLINE Packet4f run(const bfloat16* from) {
+    unsigned long long bits;
+    std::memcpy(&bits, from, sizeof(bits));
+    return pcast<Packet8bf, Packet4f>(Packet8bf(reinterpret_cast<Packet8us>(vec_splats(bits))));
+  }
+};
+#endif
+
+template <typename Scalar, typename SrcScalar, typename Index>
+class BlasCastLinearMapper {
+  using SrcMapper = BlasLinearMapper<const SrcScalar, Index, Unaligned>;
+
+ public:
+  EIGEN_ALWAYS_INLINE explicit BlasCastLinearMapper(const SrcMapper& src) : m_src(src) {}
+
+  EIGEN_ALWAYS_INLINE void prefetch(Index i) const { m_src.prefetch(i); }
+
+  EIGEN_ALWAYS_INLINE Scalar operator()(Index i) const { return cast<SrcScalar, Scalar>(m_src(i)); }
+
+  template <typename PacketType>
+  EIGEN_ALWAYS_INLINE PacketType loadPacket(Index i) const {
+    return cast_ploadu_impl<SrcScalar, PacketType>::run(&m_src(i));
+  }
+
+ private:
+  SrcMapper m_src;
+};
+
+// Read-only counterpart of const_blas_data_mapper over SrcScalar storage that reads each coefficient as Scalar. It
+// provides what the GEMM packers read through, so that they pack A.cast<Scalar>() straight from A. It holds the
+// SrcScalar mapper rather than deriving from it, so that a packer cannot reach the unconverted loads of the base.
+template <typename Scalar, typename SrcScalar, typename Index, int StorageOrder>
+class blas_cast_data_mapper {
+  using SrcMapper = const_blas_data_mapper<SrcScalar, Index, StorageOrder>;
+
+ public:
+  using LinearMapper = BlasCastLinearMapper<Scalar, SrcScalar, Index>;
+  using SubMapper = blas_cast_data_mapper;
+
+  EIGEN_ALWAYS_INLINE blas_cast_data_mapper(const SrcScalar* data, Index stride) : m_src(data, stride) {}
+  EIGEN_ALWAYS_INLINE explicit blas_cast_data_mapper(const SrcMapper& src) : m_src(src) {}
+
+  EIGEN_ALWAYS_INLINE SubMapper getSubMapper(Index i, Index j) const { return SubMapper(m_src.getSubMapper(i, j)); }
+
+  EIGEN_ALWAYS_INLINE LinearMapper getLinearMapper(Index i, Index j) const {
+    return LinearMapper(m_src.getLinearMapper(i, j));
+  }
+
+  EIGEN_ALWAYS_INLINE void prefetch(Index i, Index j) const { m_src.prefetch(i, j); }
+
+  EIGEN_ALWAYS_INLINE Scalar operator()(Index i, Index j) const { return cast<SrcScalar, Scalar>(m_src(i, j)); }
+
+  template <typename PacketType>
+  EIGEN_ALWAYS_INLINE PacketType loadPacket(Index i, Index j) const {
+    return cast_ploadu_impl<SrcScalar, PacketType>::run(&m_src(i, j));
+  }
+
+  EIGEN_ALWAYS_INLINE Index stride() const { return m_src.stride(); }
+
+ private:
+  SrcMapper m_src;
+};
+
+// The mapper the GEMM packers read an operand stored as StorageScalar through, as Scalar.
+template <typename Scalar, typename StorageScalar, typename Index, int StorageOrder>
+using gemm_operand_mapper =
+    std::conditional_t<std::is_same<Scalar, StorageScalar>::value, const_blas_data_mapper<Scalar, Index, StorageOrder>,
+                       blas_cast_data_mapper<Scalar, StorageScalar, Index, StorageOrder>>;
+
 /* Helper class to analyze the factors of a Product expression.
  * In particular it allows to pop out operator-, scalar multiples,
  * and conjugate */
@@ -493,7 +615,7 @@ struct blas_traits<CwiseUnaryOp<scalar_conjugate_op<Scalar>, NestedXpr> > : blas
   enum { IsComplex = NumTraits<Scalar>::IsComplex, NeedToConjugate = Base::NeedToConjugate ? 0 : IsComplex };
   EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) { return Base::extract(x.nestedExpression()); }
   EIGEN_DEVICE_FUNC static inline Scalar extractScalarFactor(const XprType& x) {
-    return conj(Base::extractScalarFactor(x.nestedExpression()));
+    return numext::conj(Base::extractScalarFactor(x.nestedExpression()));
   }
 };
 
@@ -528,10 +650,21 @@ struct blas_traits<
     return Base::extractScalarFactor(x.lhs()) * x.rhs().functor().m_other;
   }
 };
+// Constant * Constant matches both specializations above; pop the left factor, as the first one does.
 template <typename Scalar, typename Plain1, typename Plain2>
 struct blas_traits<CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain1>,
-                                 const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain2> > >
-    : blas_traits<CwiseNullaryOp<scalar_constant_op<Scalar>, Plain1> > {};
+                                 const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain2>>>
+    : blas_traits<const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain2>> {
+  static constexpr bool HasScalarFactor = true;
+  using Base = blas_traits<const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain2>>;
+  using XprType = CwiseBinaryOp<scalar_product_op<Scalar>, const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain1>,
+                                const CwiseNullaryOp<scalar_constant_op<Scalar>, Plain2>>;
+  using ExtractType = typename Base::ExtractType;
+  EIGEN_DEVICE_FUNC static inline ExtractType extract(const XprType& x) { return Base::extract(x.rhs()); }
+  EIGEN_DEVICE_FUNC static inline Scalar extractScalarFactor(const XprType& x) {
+    return x.lhs().functor().m_other * Base::extractScalarFactor(x.rhs());
+  }
+};
 
 // pop opposite
 template <typename Scalar, typename NestedXpr>

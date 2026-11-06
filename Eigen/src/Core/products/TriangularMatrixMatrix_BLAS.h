@@ -75,6 +75,7 @@ EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, true)
 EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, false)
 
 // implements col-major += alpha * op(triangular) * op(general)
+// Temporaries are ColMajor, also under EIGEN_DEFAULT_TO_ROW_MAJOR: BLAS takes column-major storage.
 #define EIGEN_BLAS_TRMM_L(EIGTYPE, BLASTYPE, EIGPREFIX, BLASFUNC)                                                      \
   template <typename Index, int Mode, int LhsStorageOrder, bool ConjugateLhs, int RhsStorageOrder, bool ConjugateRhs>  \
   struct product_triangular_matrix_matrix_trmm<EIGTYPE, Index, Mode, true, LhsStorageOrder, ConjugateLhs,              \
@@ -91,14 +92,24 @@ EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, false)
     static void run(Index _rows, Index _cols, Index _depth, const EIGTYPE* _lhs, Index lhsStride, const EIGTYPE* _rhs, \
                     Index rhsStride, EIGTYPE* res, Index resStride, EIGTYPE alpha,                                     \
                     level3_blocking<EIGTYPE, EIGTYPE>& blocking) {                                                     \
-      if (_rows == 0 || _cols == 0 || _depth == 0) return;                                                             \
+      if (_rows == 0 || _cols == 0 || _depth == 0 || numext::is_exactly_zero(alpha)) return;                           \
+      if (!blas_compatible_stride<LhsStorageOrder>(_rows, _depth, lhsStride) ||                                        \
+          !blas_compatible_stride<RhsStorageOrder>(_depth, _cols, rhsStride) ||                                        \
+          !blas_compatible_stride<ColMajor>(_rows, _cols, resStride)) {                                                \
+        product_triangular_matrix_matrix<EIGTYPE, Index, Mode, true, LhsStorageOrder, ConjugateLhs, RhsStorageOrder,   \
+                                         ConjugateRhs, ColMajor, 1, BuiltIn>::run(_rows, _cols, _depth, _lhs,          \
+                                                                                  lhsStride, _rhs, rhsStride, res,     \
+                                                                                  Index(1), resStride, alpha,          \
+                                                                                  blocking);                           \
+        return;                                                                                                        \
+      }                                                                                                                \
       Index diagSize = (std::min)(_rows, _depth);                                                                      \
       Index rows = IsLower ? _rows : diagSize;                                                                         \
       Index depth = IsLower ? diagSize : _depth;                                                                       \
       Index cols = _cols;                                                                                              \
                                                                                                                        \
-      typedef Matrix<EIGTYPE, Dynamic, Dynamic, LhsStorageOrder> MatrixLhs;                                            \
-      typedef Matrix<EIGTYPE, Dynamic, Dynamic, RhsStorageOrder> MatrixRhs;                                            \
+      using MatrixLhs = Matrix<EIGTYPE, Dynamic, Dynamic, LhsStorageOrder>;                                            \
+      using MatrixRhs = Matrix<EIGTYPE, Dynamic, Dynamic, RhsStorageOrder>;                                            \
                                                                                                                        \
       /* Non-square case - doesn't fit to BLAS ?TRMM. Fall to default triangular product or call BLAS ?GEMM*/          \
       if (rows != depth) {                                                                                             \
@@ -142,7 +153,8 @@ EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, false)
                                                                                                                        \
       /* Set b, ldb */                                                                                                 \
       Map<const MatrixRhs, 0, OuterStride<> > rhs(_rhs, depth, cols, OuterStride<>(rhsStride));                        \
-      MatrixX##EIGPREFIX b_tmp;                                                                                        \
+      using ColMajorMatrix = Matrix<EIGTYPE, Dynamic, Dynamic, ColMajor>;                                              \
+      ColMajorMatrix b_tmp;                                                                                            \
                                                                                                                        \
       EIGEN_IF_CONSTEXPR (ConjugateRhs)                                                                                \
         b_tmp = rhs.conjugate();                                                                                       \
@@ -173,7 +185,7 @@ EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, false)
         lda = convert_index<BlasIndex>(a_tmp.outerStride());                                                           \
       } else {                                                                                                         \
         a = _lhs;                                                                                                      \
-        lda = convert_index<BlasIndex>(lhsStride);                                                                     \
+        lda = blas_leading_dim<LhsStorageOrder>(rows, depth, lhsStride);                                               \
       }                                                                                                                \
       /*std::cout << "TRMM_L: A is square! Go to BLAS TRMM implementation! \n";*/                                      \
       /* call ?trmm*/                                                                                                  \
@@ -181,7 +193,7 @@ EIGEN_BLAS_TRMM_SPECIALIZE(scomplex, false)
                &lda, (BLASTYPE*)b, &ldb);                                                                              \
                                                                                                                        \
       /* Add op(a_triangular)*b into res*/                                                                             \
-      Map<MatrixX##EIGPREFIX, 0, OuterStride<> > res_tmp(res, rows, cols, OuterStride<>(resStride));                   \
+      Map<ColMajorMatrix, 0, OuterStride<> > res_tmp(res, rows, cols, OuterStride<>(resStride));                       \
       res_tmp = res_tmp + b_tmp;                                                                                       \
     }                                                                                                                  \
   };
@@ -215,14 +227,24 @@ EIGEN_BLAS_TRMM_L(scomplex, float, cf, EIGEN_BLAS_SYM(ctrmm))
     static void run(Index _rows, Index _cols, Index _depth, const EIGTYPE* _lhs, Index lhsStride, const EIGTYPE* _rhs, \
                     Index rhsStride, EIGTYPE* res, Index resStride, EIGTYPE alpha,                                     \
                     level3_blocking<EIGTYPE, EIGTYPE>& blocking) {                                                     \
-      if (_rows == 0 || _cols == 0 || _depth == 0) return;                                                             \
+      if (_rows == 0 || _cols == 0 || _depth == 0 || numext::is_exactly_zero(alpha)) return;                           \
+      if (!blas_compatible_stride<LhsStorageOrder>(_rows, _depth, lhsStride) ||                                        \
+          !blas_compatible_stride<RhsStorageOrder>(_depth, _cols, rhsStride) ||                                        \
+          !blas_compatible_stride<ColMajor>(_rows, _cols, resStride)) {                                                \
+        product_triangular_matrix_matrix<EIGTYPE, Index, Mode, false, LhsStorageOrder, ConjugateLhs, RhsStorageOrder,  \
+                                         ConjugateRhs, ColMajor, 1, BuiltIn>::run(_rows, _cols, _depth, _lhs,          \
+                                                                                  lhsStride, _rhs, rhsStride, res,     \
+                                                                                  Index(1), resStride, alpha,          \
+                                                                                  blocking);                           \
+        return;                                                                                                        \
+      }                                                                                                                \
       Index diagSize = (std::min)(_cols, _depth);                                                                      \
       Index rows = _rows;                                                                                              \
       Index depth = IsLower ? _depth : diagSize;                                                                       \
       Index cols = IsLower ? diagSize : _cols;                                                                         \
                                                                                                                        \
-      typedef Matrix<EIGTYPE, Dynamic, Dynamic, LhsStorageOrder> MatrixLhs;                                            \
-      typedef Matrix<EIGTYPE, Dynamic, Dynamic, RhsStorageOrder> MatrixRhs;                                            \
+      using MatrixLhs = Matrix<EIGTYPE, Dynamic, Dynamic, LhsStorageOrder>;                                            \
+      using MatrixRhs = Matrix<EIGTYPE, Dynamic, Dynamic, RhsStorageOrder>;                                            \
                                                                                                                        \
       /* Non-square case - doesn't fit to BLAS ?TRMM. Fall to default triangular product or call BLAS ?GEMM*/          \
       if (cols != depth) {                                                                                             \
@@ -268,7 +290,8 @@ EIGEN_BLAS_TRMM_L(scomplex, float, cf, EIGEN_BLAS_SYM(ctrmm))
                                                                                                                        \
       /* Set b, ldb */                                                                                                 \
       Map<const MatrixLhs, 0, OuterStride<> > lhs(_lhs, rows, depth, OuterStride<>(lhsStride));                        \
-      MatrixX##EIGPREFIX b_tmp;                                                                                        \
+      using ColMajorMatrix = Matrix<EIGTYPE, Dynamic, Dynamic, ColMajor>;                                              \
+      ColMajorMatrix b_tmp;                                                                                            \
                                                                                                                        \
       EIGEN_IF_CONSTEXPR (ConjugateLhs)                                                                                \
         b_tmp = lhs.conjugate();                                                                                       \
@@ -299,7 +322,7 @@ EIGEN_BLAS_TRMM_L(scomplex, float, cf, EIGEN_BLAS_SYM(ctrmm))
         lda = convert_index<BlasIndex>(a_tmp.outerStride());                                                           \
       } else {                                                                                                         \
         a = _rhs;                                                                                                      \
-        lda = convert_index<BlasIndex>(rhsStride);                                                                     \
+        lda = blas_leading_dim<RhsStorageOrder>(depth, cols, rhsStride);                                               \
       }                                                                                                                \
       /*std::cout << "TRMM_R: A is square! Go to BLAS TRMM implementation! \n";*/                                      \
       /* call ?trmm*/                                                                                                  \
@@ -307,7 +330,7 @@ EIGEN_BLAS_TRMM_L(scomplex, float, cf, EIGEN_BLAS_SYM(ctrmm))
                &lda, (BLASTYPE*)b, &ldb);                                                                              \
                                                                                                                        \
       /* Add op(a_triangular)*b into res*/                                                                             \
-      Map<MatrixX##EIGPREFIX, 0, OuterStride<> > res_tmp(res, rows, cols, OuterStride<>(resStride));                   \
+      Map<ColMajorMatrix, 0, OuterStride<> > res_tmp(res, rows, cols, OuterStride<>(resStride));                       \
       res_tmp = res_tmp + b_tmp;                                                                                       \
     }                                                                                                                  \
   };

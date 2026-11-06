@@ -1,0 +1,207 @@
+// This file is part of Eigen, a lightweight C++ template library
+// for linear algebra.
+//
+// Copyright (C) 2014 Benoit Steiner <benoit.steiner.goog@gmail.com>
+//
+// This Source Code Form is subject to the terms of the Mozilla
+// Public License v. 2.0. If a copy of the MPL was not distributed
+// with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_TENSOR_TENSOR_MAP_H
+#define EIGEN_TENSOR_TENSOR_MAP_H
+
+// IWYU pragma: private
+#include "./InternalHeaderCheck.h"
+
+namespace Eigen {
+
+// FIXME: Use proper doxygen documentation (e.g. \tparam MakePointer_).
+
+/**
+ * \ingroup Tensor_Module
+ *
+ * \brief A tensor expression mapping an existing array of data.
+ *
+ */
+/// `template <class> class MakePointer_` is added to convert the host pointer to the device pointer.
+/// It is added due to the fact that for our device compiler `T*` is not allowed.
+/// If we wanted to use the same Evaluator functions we have to convert that type to our pointer `T`.
+/// This is done through our `MakePointer_` class. By default the Type in the `MakePointer_<T>` is `T*`.
+/// Therefore, by adding the default value, we managed to convert the type and it does not break any
+/// existing code as its default value is `T*`.
+template <typename PlainObjectType, int Options_, template <class> class MakePointer_>
+class TensorMap : public TensorBase<TensorMap<PlainObjectType, Options_, MakePointer_> > {
+ public:
+  using Self = TensorMap<PlainObjectType, Options_, MakePointer_>;
+  using Base = TensorBase<TensorMap<PlainObjectType, Options_, MakePointer_> >;
+#ifdef EIGEN_USE_SYCL
+  using Nested = std::remove_reference_t<typename Eigen::internal::ref_selector<Self>::type>;
+#else
+  using Nested = typename Eigen::internal::ref_selector<Self>::type;
+#endif
+  using StorageKind = typename internal::traits<PlainObjectType>::StorageKind;
+  using Index = typename internal::traits<PlainObjectType>::Index;
+  using Scalar = typename internal::traits<PlainObjectType>::Scalar;
+  using RealScalar = typename NumTraits<Scalar>::Real;
+  using CoeffReturnType = typename PlainObjectType::Base::CoeffReturnType;
+
+  using PointerType = typename MakePointer_<Scalar>::Type;
+  using PointerConstType = typename MakePointer_<Scalar>::ConstType;
+
+  // WARN: PointerType still can be a pointer to const (const Scalar*), for
+  // example in TensorMap<Tensor<const Scalar, ...>> expression. This type of
+  // expression should be illegal, but adding this restriction is not possible
+  // in practice (see https://bitbucket.org/eigen/eigen/pull-requests/488).
+  using StoragePointerType = std::conditional_t<bool(internal::is_lvalue<PlainObjectType>::value),
+                                                PointerType,      // use simple pointer in lvalue expressions
+                                                PointerConstType  // use const pointer in rvalue expressions
+                                                >;
+
+  // If TensorMap was constructed over rvalue expression (e.g. const Tensor),
+  // we should return a reference to const from operator() (and others), even
+  // if TensorMap itself is not const.
+  using StorageRefType = std::conditional_t<bool(internal::is_lvalue<PlainObjectType>::value), Scalar&, const Scalar&>;
+
+  static constexpr int Options = Options_;
+
+  static constexpr Index NumIndices = PlainObjectType::NumIndices;
+  using Dimensions = typename PlainObjectType::Dimensions;
+
+  static constexpr int Layout = PlainObjectType::Layout;
+  enum { IsAligned = ((int(Options_) & Aligned) == Aligned), CoordAccess = true, RawAccess = true };
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorMap(StoragePointerType dataPtr) : m_data(dataPtr), m_dimensions() {
+    // The number of dimensions used to construct a tensor must be equal to the rank of the tensor.
+    EIGEN_STATIC_ASSERT((0 == NumIndices || NumIndices == Dynamic), YOU_MADE_A_PROGRAMMING_MISTAKE)
+  }
+
+  template <typename... IndexTypes>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorMap(StoragePointerType dataPtr, Index firstDimension,
+                                                  IndexTypes... otherDimensions)
+      : m_data(dataPtr), m_dimensions(firstDimension, otherDimensions...) {
+    // The number of dimensions used to construct a tensor must be equal to the rank of the tensor.
+    EIGEN_STATIC_ASSERT((sizeof...(otherDimensions) + 1 == NumIndices || NumIndices == Dynamic),
+                        YOU_MADE_A_PROGRAMMING_MISTAKE)
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorMap(StoragePointerType dataPtr,
+                                                  const array<Index, NumIndices>& dimensions)
+      : m_data(dataPtr), m_dimensions(dimensions) {}
+
+  template <typename Dimensions>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorMap(StoragePointerType dataPtr, const Dimensions& dimensions)
+      : m_data(dataPtr), m_dimensions(dimensions) {}
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorMap(PlainObjectType& tensor)
+      : m_data(tensor.data()), m_dimensions(tensor.dimensions()) {}
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index rank() const { return NumIndices; }
+  template <Index N>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index dimension() const {
+    EIGEN_STATIC_ASSERT(0 <= N && N < NumIndices, INVALID_DIMENSION);
+    return m_dimensions[N];
+  }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index dimension(Index n) const {
+    eigen_assert(0 <= n && n < NumIndices);
+    return m_dimensions[n];
+  }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Index size() const { return m_dimensions.TotalSize(); }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StoragePointerType data() { return m_data; }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StoragePointerType data() const { return m_data; }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(const array<Index, NumIndices>& indices) const {
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
+      const Index index = m_dimensions.IndexOfRowMajor(indices);
+      return m_data[index];
+    } else {
+      const Index index = m_dimensions.IndexOfColMajor(indices);
+      return m_data[index];
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()() const {
+    EIGEN_STATIC_ASSERT(NumIndices == 0, YOU_MADE_A_PROGRAMMING_MISTAKE)
+    return m_data[0];
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(Index index) const {
+    eigen_internal_assert(index >= 0 && index < size());
+    return m_data[index];
+  }
+
+  template <typename... IndexTypes>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(Index firstIndex, Index secondIndex,
+                                                                  IndexTypes... otherIndices) const {
+    EIGEN_STATIC_ASSERT(sizeof...(otherIndices) + 2 == NumIndices, YOU_MADE_A_PROGRAMMING_MISTAKE)
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
+      const Index index = m_dimensions.IndexOfRowMajor(
+          array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
+      return m_data[index];
+    } else {
+      const Index index = m_dimensions.IndexOfColMajor(
+          array<Index, NumIndices>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
+      return m_data[index];
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(const array<Index, NumIndices>& indices) {
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
+      const Index index = m_dimensions.IndexOfRowMajor(indices);
+      return m_data[index];
+    } else {
+      const Index index = m_dimensions.IndexOfColMajor(indices);
+      return m_data[index];
+    }
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()() {
+    EIGEN_STATIC_ASSERT(NumIndices == 0, YOU_MADE_A_PROGRAMMING_MISTAKE)
+    return m_data[0];
+  }
+
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(Index index) {
+    eigen_internal_assert(index >= 0 && index < size());
+    return m_data[index];
+  }
+
+  template <typename... IndexTypes>
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE StorageRefType operator()(Index firstIndex, Index secondIndex,
+                                                                  IndexTypes... otherIndices) {
+    static_assert(sizeof...(otherIndices) + 2 == NumIndices || NumIndices == Dynamic,
+                  "Number of indices used to access a tensor coefficient must be equal to the rank of the tensor.");
+    eigen_assert(internal::indices_fit<Index>(otherIndices...));
+    const std::size_t NumDims = sizeof...(otherIndices) + 2;
+    EIGEN_IF_CONSTEXPR (PlainObjectType::Options & RowMajor) {
+      const Index index = m_dimensions.IndexOfRowMajor(
+          array<Index, NumDims>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
+      return m_data[index];
+    } else {
+      const Index index = m_dimensions.IndexOfColMajor(
+          array<Index, NumDims>{{firstIndex, secondIndex, static_cast<Index>(otherIndices)...}});
+      return m_data[index];
+    }
+  }
+
+  EIGEN_INHERIT_ASSIGNMENT_OPERATORS(TensorMap)
+
+ private:
+  StoragePointerType m_data;
+  Dimensions m_dimensions;
+};
+
+#if EIGEN_COMP_CXXVER < 17
+template <typename PlainObjectType, int Options_, template <class> class MakePointer_>
+constexpr typename TensorMap<PlainObjectType, Options_, MakePointer_>::Index
+    TensorMap<PlainObjectType, Options_, MakePointer_>::NumIndices;
+template <typename PlainObjectType, int Options_, template <class> class MakePointer_>
+constexpr int TensorMap<PlainObjectType, Options_, MakePointer_>::Layout;
+template <typename PlainObjectType, int Options_, template <class> class MakePointer_>
+constexpr int TensorMap<PlainObjectType, Options_, MakePointer_>::Options;
+#endif
+
+}  // end namespace Eigen
+
+#endif  // EIGEN_TENSOR_TENSOR_MAP_H

@@ -529,7 +529,10 @@ class BlockSparseMatrix
   BlockSparseMatrix operator/(const Scalar& s) const {
     return withValues_([&s](const auto& v) { return v / s; });
   }
-  BlockSparseMatrix& operator/=(const Scalar& s) { return *this *= (Scalar(1) / s); }
+  BlockSparseMatrix& operator/=(const Scalar& s) {
+    m_values.head(nonZeros()) /= s;
+    return *this;
+  }
 
   /** Scalar-on-left multiplication. */
   friend BlockSparseMatrix operator*(const Scalar& s, const BlockSparseMatrix& m) { return m * s; }
@@ -598,16 +601,19 @@ class BlockSparseMatrix
   // -------------------------------------------------------------------------
   bool isApprox(const BlockSparseMatrix& other,
                 const typename NumTraits<Scalar>::Real& prec = NumTraits<Scalar>::dummy_precision()) const {
-    using RealScalar = typename NumTraits<Scalar>::Real;
+    using Comparison = internal::sparse_approx_comparison<Scalar>;
+    using Wide = typename Comparison::Wide;
     // Frobenius-norm comparison, matching SparseMatrixBase::isApprox semantics
     // but computed directly from the block values — no scalar-level SparseMatrix
-    // materialization of either operand.  Explicit zero blocks contribute 0 to
-    // every norm, so the result is independent of structural differences.
-    RealScalar n2a = m_values.head(nonZeros()).matrix().squaredNorm();
-    RealScalar n2b = other.m_values.head(other.nonZeros()).matrix().squaredNorm();
-    BlockSparseMatrix diff = *this - other;
-    RealScalar d2 = diff.m_values.head(diff.nonZeros()).matrix().squaredNorm();
-    return d2 <= prec * prec * numext::mini(n2a, n2b);
+    // materialization of either operand while the squared norms are in range.
+    // Explicit zero blocks contribute 0 to every norm, so the result is
+    // independent of structural differences.
+    const auto squaredNorm = [](const BlockSparseMatrix& m) {
+      return m.m_values.head(m.nonZeros()).matrix().template cast<Wide>().squaredNorm();
+    };
+    return Comparison::compare(
+        squaredNorm(*this), squaredNorm(other), nonZeros() + other.nonZeros(), prec,
+        [&] { return squaredNorm(*this - other); }, [&] { return toSparse().isApprox(other.toSparse(), prec); });
   }
 
   // -------------------------------------------------------------------------
@@ -1322,7 +1328,7 @@ class BlockSparseTriangularView {
     EIGEN_STATIC_ASSERT(
         (std::is_same<Scalar, typename OtherDerived::Scalar>::value),
         YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
-    eigen_assert(m_matrix.cols() == rhs.rows() && "BlockSparseTriangularView * Dense: dimension mismatch");
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE_MSG(m_matrix, rhs, "BlockSparseTriangularView * Dense: dimension mismatch");
     using ResultType = Matrix<Scalar, Dynamic, OtherDerived::ColsAtCompileTime>;
     ResultType result = ResultType::Zero(m_matrix.rows(), rhs.cols());
     for (Index out = 0; out < m_matrix.m_blockOuterSize; ++out) {
@@ -1350,7 +1356,7 @@ class BlockSparseTriangularView {
     EIGEN_STATIC_ASSERT(
         (std::is_same<Scalar, typename OtherDerived::Scalar>::value),
         YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
-    eigen_assert(lhs.cols() == tri.m_matrix.rows() && "Dense * BlockSparseTriangularView: dimension mismatch");
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE_MSG(lhs, tri.m_matrix, "Dense * BlockSparseTriangularView: dimension mismatch");
     constexpr bool isRM = BSM::IsRowMajor;
     using ResultType = Matrix<Scalar, OtherDerived::RowsAtCompileTime, Dynamic>;
     // BSM befriends BlockSparseTriangularView, but GCC <= 11 and MSVC do not
@@ -1428,7 +1434,7 @@ class BlockSparseTriangularView {
     constexpr int DiagMode = IsUpper ? Upper : Lower;
     constexpr bool diagFirst = (IsUpper == BSM::IsRowMajor);
     Index nb = m_matrix.blockCols();  // == blockRows() for square matrices
-    eigen_assert(x.rows() == m_matrix.rows() && "solveInPlace: size mismatch");
+    EIGEN_INTERNAL_ASSERT_SAME_ROWS_MSG(x, m_matrix, "solveInPlace: size mismatch");
 
     const StorageIndex* innerPtr = m_matrix.innerIndexPtr();
     const StorageIndex* outerPtr = m_matrix.outerIndexPtr();
@@ -1440,6 +1446,10 @@ class BlockSparseTriangularView {
     for (Index k = outerStart; k != outerEnd; k += kStep) {
       const StorageIndex* beg = innerPtr + outerPtr[k];
       const StorageIndex* end = innerPtr + outerPtr[k + 1];
+      // A general stored matrix also holds blocks of the opposite triangle; skip them.
+      if (diagFirst) beg = std::lower_bound(beg, end, StorageIndex(k));
+      if (!diagFirst) end = std::upper_bound(beg, end, StorageIndex(k));
+      eigen_assert(beg != end && "solveInPlace: missing diagonal block");
       if (beg == end) continue;
       const StorageIndex* diag_ptr = diagFirst ? beg : end - 1;
       const StorageIndex* off_beg = diagFirst ? beg + 1 : beg;
@@ -1474,7 +1484,7 @@ class BlockSparseTriangularView {
     constexpr int DiagMode = IsUpper ? Upper : Lower;
     constexpr bool diagFirst = (IsUpper == BSM::IsRowMajor);
     Index nb = m_matrix.blockCols();  // == blockRows() for square matrices
-    eigen_assert(x.rows() == m_matrix.rows() && "solveInPlace: size mismatch");
+    EIGEN_INTERNAL_ASSERT_SAME_ROWS_MSG(x, m_matrix, "solveInPlace: size mismatch");
 
     const StorageIndex* innerPtr = m_matrix.innerIndexPtr();
     const StorageIndex* outerPtr = m_matrix.outerIndexPtr();
@@ -1486,6 +1496,10 @@ class BlockSparseTriangularView {
     for (Index k = outerStart; k != outerEnd; k += kStep) {
       const StorageIndex* beg = innerPtr + outerPtr[k];
       const StorageIndex* end = innerPtr + outerPtr[k + 1];
+      // A general stored matrix also holds blocks of the opposite triangle; skip them.
+      if (diagFirst) beg = std::lower_bound(beg, end, StorageIndex(k));
+      if (!diagFirst) end = std::upper_bound(beg, end, StorageIndex(k));
+      eigen_assert(beg != end && "solveInPlace: missing diagonal block");
       if (beg == end) continue;
       const StorageIndex* diag_ptr = diagFirst ? beg : end - 1;
       const StorageIndex* off_beg = diagFirst ? beg + 1 : beg;
@@ -1666,7 +1680,7 @@ class BlockSparseSelfAdjointView {
     EIGEN_STATIC_ASSERT(
         (std::is_same<Scalar, typename OtherDerived::Scalar>::value),
         YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
-    eigen_assert(m_matrix.cols() == rhs.rows() && "BlockSparseSelfAdjointView * Dense: dimension mismatch");
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE_MSG(m_matrix, rhs, "BlockSparseSelfAdjointView * Dense: dimension mismatch");
     using ResultType = Matrix<Scalar, Dynamic, OtherDerived::ColsAtCompileTime>;
     ResultType result = ResultType::Zero(m_matrix.rows(), rhs.cols());
 
@@ -1801,7 +1815,7 @@ struct generic_product_impl<Lhs, Rhs, BlockSparseShape, DenseShape, ProductType>
           using TmpType = Matrix<Scalar, BR, Rhs::ColsAtCompileTime>;
           TmpType tmp(BR, rhs.cols());
           tmp.noalias() = lhs.blockRef(id) * rhs_seg;
-          dst_seg.noalias() += alpha * tmp;
+          dst_seg += alpha * tmp;
         }
       }
     }
@@ -1840,7 +1854,7 @@ struct generic_product_impl<Lhs, Rhs, DenseShape, BlockSparseShape, ProductType>
           using TmpType = Matrix<Scalar, Lhs::RowsAtCompileTime, BC>;
           TmpType tmp(lhs.rows(), BC);
           tmp.noalias() = lhs_seg * rhs.blockRef(id);
-          dst_seg.noalias() += alpha * tmp;
+          dst_seg += alpha * tmp;
         }
       }
     }

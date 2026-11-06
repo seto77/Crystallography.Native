@@ -17,6 +17,12 @@
 namespace Eigen {
 
 namespace internal {
+// Preserve Array's scalar-conversion gate for non-dense expressions such as permutations.
+template <typename Scalar, typename OtherDerived>
+using is_valid_array_conversion = std::conditional_t<std::is_base_of<DenseBase<OtherDerived>, OtherDerived>::value,
+                                                     is_valid_dense_conversion<Scalar, OtherDerived>,
+                                                     std::is_convertible<typename OtherDerived::Scalar, Scalar>>;
+
 template <typename Scalar_, int Rows_, int Cols_, int Options_, int MaxRows_, int MaxCols_>
 struct traits<Array<Scalar_, Rows_, Cols_, Options_, MaxRows_, MaxCols_>>
     : traits<Matrix<Scalar_, Rows_, Cols_, Options_, MaxRows_, MaxCols_>> {
@@ -104,10 +110,15 @@ class Array : public PlainObjectBase<Array<Scalar_, Rows_, Cols_, Options_, MaxR
    * For dynamic-size matrices, creates an empty matrix of size 0. Does not allocate any array. Such a matrix
    * is called a null matrix. An existing matrix can also be turned into a null matrix by resizing it to 0.
    *
+   * Unless \c EIGEN_INITIALIZE_MATRICES_BY_ZERO or \c EIGEN_INITIALIZE_MATRICES_BY_NAN is defined, this constructor is
+   * defaulted, so value-initialization (<tt>Array a{};</tt>, <tt>Array()</tt>, or <tt>a()</tt> in a member
+   * initializer list) zero-initializes the whole object first, including the unused part of a fixed-maximum-size
+   * inline buffer. Default-initialization (<tt>Array a;</tt>) only default-initializes the coefficients.
+   *
    * \sa resize(Index,Index)
    */
 #ifdef EIGEN_INITIALIZE_COEFFS
-  EIGEN_DEVICE_FUNC constexpr Array() : Base() { EIGEN_INITIALIZE_COEFFS_IF_THAT_OPTION_IS_ENABLED }
+  EIGEN_DEVICE_FUNC constexpr Array() { EIGEN_INITIALIZE_COEFFS_IF_THAT_OPTION_IS_ENABLED }
 #else
   EIGEN_DEVICE_FUNC constexpr Array() = default;
 #endif
@@ -226,16 +237,19 @@ class Array : public PlainObjectBase<Array<Scalar_, Rows_, Cols_, Options_, MaxR
   struct PrivateType {};
 
  public:
-  /** \sa MatrixBase::operator=(const EigenBase<OtherDerived>&) */
+  /** Constructs an array from an expression with compatible scalar types.
+   * Use \c .cast<NewScalar>() to convert between scalar types.
+   * \sa MatrixBase::operator=(const EigenBase<OtherDerived>&)
+   */
   template <typename OtherDerived,
-            std::enable_if_t<std::is_convertible<typename OtherDerived::Scalar, Scalar>::value, int> = 0>
+            std::enable_if_t<internal::is_valid_array_conversion<Scalar, OtherDerived>::value, int> = 0>
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Array(const EigenBase<OtherDerived>& other) : Base(other.derived()) {}
 
   template <typename OtherDerived>
   EIGEN_DEPRECATED_WITH_REASON("Omit the implementation-only second argument.")
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Array(
       const EigenBase<OtherDerived>& other,
-      std::enable_if_t<std::is_convertible<typename OtherDerived::Scalar, Scalar>::value, PrivateType>)
+      std::enable_if_t<internal::is_valid_array_conversion<Scalar, OtherDerived>::value, PrivateType>)
       : Array(other) {}
 
   EIGEN_DEVICE_FUNC constexpr Index innerStride() const noexcept { return 1; }
@@ -287,15 +301,15 @@ class Array : public PlainObjectBase<Array<Scalar_, Rows_, Cols_, Options_, MaxR
 
 #define EIGEN_MAKE_ARRAY_TYPEDEFS(Type, TypeSuffix, Size, SizeSuffix)        \
   /** \ingroup arraytypedefs */                                              \
-  typedef Array<Type, Size, Size> Array##SizeSuffix##SizeSuffix##TypeSuffix; \
+  using Array##SizeSuffix##SizeSuffix##TypeSuffix = Array<Type, Size, Size>; \
   /** \ingroup arraytypedefs */                                              \
-  typedef Array<Type, Size, 1> Array##SizeSuffix##TypeSuffix;
+  using Array##SizeSuffix##TypeSuffix = Array<Type, Size, 1>;
 
 #define EIGEN_MAKE_ARRAY_FIXED_TYPEDEFS(Type, TypeSuffix, Size)  \
   /** \ingroup arraytypedefs */                                  \
-  typedef Array<Type, Size, Dynamic> Array##Size##X##TypeSuffix; \
+  using Array##Size##X##TypeSuffix = Array<Type, Size, Dynamic>; \
   /** \ingroup arraytypedefs */                                  \
-  typedef Array<Type, Dynamic, Size> Array##X##Size##TypeSuffix;
+  using Array##X##Size##TypeSuffix = Array<Type, Dynamic, Size>;
 
 #define EIGEN_MAKE_ARRAY_TYPEDEFS_ALL_SIZES(Type, TypeSuffix) \
   EIGEN_MAKE_ARRAY_TYPEDEFS(Type, TypeSuffix, 2, 2)           \

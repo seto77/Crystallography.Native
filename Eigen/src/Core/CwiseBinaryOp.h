@@ -18,6 +18,17 @@
 namespace Eigen {
 
 namespace internal {
+template <typename BinaryOp>
+struct binary_op_compatibility {
+  using type = BinaryOp;
+};
+
+// The optimized multiply has the same scalar contract as scalar_product_op.
+template <typename LhsScalar, typename RhsScalar>
+struct binary_op_compatibility<fast_mult_op<LhsScalar, RhsScalar>> {
+  using type = scalar_product_op<LhsScalar, RhsScalar>;
+};
+
 template <typename BinaryOp, typename Lhs, typename Rhs>
 struct traits<CwiseBinaryOp<BinaryOp, Lhs, Rhs>> {
   // we must not inherit from traits<Lhs> since it has
@@ -89,7 +100,8 @@ class CwiseBinaryOp : public CwiseBinaryOpImpl<BinaryOp, LhsType, RhsType,
                                                     typename internal::traits<Rhs>::StorageKind, BinaryOp>::ret>::Base;
   EIGEN_GENERIC_PUBLIC_INTERFACE(CwiseBinaryOp)
 
-  EIGEN_CHECK_BINARY_COMPATIBILITY(BinaryOp, typename Lhs::Scalar, typename Rhs::Scalar)
+  EIGEN_CHECK_BINARY_COMPATIBILITY(typename internal::binary_op_compatibility<BinaryOp>::type, typename Lhs::Scalar,
+                                   typename Rhs::Scalar)
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(Lhs, Rhs)
 
   using LhsNested = typename internal::ref_selector<LhsType>::type;
@@ -100,7 +112,7 @@ class CwiseBinaryOp : public CwiseBinaryOpImpl<BinaryOp, LhsType, RhsType,
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE CwiseBinaryOp(const Lhs& aLhs, const Rhs& aRhs,
                                                                 const BinaryOp& func = BinaryOp())
       : m_lhs(aLhs), m_rhs(aRhs), m_functor(func) {
-    eigen_assert(aLhs.rows() == aRhs.rows() && aLhs.cols() == aRhs.cols());
+    EIGEN_INTERNAL_ASSERT_SAME_SHAPE(aLhs, aRhs);
   }
 
   EIGEN_DEVICE_FUNC constexpr Index rows() const noexcept {

@@ -264,10 +264,7 @@ class ColPivHouseholderQR : public SolverBase<ColPivHouseholderQR<MatrixType_, P
   typename MatrixType::Scalar signDeterminant() const;
 
   /** \returns the absolute value of the i-th pivot coefficient (for RankRevealingBase). */
-  RealScalar pivotCoeff(Index i) const {
-    using std::abs;
-    return abs(m_qr.coeff(i, i));
-  }
+  RealScalar pivotCoeff(Index i) const { return numext::abs(m_qr.coeff(i, i)); }
 
   /** \returns the inverse of the matrix of which *this is the QR decomposition.
    *
@@ -328,7 +325,7 @@ class ColPivHouseholderQR : public SolverBase<ColPivHouseholderQR<MatrixType_, P
 template <typename MatrixType, typename PermutationIndex>
 typename MatrixType::Scalar ColPivHouseholderQR<MatrixType, PermutationIndex>::determinant() const {
   eigen_assert(m_isInitialized && "HouseholderQR is not initialized.");
-  eigen_assert(m_qr.rows() == m_qr.cols() && "You can't take the determinant of a non-square matrix!");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_qr, "You can't take the determinant of a non-square matrix!");
   Scalar detQ;
   internal::householder_determinant<HCoeffsType, Scalar, NumTraits<Scalar>::IsComplex>::run(m_hCoeffs, detQ);
   return isInjective() ? (detQ * Scalar(m_det_p)) * m_qr.diagonal().prod() : Scalar(0);
@@ -336,23 +333,22 @@ typename MatrixType::Scalar ColPivHouseholderQR<MatrixType, PermutationIndex>::d
 
 template <typename MatrixType, typename PermutationIndex>
 typename MatrixType::RealScalar ColPivHouseholderQR<MatrixType, PermutationIndex>::absDeterminant() const {
-  using std::abs;
   eigen_assert(m_isInitialized && "ColPivHouseholderQR is not initialized.");
-  eigen_assert(m_qr.rows() == m_qr.cols() && "You can't take the determinant of a non-square matrix!");
-  return isInjective() ? abs(m_qr.diagonal().prod()) : RealScalar(0);
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_qr, "You can't take the determinant of a non-square matrix!");
+  return isInjective() ? numext::abs(m_qr.diagonal().prod()) : RealScalar(0);
 }
 
 template <typename MatrixType, typename PermutationIndex>
 typename MatrixType::RealScalar ColPivHouseholderQR<MatrixType, PermutationIndex>::logAbsDeterminant() const {
   eigen_assert(m_isInitialized && "ColPivHouseholderQR is not initialized.");
-  eigen_assert(m_qr.rows() == m_qr.cols() && "You can't take the determinant of a non-square matrix!");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_qr, "You can't take the determinant of a non-square matrix!");
   return isInjective() ? m_qr.diagonal().cwiseAbs().array().log().sum() : -NumTraits<RealScalar>::infinity();
 }
 
 template <typename MatrixType, typename PermutationIndex>
 typename MatrixType::Scalar ColPivHouseholderQR<MatrixType, PermutationIndex>::signDeterminant() const {
   eigen_assert(m_isInitialized && "ColPivHouseholderQR is not initialized.");
-  eigen_assert(m_qr.rows() == m_qr.cols() && "You can't take the determinant of a non-square matrix!");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_qr, "You can't take the determinant of a non-square matrix!");
   Scalar detQ;
   internal::householder_determinant<HCoeffsType, Scalar, NumTraits<Scalar>::IsComplex>::run(m_hCoeffs, detQ);
   return isInjective() ? (detQ * Scalar(m_det_p)) * m_qr.diagonal().array().sign().prod() : Scalar(0);
@@ -377,8 +373,6 @@ template <typename MatrixType, typename PermutationIndex>
 void ColPivHouseholderQR<MatrixType, PermutationIndex>::computeInPlace() {
   eigen_assert(m_qr.cols() <= NumTraits<PermutationIndex>::highest());
 
-  using std::abs;
-
   Index rows = m_qr.rows();
   Index cols = m_qr.cols();
   Index size = m_qr.diagonalSize();
@@ -390,17 +384,14 @@ void ColPivHouseholderQR<MatrixType, PermutationIndex>::computeInPlace() {
   m_colsTranspositions.resize(m_qr.cols());
   Index number_of_transpositions = 0;
 
-  m_colNormsUpdated.resize(cols);
-  m_colNormsDirect.resize(cols);
-  for (Index k = 0; k < cols; ++k) {
-    // colNormsDirect(k) caches the most recent directly computed norm of
-    // column k.
-    m_colNormsDirect.coeffRef(k) = m_qr.col(k).norm();
-    m_colNormsUpdated.coeffRef(k) = m_colNormsDirect.coeffRef(k);
-  }
+  // m_colNormsDirect caches the most recent directly computed column norms.
+  m_colNormsDirect = m_qr.colwise().norm();
+  m_colNormsUpdated = m_colNormsDirect;
 
   RealScalar threshold_helper =
-      numext::abs2<RealScalar>(m_colNormsUpdated.maxCoeff() * NumTraits<RealScalar>::epsilon()) / RealScalar(rows);
+      cols == 0 ? RealScalar(0)
+                : numext::abs2<RealScalar>(m_colNormsUpdated.maxCoeff() * NumTraits<RealScalar>::epsilon()) /
+                      RealScalar(rows);
   RealScalar norm_downdate_threshold = numext::sqrt(NumTraits<RealScalar>::epsilon());
 
   this->m_nonzero_pivots = size;  // the generic case is that in which all pivots are nonzero (invertible case)
@@ -434,7 +425,7 @@ void ColPivHouseholderQR<MatrixType, PermutationIndex>::computeInPlace() {
     m_qr.coeffRef(k, k) = beta;
 
     // remember the maximum absolute value of diagonal coefficients
-    if (abs(beta) > this->m_maxpivot) this->m_maxpivot = abs(beta);
+    if (numext::abs(beta) > this->m_maxpivot) this->m_maxpivot = numext::abs(beta);
 
     // apply the householder transformation
     m_qr.bottomRightCorner(rows - k, cols - k - 1)
@@ -447,7 +438,7 @@ void ColPivHouseholderQR<MatrixType, PermutationIndex>::computeInPlace() {
       // and used in LAPACK routines xGEQPF and xGEQP3.
       // See lines 278-297 in http://www.netlib.org/lapack/explore-html/dc/df4/sgeqpf_8f_source.html
       if (!numext::is_exactly_zero(m_colNormsUpdated.coeffRef(j))) {
-        RealScalar temp = abs(m_qr.coeffRef(k, j)) / m_colNormsUpdated.coeffRef(j);
+        RealScalar temp = numext::abs(m_qr.coeffRef(k, j)) / m_colNormsUpdated.coeffRef(j);
         temp = (RealScalar(1) + temp) * (RealScalar(1) - temp);
         temp = temp < RealScalar(0) ? RealScalar(0) : temp;
         RealScalar temp2 =

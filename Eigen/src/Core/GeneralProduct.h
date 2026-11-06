@@ -25,7 +25,7 @@ enum { Large = 2, Small = 3 };
 // products/GeneralMatrixMatrix.h for more details.
 // The crossover belongs to the kernel the GEMM path would select, not to the
 // build: a scalar type that falls back to the generic gebp kernel keeps this
-// value even in an SME build. The SME kernels have their own, larger crossovers
+// value even in an SME build. The SME kernels have their own crossovers
 // -- sme_gemm_to_coeffbased_threshold and
 // EIGEN_SME_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD below.
 #ifndef EIGEN_GEMM_TO_COEFFBASED_THRESHOLD
@@ -36,22 +36,17 @@ enum { Large = 2, Small = 3 };
 // Fixed-size products can reach the GEMM product path even when the
 // coeff-based evaluator is still faster. Keep this threshold separate so
 // runtime-size dispatch preserves the historical heuristic above. This default
-// was tuned on the same Haswell system as the runtime threshold, and deliberately
-// tracks EIGEN_GEMM_TO_COEFFBASED_THRESHOLD unless specialized independently.
+// was tuned on the same Haswell system as the runtime threshold. It does not
+// follow a user-defined EIGEN_GEMM_TO_COEFFBASED_THRESHOLD, which still applies
+// at run time, so a fixed-size product's crossover is the larger of the two.
 #ifndef EIGEN_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD
-#define EIGEN_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD (2 * EIGEN_GEMM_TO_COEFFBASED_THRESHOLD)
+#define EIGEN_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD 40
 #endif
 
 #ifdef EIGEN_VECTORIZE_SME
-// Measured separately rather than inherited as twice the runtime threshold: on
-// SME the fixed-size crossover sits at 56, where doubling would put it at 80 and
-// cost up to 3.2x on fixed-size products in the high teens and twenties. The
-// optimum is again flat (48..60 within 1%). It applies only to the scalar pairs
-// the SME kernel claims -- int, half, bfloat16, mixed real x complex, and
-// double / complex<double> without FEAT_SME_F64F64, all run the generic kernel
-// and want the generic value.
+// Read only for SME-kernel scalar pairs; fitted on Apple M4 Pro to today's NEON small-block bounds (re-measure: #3194).
 #ifndef EIGEN_SME_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD
-#define EIGEN_SME_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD 56
+#define EIGEN_SME_FIXED_SIZE_GEMM_TO_COEFFBASED_THRESHOLD 61
 #endif
 #endif
 
@@ -103,20 +98,15 @@ struct sme_has_gebp_kernel;
 // value, which is what such a sweep wants. The primary template answers with the
 // generic threshold: sme_has_gebp_kernel gates the dispatch, so a scalar pair
 // without an SME kernel never reads the table.
+// With the NEON small-block path (arch/SME/GeneralBlockPanelKernel.h) the SME
+// kernels take the generic crossover: below it the small products run the NEON
+// packers and kernel, so the SME build matches a NEON build there.
 #ifdef EIGEN_SME_GEMM_TO_COEFFBASED_THRESHOLD
 template <typename Scalar>
 struct sme_gemm_to_coeffbased_threshold : std::integral_constant<int, EIGEN_SME_GEMM_TO_COEFFBASED_THRESHOLD> {};
 #else
 template <typename Scalar>
 struct sme_gemm_to_coeffbased_threshold : std::integral_constant<int, EIGEN_GEMM_TO_COEFFBASED_THRESHOLD> {};
-template <>
-struct sme_gemm_to_coeffbased_threshold<float> : std::integral_constant<int, 78> {};
-template <>
-struct sme_gemm_to_coeffbased_threshold<double> : std::integral_constant<int, 54> {};
-template <>
-struct sme_gemm_to_coeffbased_threshold<std::complex<float> > : std::integral_constant<int, 60> {};
-template <>
-struct sme_gemm_to_coeffbased_threshold<std::complex<double> > : std::integral_constant<int, 45> {};
 #endif
 #endif
 
@@ -294,6 +284,11 @@ struct gemv_static_vector_if<Scalar, Size, Dynamic, true> {
   EIGEN_DEVICE_FUNC constexpr Scalar* data() { return 0; }
 };
 
+template <typename Scalar, int Size>
+struct gemv_static_vector_if<Scalar, Size, 0, true> {
+  EIGEN_DEVICE_FUNC constexpr Scalar* data() { return nullptr; }
+};
+
 template <typename Scalar, int Size, int MaxSize>
 struct gemv_static_vector_if<Scalar, Size, MaxSize, true> {
 #if EIGEN_MAX_STATIC_ALIGN_BYTES != 0
@@ -401,15 +396,71 @@ EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void gemv_prepare_rhs(
   }
 }
 
-// The vector is on the left => transposition
+// Transposing a left-vector GEMV is valid only for commutative coefficient multiplication.
 template <int StorageOrder, bool BlasCompatible>
 struct gemv_dense_selector<OnTheLeft, StorageOrder, BlasCompatible> {
   template <typename Lhs, typename Rhs, typename Dest>
   static void run(const Lhs& lhs, const Rhs& rhs, Dest& dest, const typename Dest::Scalar& alpha) {
+    run_impl(lhs, rhs, dest, alpha,
+             functor_is_commutative<scalar_product_op<typename Lhs::Scalar, typename Rhs::Scalar>>());
+  }
+
+ private:
+  template <typename Lhs, typename Rhs, typename Dest>
+  static void run_impl(const Lhs& lhs, const Rhs& rhs, Dest& dest, const typename Dest::Scalar& alpha, true_type) {
     Transpose<Dest> destT(dest);
     enum { OtherStorageOrder = StorageOrder == RowMajor ? ColMajor : RowMajor };
     gemv_dense_selector<OnTheRight, OtherStorageOrder, BlasCompatible>::run(rhs.transpose(), lhs.transpose(), destT,
                                                                             alpha);
+  }
+
+  template <typename Lhs, typename Rhs, typename Dest>
+  static void run_impl(const Lhs& lhs, const Rhs& rhs, Dest& dest, const typename Dest::Scalar& alpha, false_type) {
+    if (numext::is_exactly_zero(alpha)) return;
+    evaluator<Lhs> lhsEval(lhs);
+    evaluator<Rhs> rhsEval(rhs);
+    for (Index col = 0; col < rhs.cols(); ++col) {
+      typename Product<Lhs, Rhs>::Scalar sum(0);
+      for (Index k = 0; k < rhs.rows(); ++k) sum += lhsEval.coeff(k) * rhsEval.coeff(k, col);
+      dest.coeffRef(col) += alpha * sum;
+    }
+  }
+};
+
+// Keep the shortcut's expression out of the general GEMV caller's inlining budget.
+template <bool ConjugateLhs, typename LhsScalar, typename RhsScalar, typename Dest>
+EIGEN_DONT_INLINE void gemv_single_column_update(const LhsScalar* data, Index rows, Index stride, RhsScalar rhsValue,
+                                                 typename Dest::Scalar alpha, Dest& dest) {
+  using Column = Matrix<LhsScalar, Dynamic, 1>;
+  // A runtime stride of one must be visible to the assignment evaluator to enable packets.
+  // Preserve alpha * (lhs * rhs): folding alpha into rhs can overflow before the product.
+  if (stride == 1) {
+    Map<const Column> column(data, rows);
+    dest.col(0).matrix() += alpha * (column.template conjugateIf<ConjugateLhs>() * rhsValue);
+  } else {
+    Map<const Column, Unaligned, InnerStride<>> column(data, rows, InnerStride<>(stride));
+    dest.col(0).matrix() += alpha * (column.template conjugateIf<ConjugateLhs>() * rhsValue);
+  }
+}
+
+template <bool Enable, bool ConjugateLhs, bool ConjugateRhs>
+struct gemv_single_column {
+  template <typename Lhs, typename Rhs, typename Scalar, typename Dest>
+  static EIGEN_STRONG_INLINE bool run(const Lhs&, const Rhs&, const Scalar&, Dest&, bool) {
+    return false;
+  }
+};
+
+template <bool ConjugateLhs, bool ConjugateRhs>
+struct gemv_single_column<true, ConjugateLhs, ConjugateRhs> {
+  template <typename Lhs, typename Rhs, typename Scalar, typename Dest>
+  static EIGEN_STRONG_INLINE bool run(const Lhs& lhs, const Rhs& rhs, const Scalar& alpha, Dest& dest, bool eligible) {
+    if (!eligible || lhs.cols() != 1) return false;
+    if (!numext::is_exactly_zero(alpha)) {
+      gemv_single_column_update<ConjugateLhs>(lhs.data(), lhs.rows(), lhs.col(0).innerStride(),
+                                              conj_if<ConjugateRhs>()(rhs.coeff(0, 0)), alpha, dest);
+    }
+    return true;
   }
 };
 
@@ -430,6 +481,16 @@ struct gemv_dense_selector<OnTheRight, ColMajor, true> {
     ActualRhsType actualRhs = RhsBlasTraits::extract(rhs);
 
     ResScalar actualAlpha = combine_scalar_factors(alpha, lhs, rhs);
+
+    constexpr bool DoubleScalars = std::is_same<LhsScalar, RhsScalar>::value &&
+                                   std::is_same<LhsScalar, ResScalar>::value && std::is_same<ResScalar, double>::value;
+    // Float updates can be slower than the buffered packet kernel; bypass it only for matching double scalars.
+    constexpr bool EnableSingleColumn =
+        Lhs::ColsAtCompileTime == Dynamic && DoubleScalars && Dest::InnerStrideAtCompileTime != 1;
+    if (gemv_single_column<EnableSingleColumn, LhsBlasTraits::NeedToConjugate, RhsBlasTraits::NeedToConjugate>::run(
+            actualLhs, actualRhs, actualAlpha, dest,
+            Dest::InnerStrideAtCompileTime != Dynamic || dest.innerStride() != 1))
+      return;
 
     // make sure Dest is a compile-time vector type (bug 1166)
     using ActualDest = std::conditional_t<Dest::IsVectorAtCompileTime, Dest, typename Dest::ColXpr>;
@@ -498,6 +559,15 @@ struct gemv_dense_selector<OnTheRight, RowMajor, true> {
 
     ResScalar actualAlpha = combine_scalar_factors(alpha, lhs, rhs);
 
+    // Cost heuristic: broadcasts may allocate for owning scalars. Complex shortcuts can worsen GCC's kernel spilling.
+    constexpr bool EnableSingleColumn = Lhs::ColsAtCompileTime == Dynamic && !NumTraits<ResScalar>::IsComplex &&
+                                        std::is_trivially_copyable<LhsScalar>::value &&
+                                        std::is_trivially_copyable<RhsScalar>::value &&
+                                        std::is_trivially_copyable<ResScalar>::value;
+    if (gemv_single_column<EnableSingleColumn, LhsBlasTraits::NeedToConjugate, RhsBlasTraits::NeedToConjugate>::run(
+            actualLhs, actualRhs, actualAlpha, dest, true))
+      return;
+
     enum {
       // FIXME: find a way to allow an inner stride on the result if packet_traits<Scalar>::size==1
       // on the other hand it is good for the cache to pack the vector anyways...
@@ -537,7 +607,7 @@ struct gemv_dense_selector<OnTheRight, ColMajor, false> {
     // otherwise use a temp
     typename nested_eval<Rhs, 1>::type actual_rhs(rhs);
     const Index size = rhs.rows();
-    for (Index k = 0; k < size; ++k) dest += (alpha * actual_rhs.coeff(k)) * lhs.col(k);
+    for (Index k = 0; k < size; ++k) dest.matrix() += (alpha * actual_rhs.coeff(k)) * lhs.col(k);
   }
 };
 

@@ -229,7 +229,10 @@ struct inplace_transpose_selector<MatrixType, true, true> {  // PacketSize x Pac
     using Scalar = typename MatrixType::Scalar;
     using Packet = typename internal::packet_traits<typename MatrixType::Scalar>::type;
     const Index PacketSize = internal::packet_traits<Scalar>::size;
-    const Index Alignment = internal::evaluator<MatrixType>::Alignment;
+    // The start alignment carries over to every column only if the outer stride is a multiple of the packet size.
+    const Index Alignment = internal::outer_stride_at_compile_time<MatrixType>::value % PacketSize == 0
+                                ? int(internal::evaluator<MatrixType>::Alignment)
+                                : int(Unaligned);
     PacketBlock<Packet> A;
     for (Index i = 0; i < PacketSize; ++i) A.packet[i] = m.template packetByOuterInner<Alignment>(i, 0);
     internal::ptranspose(A);
@@ -243,10 +246,10 @@ void BlockedInPlaceTranspose(MatrixType& m) {
   using Scalar = typename MatrixType::Scalar;
   using Packet = typename internal::packet_traits<typename MatrixType::Scalar>::type;
   const Index PacketSize = internal::packet_traits<Scalar>::size;
-  eigen_assert(m.rows() == m.cols());
-  int row_start = 0;
+  EIGEN_INTERNAL_ASSERT_SQUARE(m);
+  Index row_start = 0;
   for (; row_start + PacketSize <= m.rows(); row_start += PacketSize) {
-    for (int col_start = row_start; col_start + PacketSize <= m.cols(); col_start += PacketSize) {
+    for (Index col_start = row_start; col_start + PacketSize <= m.cols(); col_start += PacketSize) {
       PacketBlock<Packet> A;
       if (row_start == col_start) {
         for (Index i = 0; i < PacketSize; ++i)
@@ -272,8 +275,10 @@ void BlockedInPlaceTranspose(MatrixType& m) {
       }
     }
   }
+  // Blocks rather than row()/col(): with a zero-sized fixed dimension those are not vectors and head() would not
+  // compile.
   for (Index row = row_start; row < m.rows(); ++row) {
-    m.matrix().row(row).head(row).swap(m.matrix().col(row).head(row).transpose());
+    m.matrix().block(row, 0, 1, row).swap(m.matrix().block(0, row, row, 1).transpose());
   }
 }
 
@@ -283,9 +288,9 @@ struct inplace_transpose_selector<MatrixType, false, MatchPacketSize> {  // non 
     using Scalar = typename MatrixType::Scalar;
     if (m.rows() == m.cols()) {
       const Index PacketSize = internal::packet_traits<Scalar>::size;
-      EIGEN_IF_CONSTEXPR (!NumTraits<Scalar>::IsComplex) {
+      EIGEN_IF_CONSTEXPR (!NumTraits<Scalar>::IsComplex && (internal::evaluator<MatrixType>::Flags & PacketAccessBit)) {
         if (m.rows() >= PacketSize) {
-          if ((m.rows() % PacketSize) == 0)
+          if ((m.rows() % PacketSize) == 0 && (m.outerStride() % PacketSize) == 0)
             BlockedInPlaceTranspose<MatrixType, internal::evaluator<MatrixType>::Alignment>(m);
           else
             BlockedInPlaceTranspose<MatrixType, Unaligned>(m);
@@ -323,8 +328,11 @@ struct inplace_transpose_selector<MatrixType, false, MatchPacketSize> {  // non 
  * \sa transpose(), adjoint(), adjointInPlace() */
 template <typename Derived>
 EIGEN_DEVICE_FUNC inline void DenseBase<Derived>::transposeInPlace() {
-  eigen_assert((rows() == cols() || (RowsAtCompileTime == Dynamic && ColsAtCompileTime == Dynamic)) &&
-               "transposeInPlace() called on a non-square non-resizable matrix");
+  using ShapeRelation = std::conditional_t<RowsAtCompileTime == Dynamic && ColsAtCompileTime == Dynamic,
+                                           internal::dimension_relation<1, 1>, internal::square_dimensions<Derived>>;
+  EIGEN_INTERNAL_SHAPE_ASSERT(ShapeRelation::Proven,
+                              (rows() == cols() || (RowsAtCompileTime == Dynamic && ColsAtCompileTime == Dynamic)) &&
+                                  "transposeInPlace() called on a non-square non-resizable matrix");
   internal::inplace_transpose_selector<Derived>::run(derived());
 }
 

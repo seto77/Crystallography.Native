@@ -35,12 +35,11 @@ namespace internal {
 */
 template <typename Vector, typename RealScalar>
 typename Vector::Scalar omega(const Vector& t, const Vector& s, RealScalar angle) {
-  using numext::abs;
   using Scalar = typename Vector::Scalar;
   const RealScalar ns = s.stableNorm();
   const RealScalar nt = t.stableNorm();
   const Scalar ts = t.dot(s);
-  const RealScalar rho = abs(ts / (nt * ns));
+  const RealScalar rho = numext::abs(ts / (nt * ns));
 
   if (rho < angle) {
     if (ts == Scalar(0)) {
@@ -50,7 +49,7 @@ typename Vector::Scalar omega(const Vector& t, const Vector& s, RealScalar angle
     // om = om * angle / rho;
     // To alleviate potential (near) division by zero this can be rewritten as
     // om = angle * (ns / nt) * (ts / abs(ts)) = angle * (ns / nt) * sgn(ts)
-    return angle * (ns / nt) * (ts / abs(ts));
+    return angle * (ns / nt) * (ts / numext::abs(ts));
   }
   return ts / (nt * nt);
 }
@@ -134,13 +133,13 @@ bool idrs(const MatrixType& A, const Rhs& b, Dest& x, const Preconditioner& prec
       lu_solver.compute(M.block(k, k, S - k, S - k));
       VectorType c = lu_solver.solve(f.segment(k, S - k));
       // v = r - G(:,k:s)*c;
-      v = r - G.rightCols(S - k) * c;
+      v.noalias() = r - G.rightCols(S - k) * c;
       // Preconditioning
       v = precond.solve(v);
 
       // Compute new U(:,k) and G(:,k), G(:,k) is in space G_j
       U.col(k) = U.rightCols(S - k) * c + om * v;
-      G.col(k) = A * U.col(k);
+      G.col(k).noalias() = A * U.col(k);
 
       // Bi-Orthogonalise the new basis vectors:
       for (Index i = 0; i < k - 1; ++i) {
@@ -172,7 +171,7 @@ bool idrs(const MatrixType& A, const Rhs& b, Dest& x, const Preconditioner& prec
       if (smoothing) {
         t = r_s - r;
         // gamma is a Scalar, but the conversion is not allowed
-        Scalar gamma = t.dot(r_s) / t.stableNorm();
+        Scalar gamma = t.dot(r_s) / t.squaredNorm();
         r_s = r_s - gamma * t;
         x_s = x_s - gamma * (x_s - x);
         normr = r_s.stableNorm();
@@ -199,7 +198,7 @@ bool idrs(const MatrixType& A, const Rhs& b, Dest& x, const Preconditioner& prec
     v = precond.solve(v);
 
     // Matrix-vector multiplication:
-    t = A * v;
+    t.noalias() = A * v;
 
     // Computation of a new omega
     om = internal::omega(t, r, angle);
@@ -218,14 +217,14 @@ bool idrs(const MatrixType& A, const Rhs& b, Dest& x, const Preconditioner& prec
 
     // Residual replacement?
     if (trueres && normr < normb) {
-      r = b - A * x;
+      r.noalias() = b - A * x;
       trueres = false;
     }
 
     // Smoothing:
     if (smoothing) {
       t = r_s - r;
-      Scalar gamma = t.dot(r_s) / t.stableNorm();
+      Scalar gamma = t.dot(r_s) / t.squaredNorm();
       r_s = r_s - gamma * t;
       x_s = x_s - gamma * (x_s - x);
       normr = r_s.stableNorm();

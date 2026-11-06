@@ -48,7 +48,9 @@ struct packetwise_redux_traits {
   static constexpr int Cost = OuterSize == Dynamic
                                   ? HugeCost
                                   : OuterSize * Evaluator::CoeffReadCost + (OuterSize - 1) * functor_traits<Func>::Cost;
-  static constexpr int Unrolling = Cost <= EIGEN_UNROLLING_LIMIT ? CompleteUnrolling : NoUnrolling;
+  // A user-set EIGEN_UNROLLING_LIMIT can reach HugeCost, which therefore does not rule out a runtime size.
+  static constexpr int Unrolling =
+      (OuterSize != Dynamic && Cost <= EIGEN_UNROLLING_LIMIT) ? CompleteUnrolling : NoUnrolling;
 };
 
 /* Value to be returned when size==0 , by default let's return 0 */
@@ -205,7 +207,9 @@ struct evaluator<PartialReduxExpr<ArgType, MemberOp, Direction> >
     static constexpr int PacketSize = internal::unpacket_traits<PacketType>::size;
     static constexpr int PanelRows = Direction == Vertical ? ArgType::RowsAtCompileTime : PacketSize;
     static constexpr int PanelCols = Direction == Vertical ? PacketSize : ArgType::ColsAtCompileTime;
-    using PanelType = Block<const ArgTypeNestedCleaned, PanelRows, PanelCols, true /* InnerPanel */>;
+    // Not an InnerPanel: the panel starts at an arbitrary inner index idx, so its outer stride says nothing about the
+    // alignment of its packets.
+    using PanelType = Block<const ArgTypeNestedCleaned, PanelRows, PanelCols, false>;
     using PanelEvaluator = typename internal::redux_evaluator<PanelType>;
     using BinaryOp = typename MemberOp::BinaryOp;
     using Impl = internal::packetwise_redux_impl<BinaryOp, PanelEvaluator>;
@@ -235,7 +239,7 @@ struct evaluator<PartialReduxExpr<ArgType, MemberOp, Direction> >
   EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC PacketType packetSegment(Index idx, Index begin, Index count) const {
     static constexpr int PanelRows = Direction == Vertical ? ArgType::RowsAtCompileTime : Dynamic;
     static constexpr int PanelCols = Direction == Vertical ? Dynamic : ArgType::ColsAtCompileTime;
-    using PanelType = Block<const ArgTypeNestedCleaned, PanelRows, PanelCols, true /* InnerPanel */>;
+    using PanelType = Block<const ArgTypeNestedCleaned, PanelRows, PanelCols, false>;
     using PanelEvaluator = typename internal::redux_evaluator<PanelType>;
     using BinaryOp = typename MemberOp::BinaryOp;
     using Impl = internal::packetwise_segment_redux_impl<BinaryOp, PanelEvaluator>;

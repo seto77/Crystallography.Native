@@ -138,8 +138,6 @@ template <typename Derived>
 template <typename EssentialPart>
 EIGEN_DEVICE_FUNC void MatrixBase<Derived>::makeHouseholder(EssentialPart& essential, Scalar& tau,
                                                             RealScalar& beta) const {
-  using numext::conj;
-
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(EssentialPart)
   const VectorBlock<const Derived, EssentialPart::SizeAtCompileTime> tail(derived(), 1, size() - 1);
 
@@ -165,7 +163,7 @@ EIGEN_DEVICE_FUNC void MatrixBase<Derived>::makeHouseholder(EssentialPart& essen
     // not survive -ffinite-math-only, which folds that test away, whereas a comparison against a finite bound is
     // still evaluated.
     const RealScalar sqNormBound = NumTraits<RealScalar>::highest() / RealScalar(2);
-    const RealScalar componentBound = numext::sqrt(sqNormBound / RealScalar(2));
+    const RealScalar componentBound = numext::sqrt<RealScalar>(sqNormBound / RealScalar(2));
     const RealScalar c0Max = numext::maxi(numext::abs(numext::real(c0)), numext::abs(numext::imag(c0)));
     unscaledSqNormOverflows = !(c0Max <= componentBound) || !(tailSqNorm <= sqNormBound);
   }
@@ -227,14 +225,124 @@ EIGEN_DEVICE_FUNC void MatrixBase<Derived>::makeHouseholder(EssentialPart& essen
     if (numext::real(c0) >= RealScalar(0)) scaledBeta = -scaledBeta;
     beta = RealScalar(scale * Accumulator(scaledBeta));
     internal::householder_rescale<Scalar, Accumulator>::run(essential, tailView, scale, scaledC0 - scaledBeta);
-    tau = conj(Scalar(RealScalar(1)) - scaledC0 / scaledBeta);
+    tau = numext::conj(Scalar(RealScalar(1)) - scaledC0 / scaledBeta);
     return;
   }
-  beta = numext::sqrt(numext::abs2(c0) + tailSqNorm);
+  beta = numext::sqrt<RealScalar>(numext::abs2(c0) + tailSqNorm);
   if (numext::real(c0) >= RealScalar(0)) beta = -beta;
   essential = tail.unwind() / (c0 - beta);
-  tau = conj((beta - c0) / beta);
+  tau = numext::conj((beta - c0) / beta);
 }
+
+namespace internal {
+
+template <typename Derived, typename EssentialPart,
+          bool Fused = !Derived::IsRowMajor && EssentialPart::ColsAtCompileTime == 1 &&
+                       (EssentialPart::RowsAtCompileTime == 1 || EssentialPart::RowsAtCompileTime == 2)>
+struct householder_apply_left_impl {
+  using Scalar = typename Derived::Scalar;
+  static EIGEN_DEVICE_FUNC void run(MatrixBase<Derived>& mat, const EssentialPart& essential, const Scalar& tau,
+                                    Scalar* workspace) {
+    Map<typename plain_row_type<typename Derived::PlainObject>::type> tmp(workspace, mat.cols());
+    Block<Derived, EssentialPart::SizeAtCompileTime, Derived::ColsAtCompileTime> bottom(mat.derived(), 1, 0,
+                                                                                        mat.rows() - 1, mat.cols());
+    tmp.noalias() = essential.adjoint() * bottom.unwind();
+    tmp = tau * (tmp + mat.row(0));
+    mat.row(0) -= tmp;
+    bottom.unwind().noalias() -= essential * tmp;
+  }
+};
+
+// Two- and three-element reflectors on column-major storage: finishing each column before advancing replaces
+// four strided row passes, which thrash the cache at large outer strides (issue #3160).
+template <typename Derived, typename EssentialPart>
+struct householder_apply_left_impl<Derived, EssentialPart, true> {
+  using Scalar = typename Derived::Scalar;
+  static EIGEN_DEVICE_FUNC void run(MatrixBase<Derived>& mat, const EssentialPart& essential, const Scalar& tau,
+                                    Scalar*) {
+    // Evaluated once so that the column loop reads plain coefficients; tau may reference a coefficient of mat.
+    const Matrix<Scalar, EssentialPart::RowsAtCompileTime, 1> v = essential;
+    const Scalar tauValue = tau;
+    Block<Derived, EssentialPart::RowsAtCompileTime, Derived::ColsAtCompileTime> bottom(mat.derived(), 1, 0,
+                                                                                        mat.rows() - 1, mat.cols());
+    for (Index j = 0; j < mat.cols(); ++j) {
+      const Scalar tmp = tauValue * (v.dot(bottom.col(j)) + mat.coeff(0, j));
+      mat.coeffRef(0, j) -= tmp;
+      bottom.col(j) -= v * tmp;
+    }
+  }
+};
+
+template <typename Derived, typename EssentialPart,
+          bool Fused = !Derived::IsRowMajor && bool(traits<Derived>::Flags & DirectAccessBit) &&
+                       inner_stride_at_compile_time<Derived>::value == 1 &&
+                       packet_traits<typename Derived::Scalar>::Vectorizable && EssentialPart::ColsAtCompileTime == 1 &&
+                       (EssentialPart::RowsAtCompileTime == 1 || EssentialPart::RowsAtCompileTime == 2)>
+struct householder_apply_right_impl {
+  using Scalar = typename Derived::Scalar;
+  static EIGEN_DEVICE_FUNC void run(MatrixBase<Derived>& mat, const EssentialPart& essential, const Scalar& tau,
+                                    Scalar* workspace) {
+    Map<typename plain_col_type<typename Derived::PlainObject>::type> tmp(workspace, mat.rows());
+    Block<Derived, Derived::RowsAtCompileTime, EssentialPart::SizeAtCompileTime> right(mat.derived(), 0, 1, mat.rows(),
+                                                                                       mat.cols() - 1);
+    tmp.noalias() = right.unwind() * essential;
+    // M H = M - (M v) tau v^*: tau multiplies from the right, as in the one-column branch.
+    tmp = (tmp + mat.col(0)) * tau;
+    mat.col(0) = mat.col(0) - tmp;
+    right.unwind().noalias() -= tmp * essential.adjoint();
+  }
+};
+
+// Two- and three-element reflectors on contiguous columns: one pass down the rows updates all the columns, where the
+// general path makes four passes through a temporary. These are the O(n^3) updates of the Francis QR step.
+template <typename Derived, typename EssentialPart>
+struct householder_apply_right_impl<Derived, EssentialPart, true> {
+  using Scalar = typename Derived::Scalar;
+  using Packet = typename packet_traits<Scalar>::type;
+  static constexpr int K = EssentialPart::RowsAtCompileTime;
+
+  static EIGEN_DEVICE_FUNC void run(MatrixBase<Derived>& mat, const EssentialPart& essential, const Scalar& tau,
+                                    Scalar*) {
+    constexpr Index PacketSize = unpacket_traits<Packet>::size;
+    eigen_assert(mat.cols() == K + 1);
+    // Copied first: tau and the essential part may alias coefficients of mat.
+    Scalar v[K], vc[K];
+    for (int j = 0; j < K; ++j) {
+      v[j] = essential.coeff(j);
+      vc[j] = numext::conj(v[j]);
+    }
+    const Scalar tauValue = tau;
+    const Index rows = mat.rows();
+    Scalar* col[K + 1];
+    for (int j = 0; j <= K; ++j) col[j] = &mat.derived().coeffRef(0, j);
+
+    const Packet ptau = pset1<Packet>(tauValue);
+    Packet pv[K], pvc[K];
+    for (int j = 0; j < K; ++j) {
+      pv[j] = pset1<Packet>(v[j]);
+      pvc[j] = pset1<Packet>(vc[j]);
+    }
+    const Index vectorEnd = numext::round_down(rows, PacketSize);
+    for (Index i = 0; i < vectorEnd; i += PacketSize) {
+      Packet x[K + 1];
+      for (int j = 0; j <= K; ++j) x[j] = ploadu<Packet>(col[j] + i);
+      Packet t = x[0];
+      for (int j = 0; j < K; ++j) t = pmadd(x[j + 1], pv[j], t);
+      t = pmul(t, ptau);
+      pstoreu(col[0] + i, psub(x[0], t));
+      for (int j = 0; j < K; ++j) pstoreu(col[j + 1] + i, pnmadd(t, pvc[j], x[j + 1]));
+    }
+    for (Index i = vectorEnd; i < rows; ++i) {
+      Scalar t = col[0][i];
+      for (int j = 0; j < K; ++j) t += col[j + 1][i] * v[j];
+      t *= tauValue;
+      col[0][i] -= t;
+      for (int j = 0; j < K; ++j) col[j + 1][i] -= t * vc[j];
+    }
+  }
+};
+
+}  // namespace internal
 
 /** Apply the elementary reflector H given by
  * \f$ H = I - tau v v^*\f$
@@ -256,15 +364,10 @@ template <typename EssentialPart>
 EIGEN_DEVICE_FUNC void MatrixBase<Derived>::applyHouseholderOnTheLeft(const EssentialPart& essential, const Scalar& tau,
                                                                       Scalar* workspace) {
   if (rows() == 1) {
-    *this *= Scalar(1) - tau;
+    // H = 1 - tau multiplies from the left, which a noncommutative scalar distinguishes.
+    *this = (Scalar(1) - tau) * *this;
   } else if (!numext::is_exactly_zero(tau)) {
-    Map<typename internal::plain_row_type<PlainObject>::type> tmp(workspace, cols());
-    Block<Derived, EssentialPart::SizeAtCompileTime, Derived::ColsAtCompileTime> bottom(derived(), 1, 0, rows() - 1,
-                                                                                        cols());
-    tmp.noalias() = essential.adjoint() * bottom.unwind();
-    tmp = tau * (tmp + this->row(0));
-    this->row(0) = this->row(0) - tmp;
-    bottom.unwind().noalias() -= essential * tmp;
+    internal::householder_apply_left_impl<Derived, EssentialPart>::run(*this, essential, tau, workspace);
   }
 }
 
@@ -290,13 +393,7 @@ EIGEN_DEVICE_FUNC void MatrixBase<Derived>::applyHouseholderOnTheRight(const Ess
   if (cols() == 1) {
     *this *= Scalar(1) - tau;
   } else if (!numext::is_exactly_zero(tau)) {
-    Map<typename internal::plain_col_type<PlainObject>::type> tmp(workspace, rows());
-    Block<Derived, Derived::RowsAtCompileTime, EssentialPart::SizeAtCompileTime> right(derived(), 0, 1, rows(),
-                                                                                       cols() - 1);
-    tmp.noalias() = right.unwind() * essential;
-    tmp = tau * (tmp + this->col(0));
-    this->col(0) = this->col(0) - tmp;
-    right.unwind().noalias() -= tmp * essential.adjoint();
+    internal::householder_apply_right_impl<Derived, EssentialPart>::run(*this, essential, tau, workspace);
   }
 }
 

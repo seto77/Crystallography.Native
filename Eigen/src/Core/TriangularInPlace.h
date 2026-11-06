@@ -42,8 +42,10 @@ EIGEN_DEVICE_FUNC inline Index triangular_in_place_block_size(Index size, Index 
 }
 
 template <typename MatrixType>
-using triangular_in_place_workspace = Matrix<typename MatrixType::Scalar, Dynamic, Dynamic,
-                                             (int(traits<MatrixType>::Flags) & RowMajorBit) ? RowMajor : ColMajor>;
+struct triangular_in_place_workspace {
+  using type = Matrix<typename MatrixType::Scalar, Dynamic, Dynamic,
+                      (int(traits<MatrixType>::Flags) & RowMajorBit) ? RowMajor : ColMajor>;
+};
 
 // Unblocked lower triangular inverse, columns bottom-up so that the trailing block already holds
 // X22 = L22^-1 when column j is reached: then X(j+1:, j) = -X22 L(j+1:, j) / L(j, j), one TRMV per
@@ -68,13 +70,18 @@ EIGEN_DEVICE_FUNC void triangular_inverse_unblocked(MatrixType& mat, VectorType&
   }
 }
 
+// With a zero-sized fixed dimension there is nothing to invert, and col() is not a vector, so the kernels' column
+// tails would not compile.
+template <unsigned int Mode, typename MatrixType, std::enable_if_t<MatrixType::SizeAtCompileTime == 0, int> = 0>
+EIGEN_DEVICE_FUNC void triangular_inverse_lower(MatrixType&) {}
+
 // Blocked lower triangular inverse, block columns bottom-up as in LAPACK xTRTRI. With
 // L = [[L11, 0], [L21, L22]] the inverse is [[L11^-1, 0], [-L22^-1 L21 L11^-1, L22^-1]]; walking upwards
 // makes X22 = L22^-1 available first, so the large operation is the TRMM X22 L21 rather than a solve
 // against L22, and Eigen's TRMM runs closer to GEMM rate than its TRSM does on a 128-column operand.
-template <unsigned int Mode, typename MatrixType>
+template <unsigned int Mode, typename MatrixType, std::enable_if_t<MatrixType::SizeAtCompileTime != 0, int> = 0>
 EIGEN_DEVICE_FUNC void triangular_inverse_lower(MatrixType& mat) {
-  eigen_assert(mat.rows() == mat.cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(mat);
   const Index n = mat.rows();
   if (n < kTriangularInverseMinBlocked) {
     using Scalar = typename MatrixType::Scalar;
@@ -86,7 +93,7 @@ EIGEN_DEVICE_FUNC void triangular_inverse_lower(MatrixType& mat) {
   const Index block_size = triangular_in_place_block_size(n, kTriangularInverseMinBlockSize);
   // One block-sized panel, whose first column doubles as the TRMV scratch of the unblocked kernel:
   // that kernel runs on L11 only after the panel's other uses in the same iteration are finished.
-  triangular_in_place_workspace<MatrixType> work(block_size, block_size);
+  typename triangular_in_place_workspace<MatrixType>::type work(block_size, block_size);
   for (Index k = ((n - 1) / block_size) * block_size; k >= 0; k -= block_size) {
     const Index bs = numext::mini(block_size, n - k);
     const Index rs = n - k - bs;
@@ -150,14 +157,14 @@ void triangular_adjoint_square_unblocked(MatrixType& mat) {
 // completed against the columns to its left before the trailing block rows consume the factor.
 template <typename MatrixType>
 void triangular_adjoint_square_lower(MatrixType& mat) {
-  eigen_assert(mat.rows() == mat.cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(mat);
   const Index n = mat.rows();
   if (n < kAdjointSquareMinBlocked) {
     triangular_adjoint_square_unblocked(mat);
     return;
   }
   const Index block_size = triangular_in_place_block_size(n, kAdjointSquareMinBlockSize);
-  triangular_in_place_workspace<MatrixType> work(block_size, block_size);
+  typename triangular_in_place_workspace<MatrixType>::type work(block_size, block_size);
   for (Index k = 0; k < n; k += block_size) {
     const Index bs = numext::mini(block_size, n - k);
     const Index rs = n - k - bs;
@@ -174,7 +181,13 @@ void triangular_adjoint_square_lower(MatrixType& mat) {
       if (rs > 0) B.noalias() += mat.block(k + bs, k, rs, bs).adjoint() * mat.block(k + bs, 0, rs, k);
     }
     triangular_adjoint_square_unblocked(L11);
-    if (rs > 0) L11.template selfadjointView<Lower>().rankUpdate(mat.block(k + bs, k, rs, bs).adjoint());
+    if (rs > 0) {
+      L11.template selfadjointView<Lower>().rankUpdate(mat.block(k + bs, k, rs, bs).adjoint());
+      // Fused complex products can leave a rounding residual in the imaginary diagonal.
+      EIGEN_IF_CONSTEXPR (NumTraits<typename MatrixType::Scalar>::IsComplex) {
+        L11.diagonal() = L11.diagonal().real().template cast<typename MatrixType::Scalar>();
+      }
+    }
   }
 }
 
@@ -210,7 +223,7 @@ template <typename MatrixType, unsigned int Mode>
 EIGEN_DEVICE_FUNC void TriangularViewImpl<MatrixType, Mode, Dense>::inverseInPlace() {
   EIGEN_STATIC_ASSERT_LVALUE(MatrixType)
   EIGEN_STATIC_ASSERT((int(Mode) & int(Upper | Lower)) != 0 && (int(Mode) & int(ZeroDiag)) == 0, PROGRAMMING_ERROR)
-  eigen_assert(derived().rows() == derived().cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(derived());
   internal::triangular_inverse_selector<Mode>::run(derived().nestedExpression());
 }
 #endif

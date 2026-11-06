@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: The Eigen Authors
+// SPDX-License-Identifier: MPL-2.0
+
+#ifndef EIGEN_STRUCTURED_TEST_HELPERS_H
+#define EIGEN_STRUCTURED_TEST_HELPERS_H
+
+#include <Eigen/Core>
+
+namespace Eigen {
+
+// Coefficient-wise reference independent of StructuredMatrices and KroneckerProduct.
+template <typename Scalar>
+Matrix<Scalar, Dynamic, Dynamic> reference_kron(const Matrix<Scalar, Dynamic, Dynamic>& A,
+                                                const Matrix<Scalar, Dynamic, Dynamic>& B) {
+  Matrix<Scalar, Dynamic, Dynamic> K(A.rows() * B.rows(), A.cols() * B.cols());
+  for (Index j = 0; j < A.cols(); ++j) {
+    for (Index i = 0; i < A.rows(); ++i) {
+      K.block(i * B.rows(), j * B.cols(), B.rows(), B.cols()) = A(i, j) * B;
+    }
+  }
+  return K;
+}
+
+// Vectorized complex products can introduce Inf - Inf across component accumulators.
+// Preserve scalar evaluation order for the non-finite reference results.
+template <typename Scalar>
+Matrix<Scalar, Dynamic, 1> reference_product_ieee(const Matrix<Scalar, Dynamic, Dynamic>& matrix,
+                                                  const Matrix<Scalar, Dynamic, 1>& vector) {
+  Matrix<Scalar, Dynamic, 1> result(matrix.rows());
+  for (Index i = 0; i < matrix.rows(); ++i) {
+    Scalar accumulator(0);
+    for (Index j = 0; j < matrix.cols(); ++j) accumulator += matrix(i, j) * vector[j];
+    result[i] = accumulator;
+  }
+  return result;
+}
+
+// The FFT-based products mix every input entry into every output entry, so an Inf or NaN may make more entries
+// non-finite than the dense product does. \returns whether it makes at least those.
+template <typename Actual, typename Reference>
+bool nonfinite_covers_reference(const Actual& actual, const Reference& reference) {
+  for (Index i = 0; i < reference.size(); ++i)
+    if (!(numext::isfinite)(reference[i]) && (numext::isfinite)(actual[i])) return false;
+  return true;
+}
+
+}  // namespace Eigen
+
+#endif  // EIGEN_STRUCTURED_TEST_HELPERS_H

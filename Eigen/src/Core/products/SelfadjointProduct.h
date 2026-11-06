@@ -142,12 +142,20 @@ template <typename MatrixType, typename OtherType, int UpLo>
 struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, true> {
   static void run(MatrixType& mat, const OtherType& other, const typename MatrixType::Scalar& alpha) {
     using Scalar = typename MatrixType::Scalar;
+    // The rank-1 kernel below addresses mat with a unit inner stride.
+    if (MatrixType::InnerStrideAtCompileTime != 1 && mat.innerStride() != 1) {
+      const Matrix<Scalar, Dynamic, 1> u = other.reshaped();
+      mat.template triangularView<UpLo>() += typename MatrixType::PlainObject(alpha * u * u.adjoint());
+      return;
+    }
     using OtherBlasTraits = internal::blas_traits<OtherType>;
     using ActualOtherType = typename OtherBlasTraits::DirectLinearAccessType;
     using ActualOtherType_ = internal::remove_all_t<ActualOtherType>;
     internal::add_const_on_value_type_t<ActualOtherType> actualOther = OtherBlasTraits::extract(other.derived());
 
-    Scalar actualAlpha = alpha * OtherBlasTraits::extractScalarFactor(other.derived());
+    // (s w) (s w)^* = s conj(s) w w^*
+    const Scalar otherFactor = OtherBlasTraits::extractScalarFactor(other.derived());
+    Scalar actualAlpha = alpha * otherFactor * numext::conj(otherFactor);
 
     enum {
       StorageOrder = (internal::traits<MatrixType>::Flags & RowMajorBit) ? RowMajor : ColMajor,
@@ -182,7 +190,9 @@ struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, false> {
     using ActualOtherType_ = internal::remove_all_t<ActualOtherType>;
     internal::add_const_on_value_type_t<ActualOtherType> actualOther = OtherBlasTraits::extract(other.derived());
 
-    Scalar actualAlpha = alpha * OtherBlasTraits::extractScalarFactor(other.derived());
+    // (s W) (s W)^* = s conj(s) W W^*
+    const Scalar otherFactor = OtherBlasTraits::extractScalarFactor(other.derived());
+    Scalar actualAlpha = alpha * otherFactor * numext::conj(otherFactor);
 
     enum {
       IsRowMajor = (internal::traits<MatrixType>::Flags & RowMajorBit) ? 1 : 0,
@@ -191,7 +201,7 @@ struct selfadjoint_product_selector<MatrixType, OtherType, UpLo, false> {
 
     Index size = mat.cols();
     Index depth = actualOther.cols();
-    eigen_assert(actualOther.rows() == size);
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE(mat, actualOther);
     if (size == 0 || depth == 0) return;
 
     using BlockingType =

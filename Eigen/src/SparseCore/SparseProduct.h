@@ -34,6 +34,13 @@ inline const Product<Derived, OtherDerived, AliasFreeProduct> SparseMatrixBase<D
   return Product<Derived, OtherDerived, AliasFreeProduct>(derived(), other.derived());
 }
 
+/** Replaces \c *this by the sparse product \c *this * \a other. */
+template <typename Derived>
+template <typename OtherDerived>
+Derived& SparseMatrixBase<Derived>::operator*=(const SparseMatrixBase<OtherDerived>& other) {
+  return derived() = derived() * other.derived();
+}
+
 namespace internal {
 
 // sparse * sparse
@@ -144,7 +151,6 @@ struct unary_evaluator<SparseView<Product<Lhs, Rhs, Options> >, IteratorBased>
   using Base = evaluator<PlainObject>;
 
   explicit unary_evaluator(const XprType& xpr) : m_result(xpr.rows(), xpr.cols()) {
-    using std::abs;
     internal::construct_at<Base>(this, m_result);
     using LhsNested = typename nested_eval<Lhs, Dynamic>::type;
     using RhsNested = typename nested_eval<Rhs, Dynamic>::type;
@@ -153,7 +159,8 @@ struct unary_evaluator<SparseView<Product<Lhs, Rhs, Options> >, IteratorBased>
 
     internal::sparse_sparse_product_with_pruning_selector<remove_all_t<LhsNested>, remove_all_t<RhsNested>,
                                                           PlainObject>::run(lhsNested, rhsNested, m_result,
-                                                                            abs(xpr.reference()) * xpr.epsilon());
+                                                                            numext::abs(xpr.reference()) *
+                                                                                xpr.epsilon());
   }
 
  protected:

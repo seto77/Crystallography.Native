@@ -231,8 +231,8 @@ class SparseQR : public SparseSolverBase<SparseQR<MatrixType_, OrderingType_> > 
   template <typename Rhs, typename Dest>
   bool _solve_impl(const MatrixBase<Rhs>& B, MatrixBase<Dest>& dest) const {
     eigen_assert(m_isInitialized && "The factorization should be called first, use compute()");
-    eigen_assert(this->rows() == B.rows() &&
-                 "SparseQR::solve() : invalid number of rows in the right hand side matrix");
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS_MSG(*this, B, false,
+                                         "SparseQR::solve() : invalid number of rows in the right hand side matrix");
 
     Index rank = this->rank();
 
@@ -248,7 +248,7 @@ class SparseQR : public SparseSolverBase<SparseQR<MatrixType_, OrderingType_> > 
 
     // Apply the column permutation
     if (m_perm_c.size())
-      dest = colsPermutation() * y.topRows(cols());
+      dest.noalias() = colsPermutation() * y.topRows(cols());
     else
       dest = y.topRows(cols());
 
@@ -275,15 +275,15 @@ class SparseQR : public SparseSolverBase<SparseQR<MatrixType_, OrderingType_> > 
   template <typename Rhs>
   inline Solve<SparseQR, Rhs> solve(const MatrixBase<Rhs>& B) const {
     eigen_assert(m_isInitialized && "The factorization should be called first, use compute()");
-    eigen_assert(this->rows() == B.rows() &&
-                 "SparseQR::solve() : invalid number of rows in the right hand side matrix");
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS_MSG(*this, B, false,
+                                         "SparseQR::solve() : invalid number of rows in the right hand side matrix");
     return Solve<SparseQR, Rhs>(*this, B.derived());
   }
   template <typename Rhs>
   inline Solve<SparseQR, Rhs> solve(const SparseMatrixBase<Rhs>& B) const {
     eigen_assert(m_isInitialized && "The factorization should be called first, use compute()");
-    eigen_assert(this->rows() == B.rows() &&
-                 "SparseQR::solve() : invalid number of rows in the right hand side matrix");
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS_MSG(*this, B, false,
+                                         "SparseQR::solve() : invalid number of rows in the right hand side matrix");
     return Solve<SparseQR, Rhs>(*this, B.derived());
   }
 
@@ -389,8 +389,6 @@ void SparseQR<MatrixType, OrderingType>::analyzePattern(const MatrixType& mat) {
  */
 template <typename MatrixType, typename OrderingType>
 void SparseQR<MatrixType, OrderingType>::factorize(const MatrixType& mat) {
-  using std::abs;
-
   eigen_assert(m_analysisIsok && "analyzePattern() should be called before this step");
 
   // Reset state from any prior factorize() so info() and lastErrorMessage()
@@ -481,7 +479,7 @@ void SparseQR<MatrixType, OrderingType>::factorize(const MatrixType& mat) {
   m_pivotperm.setIdentity(n);
 
   StorageIndex nonzeroCol = 0;  // Record the number of valid pivots
-  m_Q.startVec(0);
+  if (diagSize > 0) m_Q.startVec(0);
 
   // Left looking rank-revealing QR factorization: compute a column of R and Q at a time
   for (StorageIndex col = 0; col < n; ++col) {
@@ -579,8 +577,7 @@ void SparseQR<MatrixType, OrderingType>::factorize(const MatrixType& mat) {
         beta = numext::real(c0);
         tval(Qidx(0)) = Scalar(1);
       } else {
-        using std::sqrt;
-        beta = sqrt(numext::abs2(c0) + sqrNorm);
+        beta = numext::sqrt<RealScalar>(numext::abs2(c0) + sqrNorm);
         if (numext::real(c0) >= RealScalar(0)) beta = -beta;
         tval(Qidx(0)) = Scalar(1);
         for (Index itq = 1; itq < nzcolQ; ++itq) tval(Qidx(itq)) /= (c0 - beta);
@@ -597,7 +594,7 @@ void SparseQR<MatrixType, OrderingType>::factorize(const MatrixType& mat) {
       }
     }
 
-    const RealScalar absBeta = abs(beta);
+    const RealScalar absBeta = numext::abs(beta);
     bool hasReplacement = false;
     const bool canRejectColumn = nonzeroCol + (n - col - 1) >= diagSize;
     // Gate for examining a pivot as replaceable. The Householder pivot `beta` of a
@@ -609,8 +606,7 @@ void SparseQR<MatrixType, OrderingType>::factorize(const MatrixType& mat) {
     // *examined* (and never rejects a pivot that lacks a replacement). A threshold at
     // the residual's noise floor would otherwise make the pivoting decision -- and
     // hence the result -- depend on floating-point contraction.
-    using std::sqrt;
-    const RealScalar weakPivotTolerance = sqrt(NumTraits<RealScalar>::epsilon());
+    const RealScalar weakPivotTolerance = numext::sqrt(NumTraits<RealScalar>::epsilon());
     const RealScalar maxReplaceablePivotThreshold = max2Norm * weakPivotTolerance;
     if (nonzeroCol < diagSize && canRejectColumn && m_useDefaultThreshold && absBeta >= pivotThreshold &&
         absBeta < maxReplaceablePivotThreshold) {
@@ -735,7 +731,7 @@ struct SparseQR_QProduct : ReturnByValue<SparseQR_QProduct<SparseQRType, Derived
     Index diagSize = (std::min)(m, n);
     res = m_other;
     if (m_transpose) {
-      eigen_assert(m_qr.m_Q.rows() == m_other.rows() && "Non conforming object sizes");
+      EIGEN_INTERNAL_ASSERT_SAME_ROWS_MSG(m_qr.m_Q, m_other, "Non conforming object sizes");
       // Compute res = Q' * other column by column
       for (Index j = 0; j < res.cols(); j++) {
         for (Index k = 0; k < diagSize; k++) {
@@ -747,7 +743,7 @@ struct SparseQR_QProduct : ReturnByValue<SparseQR_QProduct<SparseQRType, Derived
         }
       }
     } else {
-      eigen_assert(m_qr.matrixQ().cols() == m_other.rows() && "Non conforming object sizes");
+      EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE_MSG(m_qr.matrixQ(), m_other, "Non conforming object sizes");
 
       res.conservativeResize(rows(), cols());
 

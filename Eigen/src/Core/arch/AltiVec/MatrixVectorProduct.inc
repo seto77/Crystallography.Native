@@ -362,11 +362,11 @@ EIGEN_ALWAYS_INLINE void pger_vecMMA_acc(__vector_quad* acc, __vector_pair& a, c
 template <typename LhsScalar, typename LhsMapper, typename RhsScalar, typename RhsMapper, typename ResScalar>
 EIGEN_STRONG_INLINE void gemv_col(Index rows, Index cols, const LhsMapper& alhs, const RhsMapper& rhs, ResScalar* res,
                                   Index resIncr, ResScalar alpha) {
-  typedef gemv_traits<LhsScalar, RhsScalar> Traits;
+  using Traits = gemv_traits<LhsScalar, RhsScalar>;
 
-  typedef typename Traits::LhsPacket LhsPacket;
-  typedef typename Traits::RhsPacket RhsPacket;
-  typedef typename Traits::ResPacket ResPacket;
+  using LhsPacket = typename Traits::LhsPacket;
+  using RhsPacket = typename Traits::RhsPacket;
+  using ResPacket = typename Traits::ResPacket;
 
   EIGEN_UNUSED_VARIABLE(resIncr);
   eigen_internal_assert(resIncr == 1);
@@ -942,7 +942,7 @@ EIGEN_ALWAYS_INLINE void calcVSXVecLoops(Index cols, Index rows, LhsMapper& lhs,
 template <typename LhsMapper, typename RhsMapper>
 EIGEN_STRONG_INLINE void gemv_bfloat16_row(Index rows, Index cols, const LhsMapper& alhs, const RhsMapper& rhs,
                                            bfloat16* res, Index resIncr, bfloat16 alpha) {
-  typedef typename RhsMapper::LinearMapper LinearMapper;
+  using LinearMapper = typename RhsMapper::LinearMapper;
 
   // The following copy tells the compiler that lhs's attributes are not modified outside this function
   // This helps GCC to generate proper code.
@@ -1020,7 +1020,7 @@ EIGEN_ALWAYS_INLINE Packet1cd pconj2(const Packet1cd& a) {
 
 /** \internal packet conjugate with real & imaginary operation inverted */
 EIGEN_ALWAYS_INLINE Packet2cf pconjinv(const Packet2cf& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return Packet2cf(Packet4f(vec_neg(Packet2d(a.v))));
 #else
   return Packet2cf(pxor(a.v, reinterpret_cast<Packet4f>(p16uc_COMPLEX32_CONJ_XOR2)));
@@ -1071,7 +1071,7 @@ EIGEN_ALWAYS_INLINE Packet1cd pcplxconjflip(const Packet1cd& a) {
 
 /** \internal packet negate */
 EIGEN_ALWAYS_INLINE Packet2cf pnegate2(const Packet2cf& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return Packet2cf(vec_neg(a.v));
 #else
   return Packet2cf(pxor(a.v, reinterpret_cast<Packet4f>(p16uc_COMPLEX32_NEGATE)));
@@ -1079,7 +1079,7 @@ EIGEN_ALWAYS_INLINE Packet2cf pnegate2(const Packet2cf& a) {
 }
 
 EIGEN_ALWAYS_INLINE Packet1cd pnegate2(const Packet1cd& a) {
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   return Packet1cd(vec_neg(a.v));
 #else
   return Packet1cd(pxor(a.v, reinterpret_cast<Packet2d>(p16uc_COMPLEX64_NEGATE)));
@@ -1153,7 +1153,7 @@ EIGEN_ALWAYS_INLINE void pload_realimag(RhsScalar* src, Packet2d& r, Packet2d& i
 #endif
 }
 
-#ifndef __POWER8_VECTOR__
+#ifndef EIGEN_VECTORIZE_POWER8_VECTOR
 const Packet16uc p16uc_MERGEE = {0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13,
                                  0x08, 0x09, 0x0A, 0x0B, 0x18, 0x19, 0x1A, 0x1B};
 
@@ -1165,7 +1165,7 @@ const Packet16uc p16uc_MERGEO = {0x04, 0x05, 0x06, 0x07, 0x14, 0x15, 0x16, 0x17,
 template <typename RhsScalar>
 EIGEN_ALWAYS_INLINE void pload_realimag_row(RhsScalar* src, Packet4f& r, Packet4f& i) {
   Packet4f t = ploadu<Packet4f>(reinterpret_cast<float*>(src));
-#ifdef __POWER8_VECTOR__
+#ifdef EIGEN_VECTORIZE_POWER8_VECTOR
   r = vec_mergee(t, t);
   i = vec_mergeo(t, t);
 #else
@@ -2043,16 +2043,16 @@ template <typename Scalar, typename LhsScalar, typename LhsMapper, bool Conjugat
           typename RhsScalar, typename RhsMapper, bool ConjugateRhs, bool RhsIsReal, typename ResScalar>
 EIGEN_STRONG_INLINE void gemv_complex_col(Index rows, Index cols, const LhsMapper& alhs, const RhsMapper& rhs,
                                           ResScalar* res, Index resIncr, ResScalar alpha) {
-  typedef gemv_traits<LhsScalar, RhsScalar> Traits;
+  using Traits = gemv_traits<LhsScalar, RhsScalar>;
 
-  typedef typename Traits::LhsPacket LhsPacket;
-  typedef typename Traits::RhsPacket RhsPacket;
-  typedef typename Traits::ResPacket ResPacket;
+  using LhsPacket = typename Traits::LhsPacket;
+  using RhsPacket = typename Traits::RhsPacket;
+  using ResPacket = typename Traits::ResPacket;
 
-  typedef typename packet_traits<Scalar>::type ScalarPacket;
-  typedef typename packet_traits<LhsScalar>::type PLhsPacket;
-  typedef typename packet_traits<ResScalar>::type PResPacket;
-  typedef gemv_traits<ResPacket, ResPacket> PTraits;
+  using ScalarPacket = typename packet_traits<Scalar>::type;
+  using PLhsPacket = typename packet_traits<LhsScalar>::type;
+  using PResPacket = typename packet_traits<ResScalar>::type;
+  using PTraits = gemv_traits<ResPacket, ResPacket>;
 
   EIGEN_UNUSED_VARIABLE(resIncr);
   eigen_internal_assert(resIncr == 1);
@@ -2087,7 +2087,7 @@ EIGEN_STRONG_INLINE void gemv_complex_col(Index rows, Index cols, const LhsMappe
   // TODO: improve the following heuristic:
   const Index block_cols = cols < 128 ? cols : (lhsStride * sizeof(LhsScalar) < 16000 ? 16 : 8);
 
-  typedef alpha_store<PResPacket, ResPacket, ResScalar, Scalar> AlphaData;
+  using AlphaData = alpha_store<PResPacket, ResPacket, ResScalar, Scalar>;
   AlphaData alpha_data(alpha);
 
   for (Index j2 = 0; j2 < cols; j2 += block_cols) {
@@ -2375,11 +2375,11 @@ EIGEN_ALWAYS_INLINE ScalarBlock<ResScalar, 2> predux_complex(const ResPacket& a,
 template <typename LhsScalar, typename LhsMapper, typename RhsScalar, typename RhsMapper, typename ResScalar>
 EIGEN_STRONG_INLINE void gemv_row(Index rows, Index cols, const LhsMapper& alhs, const RhsMapper& rhs, ResScalar* res,
                                   Index resIncr, ResScalar alpha) {
-  typedef gemv_traits<LhsScalar, RhsScalar> Traits;
+  using Traits = gemv_traits<LhsScalar, RhsScalar>;
 
-  typedef typename Traits::LhsPacket LhsPacket;
-  typedef typename Traits::RhsPacket RhsPacket;
-  typedef typename Traits::ResPacket ResPacket;
+  using LhsPacket = typename Traits::LhsPacket;
+  using RhsPacket = typename Traits::RhsPacket;
+  using ResPacket = typename Traits::ResPacket;
 
   // The following copy tells the compiler that lhs's attributes are not modified outside this function
   // This helps GCC to generate proper code.
@@ -2440,7 +2440,7 @@ EIGEN_STRONG_INLINE void gemv_row(Index rows, Index cols, const LhsMapper& alhs,
   template <typename Index, typename LhsMapper, bool ConjugateLhs, typename RhsMapper, bool ConjugateRhs, int Version> \
   struct general_matrix_vector_product<Index, Scalar, LhsMapper, ColMajor, ConjugateLhs, Scalar, RhsMapper,            \
                                        ConjugateRhs, Version> {                                                        \
-    typedef typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType ResScalar;                                       \
+    using ResScalar = typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType;                                       \
                                                                                                                        \
     EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE static void run(Index rows, Index cols, const LhsMapper& lhs,                  \
                                                         const RhsMapper& rhs, ResScalar* res, Index resIncr,           \
@@ -2454,7 +2454,7 @@ EIGEN_STRONG_INLINE void gemv_row(Index rows, Index cols, const LhsMapper& alhs,
   template <typename Index, typename LhsMapper, bool ConjugateLhs, typename RhsMapper, bool ConjugateRhs, int Version> \
   struct general_matrix_vector_product<Index, Scalar, LhsMapper, RowMajor, ConjugateLhs, Scalar, RhsMapper,            \
                                        ConjugateRhs, Version> {                                                        \
-    typedef typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType ResScalar;                                       \
+    using ResScalar = typename ScalarBinaryOpTraits<Scalar, Scalar>::ReturnType;                                       \
                                                                                                                        \
     EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE static void run(Index rows, Index cols, const LhsMapper& lhs,                  \
                                                         const RhsMapper& rhs, ResScalar* res, Index resIncr,           \
@@ -2716,16 +2716,16 @@ template <typename Scalar, typename LhsScalar, typename LhsMapper, bool Conjugat
           typename RhsScalar, typename RhsMapper, bool ConjugateRhs, bool RhsIsReal, typename ResScalar>
 EIGEN_STRONG_INLINE void gemv_complex_row(Index rows, Index cols, const LhsMapper& alhs, const RhsMapper& rhs,
                                           ResScalar* res, Index resIncr, ResScalar alpha) {
-  typedef gemv_traits<LhsScalar, RhsScalar> Traits;
+  using Traits = gemv_traits<LhsScalar, RhsScalar>;
 
-  typedef typename Traits::LhsPacket LhsPacket;
-  typedef typename Traits::RhsPacket RhsPacket;
-  typedef typename Traits::ResPacket ResPacket;
+  using LhsPacket = typename Traits::LhsPacket;
+  using RhsPacket = typename Traits::RhsPacket;
+  using ResPacket = typename Traits::ResPacket;
 
-  typedef typename packet_traits<Scalar>::type ScalarPacket;
-  typedef typename packet_traits<LhsScalar>::type PLhsPacket;
-  typedef typename packet_traits<ResScalar>::type PResPacket;
-  typedef gemv_traits<ResPacket, ResPacket> PTraits;
+  using ScalarPacket = typename packet_traits<Scalar>::type;
+  using PLhsPacket = typename packet_traits<LhsScalar>::type;
+  using PResPacket = typename packet_traits<ResScalar>::type;
+  using PTraits = gemv_traits<ResPacket, ResPacket>;
 
   // The following copy tells the compiler that lhs's attributes are not modified outside this function
   // This helps GCC to generate proper code.
@@ -2790,7 +2790,7 @@ EIGEN_STRONG_INLINE void gemv_complex_row(Index rows, Index cols, const LhsMappe
   template <typename Index, typename LhsMapper, bool ConjugateLhs, typename RhsMapper, bool ConjugateRhs, int Version> \
   struct general_matrix_vector_product<Index, LhsScalar, LhsMapper, ColMajor, ConjugateLhs, RhsScalar, RhsMapper,      \
                                        ConjugateRhs, Version> {                                                        \
-    typedef typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType ResScalar;                                 \
+    using ResScalar = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;                                 \
                                                                                                                        \
     EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE static void run(Index rows, Index cols, const LhsMapper& lhs,                  \
                                                         const RhsMapper& rhs, ResScalar* res, Index resIncr,           \
@@ -2806,7 +2806,7 @@ EIGEN_STRONG_INLINE void gemv_complex_row(Index rows, Index cols, const LhsMappe
   template <typename Index, typename LhsMapper, bool ConjugateLhs, typename RhsMapper, bool ConjugateRhs, int Version> \
   struct general_matrix_vector_product<Index, LhsScalar, LhsMapper, RowMajor, ConjugateLhs, RhsScalar, RhsMapper,      \
                                        ConjugateRhs, Version> {                                                        \
-    typedef typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType ResScalar;                                 \
+    using ResScalar = typename ScalarBinaryOpTraits<LhsScalar, RhsScalar>::ReturnType;                                 \
                                                                                                                        \
     EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE static void run(Index rows, Index cols, const LhsMapper& lhs,                  \
                                                         const RhsMapper& rhs, ResScalar* res, Index resIncr,           \

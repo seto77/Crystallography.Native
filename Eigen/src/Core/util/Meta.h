@@ -15,20 +15,6 @@
 // IWYU pragma: private
 #include "../InternalHeaderCheck.h"
 
-#if defined(EIGEN_GPU_COMPILE_PHASE)
-
-#include <cfloat>
-
-#if defined(EIGEN_CUDA_ARCH)
-#include <math_constants.h>
-#endif
-
-#if defined(EIGEN_HIP_DEVICE_COMPILE)
-#include "Eigen/src/Core/arch/HIP/hcc/math_constants.h"
-#endif
-
-#endif
-
 // Define portable (u)int{32,64} types
 #include <cstdint>
 
@@ -420,6 +406,13 @@ template <>
 constexpr EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool equal_strict(const double& x, const double& y) {
   return std::equal_to<double>()(x, y);
 }
+
+#ifndef EIGEN_GPU_COMPILE_PHASE
+template <>
+constexpr EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool equal_strict(const long double& x, const long double& y) {
+  return std::equal_to<long double>()(x, y);
+}
+#endif
 #endif
 
 /**
@@ -430,6 +423,12 @@ template <typename X>
 constexpr EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool is_exactly_zero(const X& x) {
   return equal_strict(x, typename NumTraits<X>::Literal{0});
 }
+
+// Unlike is_exactly_zero, inspect supported binary float/double encodings so DAZ cannot hide a subnormal.
+// Both signed zeros compare as zero. Other scalar types retain their usual equality semantics.
+// Defined in MathFunctions.h, after binary_floating_point_traits.
+template <typename X>
+EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool is_exactly_zero_no_flush(const X& x);
 
 /**
  * \internal Performs an exact comparison of x to one, e.g. to decide whether a factor needs to be multiplied.
@@ -455,6 +454,13 @@ template <>
 constexpr EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool not_equal_strict(const double& x, const double& y) {
   return std::not_equal_to<double>()(x, y);
 }
+
+#ifndef EIGEN_GPU_COMPILE_PHASE
+template <>
+constexpr EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool not_equal_strict(const long double& x, const long double& y) {
+  return std::not_equal_to<long double>()(x, y);
+}
+#endif
 #endif
 
 }  // end namespace numext

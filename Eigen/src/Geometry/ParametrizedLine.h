@@ -87,9 +87,7 @@ class ParametrizedLine {
   /** \returns the distance of a point \a p to its projection onto the line \c *this.
    * \sa squaredDistance()
    */
-  EIGEN_DEVICE_FUNC RealScalar distance(const VectorType& p) const {
-    EIGEN_USING_STD(sqrt) return sqrt(squaredDistance(p));
-  }
+  EIGEN_DEVICE_FUNC RealScalar distance(const VectorType& p) const { return numext::sqrt(squaredDistance(p)); }
 
   /** \returns the projection of a point \a p onto the line \c *this. */
   EIGEN_DEVICE_FUNC VectorType projection(const VectorType& p) const {

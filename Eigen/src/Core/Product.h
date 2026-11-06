@@ -46,11 +46,19 @@ struct traits<Product<Lhs, Rhs, Option>> {
     // FIXME: only needed by GeneralMatrixMatrixTriangular
     InnerSize = min_size_prefer_fixed(LhsTraits::ColsAtCompileTime, RhsTraits::RowsAtCompileTime),
 
-    // The storage order is somewhat arbitrary here. The correct one will be determined through the evaluator.
+    // Products served by the coefficient-based evaluator are evaluated in the storage order reported below, which
+    // Reverse, Redux, Block, FindCoeff and others use to index their packets and coefficients. Row-major * row-major
+    // is row-major there, so that the rhs rows can be vectorized. A dense product of inner size 1 is served by it in
+    // LazyCoeffBasedProductMode, and materialized otherwise; unlike product_type, this test agrees between host and
+    // device code.
+    CoeffBasedEval = Option == LazyProduct || (std::is_same<StorageKind, Dense>::value && InnerSize == 1),
+
+    // For other products the storage order is somewhat arbitrary: their evaluators materialize a PlainObject of it.
     Flags = (MaxRowsAtCompileTime == 1 && MaxColsAtCompileTime != 1)   ? RowMajorBit
             : (MaxColsAtCompileTime == 1 && MaxRowsAtCompileTime != 1) ? 0
             : (((LhsTraits::Flags & NoPreferredStorageOrderBit) && (RhsTraits::Flags & RowMajorBit)) ||
-               ((RhsTraits::Flags & NoPreferredStorageOrderBit) && (LhsTraits::Flags & RowMajorBit)))
+               ((RhsTraits::Flags & NoPreferredStorageOrderBit) && (LhsTraits::Flags & RowMajorBit)) ||
+               (CoeffBasedEval && (LhsTraits::Flags & RowMajorBit) && (RhsTraits::Flags & RowMajorBit)))
                 ? RowMajorBit
                 : NoPreferredStorageOrderBit
   };
@@ -221,8 +229,7 @@ class Product
   using AdjointReturnType = typename internal::product_transpose_helper<Lhs, Rhs, Option>::AdjointType;
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE Product(const Lhs& lhs, const Rhs& rhs) : m_lhs(lhs), m_rhs(rhs) {
-    eigen_assert(lhs.cols() == rhs.rows() && "invalid matrix product" &&
-                 "if you wanted a coeff-wise or a dot product use the respective explicit functions");
+    EIGEN_INTERNAL_ASSERT_PRODUCT_SHAPE(lhs, rhs);
   }
 
   EIGEN_DEVICE_FUNC constexpr Index rows() const noexcept { return m_lhs.rows(); }
@@ -289,15 +296,19 @@ class ProductImpl<Lhs, Rhs, Option, Dense> : public internal::dense_product_base
 
  public:
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar coeff(Index row, Index col) const {
-    EIGEN_STATIC_ASSERT(EnableCoeff, THIS_METHOD_IS_ONLY_FOR_INNER_OR_LAZY_PRODUCTS);
-    eigen_assert((Option == LazyProduct) || (this->rows() == 1 && this->cols() == 1));
+    EIGEN_INTERNAL_CHECK_SHAPE((Option == LazyProduct) || (this->rows() == 1 && this->cols() == 1),
+                               THIS_METHOD_IS_ONLY_FOR_INNER_OR_LAZY_PRODUCTS,
+                               std::conditional_t<Option == LazyProduct, internal::dimension_relation<1, 1>,
+                                                  internal::fixed_dimensions<Derived, 1, 1>>);
 
     return internal::evaluator<Derived>(derived()).coeff(row, col);
   }
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar coeff(Index i) const {
-    EIGEN_STATIC_ASSERT(EnableCoeff, THIS_METHOD_IS_ONLY_FOR_INNER_OR_LAZY_PRODUCTS);
-    eigen_assert((Option == LazyProduct) || (this->rows() == 1 && this->cols() == 1));
+    EIGEN_INTERNAL_CHECK_SHAPE((Option == LazyProduct) || (this->rows() == 1 && this->cols() == 1),
+                               THIS_METHOD_IS_ONLY_FOR_INNER_OR_LAZY_PRODUCTS,
+                               std::conditional_t<Option == LazyProduct, internal::dimension_relation<1, 1>,
+                                                  internal::fixed_dimensions<Derived, 1, 1>>);
 
     return internal::evaluator<Derived>(derived()).coeff(i);
   }

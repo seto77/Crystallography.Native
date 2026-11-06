@@ -196,7 +196,7 @@ class AlignedBox {
   EIGEN_DEVICE_FUNC inline VectorType corner(CornerType corner) const {
     EIGEN_STATIC_ASSERT(AmbientDim_ <= 3, THIS_METHOD_IS_ONLY_FOR_VECTORS_OF_A_SPECIFIC_SIZE);
 
-    VectorType res;
+    VectorType res(dim());
 
     Index mult = 1;
     for (Index d = 0; d < dim(); ++d) {
@@ -317,7 +317,7 @@ class AlignedBox {
    */
   template <typename Derived>
   EIGEN_DEVICE_FUNC inline NonInteger exteriorDistance(const MatrixBase<Derived>& p) const {
-    EIGEN_USING_STD(sqrt) return sqrt(NonInteger(squaredExteriorDistance(p)));
+    return numext::sqrt(NonInteger(squaredExteriorDistance(p)));
   }
 
   /** \returns the distance between the boxes \a b and \c *this,
@@ -325,16 +325,14 @@ class AlignedBox {
    * \sa squaredExteriorDistance(const AlignedBox&), exteriorDistance(const MatrixBase&)
    */
   EIGEN_DEVICE_FUNC inline NonInteger exteriorDistance(const AlignedBox& b) const {
-    EIGEN_USING_STD(sqrt) return sqrt(NonInteger(squaredExteriorDistance(b)));
+    return numext::sqrt(NonInteger(squaredExteriorDistance(b)));
   }
 
   /**
    * Specialization of transform for pure translation.
    */
-  template <int Mode, int Options>
-  EIGEN_DEVICE_FUNC inline void transform(
-      const typename Transform<Scalar, AmbientDimAtCompileTime, Mode, Options>::TranslationType& translation) {
-    this->translate(translation);
+  EIGEN_DEVICE_FUNC inline void transform(const Translation<Scalar, AmbientDimAtCompileTime>& translation) {
+    this->translate(translation.vector());
   }
 
   /**
@@ -463,7 +461,7 @@ EIGEN_DEVICE_FUNC inline Scalar AlignedBox<Scalar, AmbientDim>::squaredExteriorD
 
 #define EIGEN_MAKE_TYPEDEFS(Type, TypeSuffix, Size, SizeSuffix) \
   /** \ingroup alignedboxtypedefs */                            \
-  typedef AlignedBox<Type, Size> AlignedBox##SizeSuffix##TypeSuffix;
+  using AlignedBox##SizeSuffix##TypeSuffix = AlignedBox<Type, Size>;
 
 #define EIGEN_MAKE_TYPEDEFS_ALL_SIZES(Type, TypeSuffix) \
   EIGEN_MAKE_TYPEDEFS(Type, TypeSuffix, 1, 1)           \

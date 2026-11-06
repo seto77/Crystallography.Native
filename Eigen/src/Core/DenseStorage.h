@@ -135,6 +135,7 @@ class DenseStorage_impl<T, Size, Dynamic, Cols, Options> {
     EIGEN_UNUSED_VARIABLE(size);
   }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     smart_copy(other.m_data.array, other.m_data.array + other.size(), m_data.array);
     m_rows = other.m_rows;
     return *this;
@@ -169,6 +170,7 @@ class DenseStorage_impl<T, Size, Rows, Dynamic, Options> {
     EIGEN_UNUSED_VARIABLE(size);
   }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     smart_copy(other.m_data.array, other.m_data.array + other.size(), m_data.array);
     m_cols = other.m_cols;
     return *this;
@@ -204,6 +206,7 @@ class DenseStorage_impl<T, Size, Dynamic, Dynamic, Options> {
     EIGEN_UNUSED_VARIABLE(size);
   }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     smart_copy(other.m_data.array, other.m_data.array + other.size(), m_data.array);
     m_rows = other.m_rows;
     m_cols = other.m_cols;
@@ -338,6 +341,7 @@ class DenseStorage_impl<T, Dynamic, Dynamic, Cols, Options> {
   }
   EIGEN_DEVICE_FUNC ~DenseStorage_impl() { conditional_aligned_delete_auto<T, Align>(m_data, size()); }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     resize(other.size(), other.rows(), other.cols());
     smart_copy(other.m_data, other.m_data + other.size(), m_data);
     return *this;
@@ -358,6 +362,9 @@ class DenseStorage_impl<T, Dynamic, Dynamic, Cols, Options> {
     Index oldSize = this->size();
     if (oldSize != size) {
       conditional_aligned_delete_auto<T, Align>(m_data, oldSize);
+      // Leave a valid empty object if the allocation below throws.
+      m_data = nullptr;
+      m_rows = 0;
       m_data = conditional_aligned_new_auto<T, Align>(size);
       EIGEN_INTERNAL_DENSE_STORAGE_CTOR_PLUGIN({})
     }
@@ -394,6 +401,7 @@ class DenseStorage_impl<T, Dynamic, Rows, Dynamic, Options> {
   }
   EIGEN_DEVICE_FUNC ~DenseStorage_impl() { conditional_aligned_delete_auto<T, Align>(m_data, size()); }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     resize(other.size(), other.rows(), other.cols());
     smart_copy(other.m_data, other.m_data + other.size(), m_data);
     return *this;
@@ -414,6 +422,9 @@ class DenseStorage_impl<T, Dynamic, Rows, Dynamic, Options> {
     Index oldSize = this->size();
     if (oldSize != size) {
       conditional_aligned_delete_auto<T, Align>(m_data, oldSize);
+      // Leave a valid empty object if the allocation below throws.
+      m_data = nullptr;
+      m_cols = 0;
       m_data = conditional_aligned_new_auto<T, Align>(size);
       EIGEN_INTERNAL_DENSE_STORAGE_CTOR_PLUGIN({})
     }
@@ -452,6 +463,7 @@ class DenseStorage_impl<T, Dynamic, Dynamic, Dynamic, Options> {
   }
   EIGEN_DEVICE_FUNC ~DenseStorage_impl() { conditional_aligned_delete_auto<T, Align>(m_data, size()); }
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE constexpr DenseStorage_impl& operator=(const DenseStorage_impl& other) {
+    if (this == &other) return *this;
     resize(other.size(), other.rows(), other.cols());
     smart_copy(other.m_data, other.m_data + other.size(), m_data);
     return *this;
@@ -474,6 +486,10 @@ class DenseStorage_impl<T, Dynamic, Dynamic, Dynamic, Options> {
     Index oldSize = this->size();
     if (oldSize != size) {
       conditional_aligned_delete_auto<T, Align>(m_data, oldSize);
+      // Leave a valid empty object if the allocation below throws.
+      m_data = nullptr;
+      m_rows = 0;
+      m_cols = 0;
       m_data = conditional_aligned_new_auto<T, Align>(size);
       EIGEN_INTERNAL_DENSE_STORAGE_CTOR_PLUGIN({})
     }

@@ -39,44 +39,70 @@ limitations under the License.
     return F32ToBf16(METHOD<PACKET_F>(Bf16ToF32(_x)));                                              \
   }
 
-#define EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16(PACKET_F, PACKET_BF16) \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pcos)                      \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, psin)                      \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, psinh)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pcosh)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pasinh)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pacosh)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pexp)                      \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pexp2)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pexpm1)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, plog)                      \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, plog1p)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, plog2)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, plog10)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, preciprocal)               \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, prsqrt)                    \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pcbrt)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, psqrt)                     \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, ptanh)
+// BF16_PACKET_FUNCTION for a bfloat16 packet that spans two PACKET_F, through the backend's
+// Bf16ToF32Low, Bf16ToF32High and two-argument F32ToBf16.
+// METHOD is a template name, which cannot be parenthesized.
+// NOLINTBEGIN(bugprone-macro-parentheses)
+#define BF16_PACKET_FUNCTION_HALVES(PACKET_F, PACKET_BF16, METHOD)                                  \
+  template <>                                                                                       \
+  EIGEN_DEFINE_FUNCTION_ALLOWING_MULTIPLE_DEFINITIONS EIGEN_UNUSED PACKET_BF16 METHOD<PACKET_BF16>( \
+      const PACKET_BF16& _x) {                                                                      \
+    return F32ToBf16(METHOD<PACKET_F>(Bf16ToF32Low(_x)), METHOD<PACKET_F>(Bf16ToF32High(_x)));      \
+  }
+// NOLINTEND(bugprone-macro-parentheses)
 
-// BF16 wrappers for unsupported/SpecialFunctions.
+// The _WITH forms take the macro that defines each function, BF16_PACKET_FUNCTION or
+// BF16_PACKET_FUNCTION_HALVES, so that every backend instantiates the same list.
+#define EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16_WITH(FUNCTION, PACKET_F, PACKET_BF16) \
+  FUNCTION(PACKET_F, PACKET_BF16, pcos)                                                 \
+  FUNCTION(PACKET_F, PACKET_BF16, psin)                                                 \
+  FUNCTION(PACKET_F, PACKET_BF16, psinh)                                                \
+  FUNCTION(PACKET_F, PACKET_BF16, pcosh)                                                \
+  FUNCTION(PACKET_F, PACKET_BF16, pasinh)                                               \
+  FUNCTION(PACKET_F, PACKET_BF16, pacosh)                                               \
+  FUNCTION(PACKET_F, PACKET_BF16, pexp)                                                 \
+  FUNCTION(PACKET_F, PACKET_BF16, pexp2)                                                \
+  FUNCTION(PACKET_F, PACKET_BF16, pexpm1)                                               \
+  FUNCTION(PACKET_F, PACKET_BF16, plog)                                                 \
+  FUNCTION(PACKET_F, PACKET_BF16, plog1p)                                               \
+  FUNCTION(PACKET_F, PACKET_BF16, plog2)                                                \
+  FUNCTION(PACKET_F, PACKET_BF16, plog10)                                               \
+  FUNCTION(PACKET_F, PACKET_BF16, preciprocal)                                          \
+  FUNCTION(PACKET_F, PACKET_BF16, pcbrt)                                                \
+  FUNCTION(PACKET_F, PACKET_BF16, ptanh)
+
+#define EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16(PACKET_F, PACKET_BF16) \
+  EIGEN_INSTANTIATE_GENERIC_MATH_FUNCS_BF16_WITH(BF16_PACKET_FUNCTION, PACKET_F, PACKET_BF16)
+
+// psqrt and prsqrt through the float round trip, for backends without their own bfloat16 kernels.
+#define EIGEN_INSTANTIATE_GENERIC_SQRT_FUNCS_BF16(PACKET_F, PACKET_BF16) \
+  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, psqrt)                     \
+  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, prsqrt)
+
+// BF16 wrappers for contrib/SpecialFunctions.
+#define EIGEN_INSTANTIATE_SPECIAL_FUNCS_BF16_WITH(FUNCTION, PACKET_F, PACKET_BF16) \
+  FUNCTION(PACKET_F, PACKET_BF16, perf)                                            \
+  FUNCTION(PACKET_F, PACKET_BF16, pndtri)
+
 #define EIGEN_INSTANTIATE_SPECIAL_FUNCS_BF16(PACKET_F, PACKET_BF16) \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, perf)                 \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pndtri)
+  EIGEN_INSTANTIATE_SPECIAL_FUNCS_BF16_WITH(BF16_PACKET_FUNCTION, PACKET_F, PACKET_BF16)
+
+#define EIGEN_INSTANTIATE_BESSEL_FUNCS_BF16_WITH(FUNCTION, PACKET_F, PACKET_BF16) \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_i0)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_i0e)                                    \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_i1)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_i1e)                                    \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_j0)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_j1)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_k0)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_k0e)                                    \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_k1)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_k1e)                                    \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_y0)                                     \
+  FUNCTION(PACKET_F, PACKET_BF16, pbessel_y1)
 
 #define EIGEN_INSTANTIATE_BESSEL_FUNCS_BF16(PACKET_F, PACKET_BF16) \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_i0)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_i0e)         \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_i1)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_i1e)         \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_j0)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_j1)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_k0)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_k0e)         \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_k1)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_k1e)         \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_y0)          \
-  BF16_PACKET_FUNCTION(PACKET_F, PACKET_BF16, pbessel_y1)
+  EIGEN_INSTANTIATE_BESSEL_FUNCS_BF16_WITH(BF16_PACKET_FUNCTION, PACKET_F, PACKET_BF16)
 
 // Only use HIP GPU bf16 in kernels
 #if defined(EIGEN_HAS_HIP_BF16) && defined(EIGEN_GPU_COMPILE_PHASE)
@@ -151,7 +177,7 @@ struct bfloat16 : public bfloat16_impl::bfloat16_base {
   template <class T>
   explicit EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR bfloat16(T val)
       : bfloat16_impl::bfloat16_base(
-            bfloat16_impl::float_to_bfloat16_rtne<std::is_integral<T>::value>(static_cast<float>(val))) {}
+            bfloat16_impl::float_to_bfloat16_rtne<std::is_integral<T>::value>(half_impl::narrow_to_float(val))) {}
 
   explicit EIGEN_DEVICE_FUNC bfloat16(float f)
       : bfloat16_impl::bfloat16_base(bfloat16_impl::float_to_bfloat16_rtne<false>(f)) {}
@@ -160,7 +186,8 @@ struct bfloat16 : public bfloat16_impl::bfloat16_base {
   // float will lead to loss of imag value.
   template <typename RealScalar>
   explicit EIGEN_DEVICE_FUNC EIGEN_CONSTEXPR bfloat16(const std::complex<RealScalar>& val)
-      : bfloat16_impl::bfloat16_base(bfloat16_impl::float_to_bfloat16_rtne<false>(static_cast<float>(val.real()))) {}
+      : bfloat16_impl::bfloat16_base(
+            bfloat16_impl::float_to_bfloat16_rtne<false>(half_impl::narrow_to_float(val.real()))) {}
 
   EIGEN_DEVICE_FUNC operator float() const {  // NOLINT: Allow implicit conversion to float, because it is lossless.
     return bfloat16_impl::bfloat16_to_float(*this);
@@ -331,15 +358,6 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 operator-(const bfloat16& a) {
   numext::uint16_t x = numext::bit_cast<uint16_t>(a) ^ 0x8000;
   return numext::bit_cast<bfloat16>(x);
 }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC int16_t bfloat16_map_to_signed(numext::uint16_t bits) {
-  constexpr numext::uint16_t kAbsMask = 0x7fff;
-  return (bits >> 15) ? -(bits & kAbsMask) : bits;
-}
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool bfloat16_is_ordered(numext::uint16_t a, numext::uint16_t b) {
-  constexpr numext::uint16_t kAbsMask = 0x7fff;
-  constexpr numext::uint16_t kInf = 0x7f80;
-  return numext::maxi(a & kAbsMask, b & kAbsMask) <= kInf;
-}
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16& operator+=(bfloat16& a, const bfloat16& b) {
   a = bfloat16(float(a) + float(b));
   return a;
@@ -374,6 +392,41 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 operator--(bfloat16& a, int) {
   --a;
   return original_value;
 }
+#if defined(EIGEN_GPU_COMPILE_PHASE)
+// On GPU, widening bfloat16 to float is a shift left by 16 and the comparison is
+// a native float compare, which is much cheaper than the 16-bit integer path. It
+// also avoids an LLVM 18 NVPTX bug on sm_90 that lowers SLP-vectorized i16
+// negation to the non-existent 'sub.s16x2' PTX instruction. Unlike the host
+// path, these follow float FTZ and fast-math semantics: under flush-to-zero,
+// subnormal operands compare equal to zero.
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator==(const bfloat16& a, const bfloat16& b) {
+  return numext::equal_strict(float(a), float(b));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator!=(const bfloat16& a, const bfloat16& b) {
+  return numext::not_equal_strict(float(a), float(b));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator<(const bfloat16& a, const bfloat16& b) {
+  return float(a) < float(b);
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator<=(const bfloat16& a, const bfloat16& b) {
+  return float(a) <= float(b);
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator>(const bfloat16& a, const bfloat16& b) {
+  return float(a) > float(b);
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator>=(const bfloat16& a, const bfloat16& b) {
+  return float(a) >= float(b);
+}
+#else
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC int16_t bfloat16_map_to_signed(numext::uint16_t bits) {
+  constexpr numext::uint16_t kAbsMask = 0x7fff;
+  return (bits >> 15) ? -(bits & kAbsMask) : bits;
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool bfloat16_is_ordered(numext::uint16_t a, numext::uint16_t b) {
+  constexpr numext::uint16_t kAbsMask = 0x7fff;
+  constexpr numext::uint16_t kInf = 0x7f80;
+  return numext::maxi(a & kAbsMask, b & kAbsMask) <= kInf;
+}
 // Evaluate both predicates to keep comparison loops branch-free. Integer operands avoid Clang's
 // -Wbitwise-instead-of-logical warning.
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator==(const bfloat16& a, const bfloat16& b) {
@@ -407,6 +460,7 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator>=(const bfloat16& a, const b
   return static_cast<unsigned int>(bfloat16_map_to_signed(a_bits) >= bfloat16_map_to_signed(b_bits)) &
          static_cast<unsigned int>(bfloat16_is_ordered(a_bits, b_bits));
 }
+#endif
 
 #if EIGEN_COMP_CLANG && defined(EIGEN_CUDACC)
 #pragma pop_macro("EIGEN_DEVICE_FUNC")
@@ -656,69 +710,74 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC float bfloat16_to_float(__bfloat16_raw h) 
 // --- standard functions ---
 
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool(isinf)(const bfloat16& a) {
-  EIGEN_USING_STD(isinf);
-#if defined(EIGEN_USE_HIP_BF16)
-  return (isinf)(a);  // Uses HIP hip_bfloat16 isinf operator
-#else
-  return (isinf)(float(a));
-#endif
+  return (raw_bfloat16_as_uint16(a) & 0x7fff) == 0x7f80;
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool(isnan)(const bfloat16& a) {
-  EIGEN_USING_STD(isnan);
-#if defined(EIGEN_USE_HIP_BF16)
-  return (isnan)(a);  // Uses HIP hip_bfloat16 isnan operator
-#else
-  return (isnan)(float(a));
-#endif
+  return (raw_bfloat16_as_uint16(a) & 0x7fff) > 0x7f80;
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool(isfinite)(const bfloat16& a) {
-  return !(isinf EIGEN_NOT_A_MACRO(a)) && !(isnan EIGEN_NOT_A_MACRO(a));
+  return (raw_bfloat16_as_uint16(a) & 0x7fff) < 0x7f80;
 }
 
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 abs(const bfloat16& a) {
   numext::uint16_t x = numext::bit_cast<numext::uint16_t>(a) & 0x7FFF;
   return numext::bit_cast<bfloat16>(x);
 }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp(const bfloat16& a) { return bfloat16(::expf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp2(const bfloat16& a) { return bfloat16(::exp2f(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp(const bfloat16& a) { return bfloat16(numext::exp(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exp2(const bfloat16& a) { return bfloat16(numext::exp2(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 expm1(const bfloat16& a) { return bfloat16(numext::expm1(float(a))); }
 // float covers the bfloat16 range, so the single conversion back rounds correctly.
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 ldexp(const bfloat16& a, int exponent) {
   return bfloat16(numext::ldexp(float(a), exponent));
 }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log(const bfloat16& a) { return bfloat16(::logf(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log(const bfloat16& a) { return bfloat16(numext::log(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log1p(const bfloat16& a) { return bfloat16(numext::log1p(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log10(const bfloat16& a) { return bfloat16(::log10f(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log2(const bfloat16& a) {
-  return bfloat16(static_cast<float>(EIGEN_LOG2E) * ::logf(float(a)));
-}
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sqrt(const bfloat16& a) { return bfloat16(::sqrtf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cbrt(const bfloat16& a) { return bfloat16(::cbrtf(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log10(const bfloat16& a) { return bfloat16(numext::log10(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 log2(const bfloat16& a) { return bfloat16(numext::log2(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sqrt(const bfloat16& a) { return bfloat16(numext::sqrt(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cbrt(const bfloat16& a) { return bfloat16(numext::cbrt(float(a))); }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 pow(const bfloat16& a, const bfloat16& b) {
-  return bfloat16(::powf(float(a), float(b)));
+  return bfloat16(numext::pow(float(a), float(b)));
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 atan2(const bfloat16& a, const bfloat16& b) {
-  return bfloat16(::atan2f(float(a), float(b)));
+  return bfloat16(numext::atan2(float(a), float(b)));
 }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sin(const bfloat16& a) { return bfloat16(::sinf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cos(const bfloat16& a) { return bfloat16(::cosf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 tan(const bfloat16& a) { return bfloat16(::tanf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 asin(const bfloat16& a) { return bfloat16(::asinf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 acos(const bfloat16& a) { return bfloat16(::acosf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 atan(const bfloat16& a) { return bfloat16(::atanf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sinh(const bfloat16& a) { return bfloat16(::sinhf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cosh(const bfloat16& a) { return bfloat16(::coshf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 tanh(const bfloat16& a) { return bfloat16(::tanhf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 asinh(const bfloat16& a) { return bfloat16(::asinhf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 acosh(const bfloat16& a) { return bfloat16(::acoshf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 atanh(const bfloat16& a) { return bfloat16(::atanhf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 floor(const bfloat16& a) { return bfloat16(::floorf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 ceil(const bfloat16& a) { return bfloat16(::ceilf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 rint(const bfloat16& a) { return bfloat16(::rintf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 round(const bfloat16& a) { return bfloat16(::roundf(float(a))); }
-EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 trunc(const bfloat16& a) { return bfloat16(::truncf(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sin(const bfloat16& a) { return bfloat16(numext::sin(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cos(const bfloat16& a) { return bfloat16(numext::cos(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 tan(const bfloat16& a) { return bfloat16(numext::tan(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 asin(const bfloat16& a) { return bfloat16(numext::asin(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 acos(const bfloat16& a) { return bfloat16(numext::acos(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 atan(const bfloat16& a) { return bfloat16(numext::atan(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 sinh(const bfloat16& a) { return bfloat16(numext::sinh(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 cosh(const bfloat16& a) { return bfloat16(numext::cosh(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 tanh(const bfloat16& a) {
+  // Select the scalar template, not the host fast-math overload, to preserve bfloat16 rounding.
+  return bfloat16(numext::tanh<float>(float(a)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 asinh(const bfloat16& a) { return bfloat16(numext::asinh(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 acosh(const bfloat16& a) { return bfloat16(numext::acosh(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 atanh(const bfloat16& a) { return bfloat16(numext::atanh(float(a))); }
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 exact_float_to_bfloat16(float f) {
+  return raw_uint16_to_bfloat16(static_cast<numext::uint16_t>(numext::bit_cast<numext::uint32_t>(f) >> 16));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 floor(const bfloat16& a) {
+  return exact_float_to_bfloat16(numext::floor(float(a)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 ceil(const bfloat16& a) {
+  return exact_float_to_bfloat16(numext::ceil(float(a)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 rint(const bfloat16& a) {
+  return exact_float_to_bfloat16(numext::rint(float(a)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 round(const bfloat16& a) {
+  return exact_float_to_bfloat16(numext::round(float(a)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 trunc(const bfloat16& a) {
+  return exact_float_to_bfloat16(numext::trunc(float(a)));
+}
+// fmod is exact: a - n*b is either a itself or a multiple of the ulp of b that is smaller than |b|.
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 fmod(const bfloat16& a, const bfloat16& b) {
-  return bfloat16(::fmodf(float(a), float(b)));
+  return exact_float_to_bfloat16(numext::fmod(float(a), float(b)));
 }
 
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16(min)(const bfloat16& a, const bfloat16& b) {
@@ -736,18 +795,24 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16(max)(const bfloat16& a, const bfl
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 fmin(const bfloat16& a, const bfloat16& b) {
   const float f1 = static_cast<float>(a);
   const float f2 = static_cast<float>(b);
-  return bfloat16(::fminf(f1, f2));
+  EIGEN_USING_STD(fmin);
+  return exact_float_to_bfloat16(fmin(f1, f2));
 }
 
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bfloat16 fmax(const bfloat16& a, const bfloat16& b) {
   const float f1 = static_cast<float>(a);
   const float f2 = static_cast<float>(b);
-  return bfloat16(::fmaxf(f1, f2));
+  EIGEN_USING_STD(fmax);
+  return exact_float_to_bfloat16(fmax(f1, f2));
 }
 
 EIGEN_DEVICE_FUNC inline bfloat16 fma(const bfloat16& a, const bfloat16& b, const bfloat16& c) {
-  // Emulate FMA via float.
+#if defined(EIGEN_GPU_COMPILE_PHASE) || defined(__SYCL_DEVICE_ONLY__)
+  // Rounds twice; see half_impl::fma_round_to_odd.
   return bfloat16(numext::fma(static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)));
+#else
+  return bfloat16(half_impl::fma_round_to_odd(static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)));
+#endif
 }
 
 #ifndef EIGEN_NO_IO
@@ -774,7 +839,7 @@ struct random_impl<bfloat16> {
   }
   static EIGEN_DEVICE_FUNC inline bfloat16 run() {
     float result = Impl::run(MantissaBits);
-    return bfloat16(result);
+    return bfloat16_impl::exact_float_to_bfloat16(result);
   }
 };
 
@@ -879,7 +944,9 @@ namespace std {
 template <>
 struct hash<Eigen::bfloat16> {
   EIGEN_STRONG_INLINE std::size_t operator()(const Eigen::bfloat16& a) const {
-    return static_cast<std::size_t>(Eigen::numext::bit_cast<Eigen::numext::uint16_t>(a));
+    // -0 == +0, so both must hash alike.
+    const Eigen::numext::uint16_t bits = Eigen::numext::bit_cast<Eigen::numext::uint16_t>(a);
+    return static_cast<std::size_t>((bits & 0x7fff) == 0 ? 0 : bits);
   }
 };
 }  // namespace std

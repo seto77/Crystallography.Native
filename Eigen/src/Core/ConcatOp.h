@@ -107,19 +107,14 @@ class Concat : public internal::dense_xpr_base<Concat<Direction, LhsType, RhsTyp
         (std::is_same<typename LhsType::Scalar, typename RhsType::Scalar>::value),
         YOU_MIXED_DIFFERENT_NUMERIC_TYPES__YOU_NEED_TO_USE_THE_CAST_METHOD_OF_MATRIXBASE_TO_CAST_NUMERIC_TYPES_EXPLICITLY)
     EIGEN_STATIC_ASSERT_SAME_XPR_KIND(LhsType, RhsType)
-    EIGEN_STATIC_ASSERT(Direction != Horizontal || int(LhsType::RowsAtCompileTime) == Dynamic ||
-                            int(RhsType::RowsAtCompileTime) == Dynamic ||
-                            int(LhsType::RowsAtCompileTime) == int(RhsType::RowsAtCompileTime),
-                        YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES)
-    EIGEN_STATIC_ASSERT(Direction != Vertical || int(LhsType::ColsAtCompileTime) == Dynamic ||
-                            int(RhsType::ColsAtCompileTime) == Dynamic ||
-                            int(LhsType::ColsAtCompileTime) == int(RhsType::ColsAtCompileTime),
-                        YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES)
-    EIGEN_IF_CONSTEXPR (Direction == Vertical) {
-      eigen_assert(lhs.cols() == rhs.cols() && "vcat: number of columns must match");
-    } else {
-      eigen_assert(lhs.rows() == rhs.rows() && "hcat: number of rows must match");
-    }
+    // Select the relation first: C++14 would instantiate static assertions in both branches of an ordinary if.
+    // TODO(C++17): use if constexpr with EIGEN_INTERNAL_ASSERT_SAME_COLS/EIGEN_INTERNAL_ASSERT_SAME_ROWS directly.
+    EIGEN_INTERNAL_CHECK_SHAPE(
+        (Direction == Vertical ? lhs.cols() == rhs.cols() : lhs.rows() == rhs.rows()) &&
+            (Direction == Vertical ? "vcat: number of columns must match" : "hcat: number of rows must match"),
+        YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES,
+        std::conditional_t<Direction == Vertical, internal::matching_cols<LhsType, RhsType>,
+                           internal::matching_rows<LhsType, RhsType>>);
   }
 
   EIGEN_DEVICE_FUNC constexpr Index rows() const {
@@ -194,7 +189,7 @@ struct evaluator<Concat<Direction, LhsType, RhsType>> : evaluator_base<Concat<Di
   }
 
   EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE CoeffReturnType coeff(Index index) const {
-    const Index boundary = Direction == Vertical ? m_lhsRows.value() : m_lhsCols.value();
+    const Index boundary = m_lhsRows.value() * m_lhsCols.value();
     if (index < boundary)
       return m_lhsImpl.coeff(index);
     else
@@ -228,7 +223,7 @@ struct evaluator<Concat<Direction, LhsType, RhsType>> : evaluator_base<Concat<Di
   template <int LoadMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packet(Index index) const {
     constexpr int packetSize = unpacket_traits<PacketType>::size;
-    const Index boundary = Direction == Vertical ? m_lhsRows.value() : m_lhsCols.value();
+    const Index boundary = m_lhsRows.value() * m_lhsCols.value();
     if (index >= boundary) return m_rhsImpl.template packet<LoadMode, PacketType>(index - boundary);
     if (index + packetSize > boundary) return packetBoundaryLinear<LoadMode, PacketType>(index);
     return m_lhsImpl.template packet<LoadMode, PacketType>(index);
@@ -257,7 +252,7 @@ struct evaluator<Concat<Direction, LhsType, RhsType>> : evaluator_base<Concat<Di
 
   template <int LoadMode, typename PacketType>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE PacketType packetSegment(Index index, Index begin, Index count) const {
-    const Index boundary = Direction == Vertical ? m_lhsRows.value() : m_lhsCols.value();
+    const Index boundary = m_lhsRows.value() * m_lhsCols.value();
     if (index >= boundary)
       return m_rhsImpl.template packetSegment<LoadMode, PacketType>(index - boundary, begin, count);
     if (index + begin + count > boundary) return packetSegmentBoundaryLinear<LoadMode, PacketType>(index, begin, count);

@@ -291,7 +291,7 @@ class PartialPivLU : public SolverBase<PartialPivLU<MatrixType_, PermutationInde
      * Step 3: update  c = P^-1 c.
      */
 
-    eigen_assert(rhs.rows() == m_lu.cols());
+    EIGEN_INTERNAL_ASSERT_SOLVER_RHS(m_lu, rhs, true);
 
     // Step 1
     dst = m_lu.template triangularView<Upper>().transpose().template conjugateIf<Conjugate>().solve(rhs);
@@ -349,12 +349,81 @@ PartialPivLU<MatrixType, PermutationIndex>::PartialPivLU(EigenBase<InputType>& m
 
 namespace internal {
 
+/** \internal Step K of the unblocked LU of a small fixed-size square matrix, with every block extent known at compile
+ * time. */
+template <int K, int Size, bool Last = (K == Size - 1)>
+struct unrolled_partial_lu_step {
+  template <typename MatrixTypeRef, typename PivIndex>
+  static EIGEN_STRONG_INLINE void run(MatrixTypeRef& lu, PivIndex* row_transpositions, PivIndex& nb_transpositions,
+                                      Index& first_zero_pivot) {
+    using Scalar = typename MatrixTypeRef::Scalar;
+    using Scoring = scalar_score_coeff_op<Scalar>;
+    using Score = typename Scoring::result_type;
+    constexpr int Remaining = Size - K - 1;
+
+    Index row_of_biggest_in_col;
+    const Score biggest_in_corner =
+        lu.col(K).template tail<Size - K>().unaryExpr(Scoring()).maxCoeff(&row_of_biggest_in_col);
+    row_of_biggest_in_col += K;
+    row_transpositions[K] = PivIndex(row_of_biggest_in_col);
+    if (!numext::is_exactly_zero(biggest_in_corner)) {
+      if (K != row_of_biggest_in_col) {
+        lu.row(K).swap(lu.row(row_of_biggest_in_col));
+        ++nb_transpositions;
+      }
+      lu.col(K).template tail<Remaining>() /= lu.coeff(K, K);
+    } else if (first_zero_pivot == -1) {
+      first_zero_pivot = K;
+    }
+    lu.template bottomRightCorner<Remaining, Remaining>().noalias() -=
+        lu.col(K).template tail<Remaining>() * lu.row(K).template tail<Remaining>();
+    unrolled_partial_lu_step<K + 1, Size>::run(lu, row_transpositions, nb_transpositions, first_zero_pivot);
+  }
+};
+
+template <int K, int Size>
+struct unrolled_partial_lu_step<K, Size, /*Last=*/true> {
+  template <typename MatrixTypeRef, typename PivIndex>
+  static EIGEN_STRONG_INLINE void run(MatrixTypeRef& lu, PivIndex* row_transpositions, PivIndex&,
+                                      Index& first_zero_pivot) {
+    using Scoring = scalar_score_coeff_op<typename MatrixTypeRef::Scalar>;
+    row_transpositions[K] = PivIndex(K);
+    if (numext::is_exactly_zero(Scoring()(lu.coeff(K, K))) && first_zero_pivot == -1) first_zero_pivot = K;
+  }
+};
+
+/** \internal Runs the unrolled LU when Unroll is set; returns whether it did. */
+template <bool Unroll, int Size>
+struct unrolled_partial_lu {
+  template <typename MatrixTypeRef, typename PivIndex>
+  static EIGEN_STRONG_INLINE bool run(MatrixTypeRef&, PivIndex*, PivIndex&, Index&) {
+    return false;
+  }
+};
+
+template <int Size>
+struct unrolled_partial_lu<true, Size> {
+  template <typename MatrixTypeRef, typename PivIndex>
+  static EIGEN_STRONG_INLINE bool run(MatrixTypeRef& lu, PivIndex* row_transpositions, PivIndex& nb_transpositions,
+                                      Index& first_zero_pivot) {
+    nb_transpositions = 0;
+    first_zero_pivot = -1;
+    unrolled_partial_lu_step<0, Size>::run(lu, row_transpositions, nb_transpositions, first_zero_pivot);
+    return true;
+  }
+};
+
 /** \internal This is the blocked version of unblocked_lu() */
 template <typename Scalar, int StorageOrder, typename PivIndex, int SizeAtCompileTime = Dynamic>
 struct generic_partial_lu_impl {
   static constexpr int UnBlockedBound = 16;
   static constexpr bool UnBlockedAtCompileTime = SizeAtCompileTime != Dynamic && SizeAtCompileTime <= UnBlockedBound;
   static constexpr int ActualSizeAtCompileTime = UnBlockedAtCompileTime ? SizeAtCompileTime : Dynamic;
+  // Unrolling gives the pivot search, scaling and update of every step compile-time extents; runtime-sized blocks'
+  // vectorized loops cost more than their arithmetic (1.5-4.6x for 3x3 to 6x6 double, gcc and clang, AVX2). At 16,
+  // gcc's unrolled code is slower than the loop.
+  static constexpr int UnrolledBound = 12;
+  static constexpr bool UnrolledAtCompileTime = UnBlockedAtCompileTime && SizeAtCompileTime <= UnrolledBound;
   // Remaining rows and columns at compile-time:
   static constexpr int RRows = SizeAtCompileTime == 2 ? 1 : Dynamic;
   static constexpr int RCols = SizeAtCompileTime == 2 ? 1 : Dynamic;
@@ -362,6 +431,17 @@ struct generic_partial_lu_impl {
   using MatrixTypeRef = Ref<MatrixType>;
   using BlockType = Ref<Matrix<Scalar, Dynamic, Dynamic, StorageOrder>>;
   using RealScalar = typename MatrixType::RealScalar;
+
+  static void apply_row_transpositions(BlockType& matrix, Index first, Index count, const PivIndex* transpositions) {
+    EIGEN_IF_CONSTEXPR (StorageOrder == ColMajor) {
+      // Keep the pivot rows of one column in cache, even when the outer stride maps every column to the same set.
+      for (Index j = 0; j < matrix.cols(); ++j)
+        for (Index i = first; i < first + count; ++i)
+          numext::swap(matrix.coeffRef(i, j), matrix.coeffRef(transpositions[i], j));
+    } else {
+      for (Index i = first; i < first + count; ++i) matrix.row(i).swap(matrix.row(transpositions[i]));
+    }
+  }
 
   /** \internal performs the LU decomposition in-place of the matrix \a lu
    * using an unblocked algorithm.
@@ -376,6 +456,12 @@ struct generic_partial_lu_impl {
   static Index unblocked_lu(MatrixTypeRef& lu, PivIndex* row_transpositions, PivIndex& nb_transpositions) {
     using Scoring = scalar_score_coeff_op<Scalar>;
     using Score = typename Scoring::result_type;
+    {
+      Index first_zero_pivot;
+      if (unrolled_partial_lu<UnrolledAtCompileTime, SizeAtCompileTime>::run(lu, row_transpositions, nb_transpositions,
+                                                                             first_zero_pivot))
+        return first_zero_pivot;
+    }
     const Index rows = lu.rows();
     const Index cols = lu.cols();
     const Index size = (std::min)(rows, cols);
@@ -466,7 +552,7 @@ struct generic_partial_lu_impl {
     for (Index k = 0; k < size; k += blockSize) {
       Index bs = (std::min)(size - k, blockSize);  // actual size of the block
       Index trows = rows - k - bs;                 // trailing rows
-      Index tsize = size - k - bs;                 // trailing size
+      Index tsize = cols - k - bs;                 // trailing columns
 
       // partition the matrix:
       //                          A00 | A01 | A02
@@ -489,15 +575,13 @@ struct generic_partial_lu_impl {
       // update permutations and apply them to A_0
       if (k > 0) {
         BlockType A_0 = lu.block(0, 0, rows, k);
-        for (Index i = k; i < k + bs; ++i) {
-          Index piv = (row_transpositions[i] += internal::convert_index<PivIndex>(k));
-          A_0.row(i).swap(A_0.row(piv));
-        }
+        for (Index i = k; i < k + bs; ++i) row_transpositions[i] += internal::convert_index<PivIndex>(k);
+        apply_row_transpositions(A_0, k, bs, row_transpositions);
       }
 
-      if (trows) {
+      if (tsize) {
         // apply permutations to A_2
-        for (Index i = k; i < k + bs; ++i) A_2.row(i).swap(A_2.row(row_transpositions[i]));
+        apply_row_transpositions(A_2, k, bs, row_transpositions);
 
         // A12 = A11^-1 A12
         A11.template triangularView<UnitLower>().solveInPlace(A12);
@@ -522,7 +606,7 @@ void partial_lu_inplace(MatrixType& lu, TranspositionType& row_transpositions,
     nb_transpositions = 0;
     return;
   }
-  eigen_assert(lu.cols() == row_transpositions.size());
+  EIGEN_INTERNAL_ASSERT_SIZE_MATCHES_COLS(row_transpositions.indices(), lu);
   eigen_assert(row_transpositions.size() < 2 ||
                (&row_transpositions.coeffRef(1) - &row_transpositions.coeffRef(0)) == 1);
 
@@ -567,7 +651,7 @@ void PartialPivLU<MatrixType, PermutationIndex>::compute() {
   else
     m_l1_norm = RealScalar(0);
 
-  eigen_assert(m_lu.rows() == m_lu.cols() && "PartialPivLU is only for square (and moreover invertible) matrices");
+  EIGEN_INTERNAL_ASSERT_SQUARE_MSG(m_lu, "PartialPivLU is only for square (and moreover invertible) matrices");
   const Index size = m_lu.rows();
 
   m_rowsTranspositions.resize(size);

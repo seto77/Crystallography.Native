@@ -31,7 +31,8 @@ namespace internal {
 
    If the preconditions are satisfied, which they are for the _*_rcp_ps
    instructions on x86, the result has a maximum relative error of 2 ulps,
-   and correctly handles reciprocals of zero, infinity, and NaN.
+   and correctly handles reciprocals of zero, infinity, and NaN. Lanes where the
+   approximation flushed a denormal input or result to zero take a division.
 */
 template <typename Packet, int Steps>
 struct generic_reciprocal_newton_step {
@@ -43,11 +44,12 @@ struct generic_reciprocal_newton_step {
     //   x_{i} = x_{i-1} * (2 - a * x_{i-1})
     const Packet x = generic_reciprocal_newton_step<Packet, Steps - 1>::run(a, approx_a_recip);
     const Packet tmp = pnmadd(a, x, one);
-    // If tmp is NaN, it means that a is either +/-0 or +/-Inf.
-    // In this case return the approximation directly.
-    const Packet is_not_nan = pcmp_eq(tmp, tmp);
     // Use two FMAs instead of FMA+FMUL to improve precision.
-    return pselect(is_not_nan, pmadd(x, tmp, x), x);
+    const Packet refined = pmadd(x, tmp, x);
+    // The step yields NaN when a is +/-0, +/-Inf or NaN, and NaN or 0 where the approximation flushed a denormal a or
+    // 1 / a to zero (x = +/-inf, or x = 0 for |a| > 1 / min). Divide in those lanes.
+    const Packet redo = pcmp_lt_or_nan(pabs(refined), pset1<Packet>((std::numeric_limits<Scalar>::denorm_min)()));
+    return predux_any(redo) ? pselect(redo, pdiv(one, a), refined) : refined;
   }
 };
 
@@ -155,11 +157,10 @@ EIGEN_DEVICE_FUNC constexpr EIGEN_STRONG_INLINE RealScalar positive_real_hypot(c
   if ((numext::isinf)(x) || (numext::isinf)(y)) return NumTraits<RealScalar>::infinity();
   if ((numext::isnan)(x) || (numext::isnan)(y)) return NumTraits<RealScalar>::quiet_NaN();
 
-  EIGEN_USING_STD(sqrt);
   RealScalar p = numext::maxi(x, y);
   if (numext::is_exactly_zero(p)) return RealScalar(0);
   RealScalar qp = numext::mini(y, x) / p;
-  return p * sqrt(RealScalar(1) + qp * qp);
+  return p * numext::sqrt<RealScalar>(RealScalar(1) + qp * qp);
 }
 
 template <typename Scalar>
@@ -170,81 +171,99 @@ struct hypot_impl {
   }
 };
 
-// Generic complex sqrt implementation that correctly handles corner cases
-// according to https://en.cppreference.com/w/cpp/numeric/complex/sqrt
-template <typename ComplexT>
-EIGEN_DEVICE_FUNC constexpr ComplexT complex_sqrt(const ComplexT& z) {
-  // Computes the principal sqrt of the input.
-  //
-  // For a complex square root of the number x + i*y. We want to find real
-  // numbers u and v such that
-  //    (u + i*v)^2 = x + i*y  <=>
-  //    u^2 - v^2 + i*2*u*v = x + i*v.
-  // By equating the real and imaginary parts we get:
-  //    u^2 - v^2 = x
-  //    2*u*v = y.
-  //
-  // For x >= 0, this has the numerically stable solution
-  //    u = sqrt(0.5 * (x + sqrt(x^2 + y^2)))
-  //    v = y / (2 * u)
-  // and for x < 0,
-  //    v = sign(y) * sqrt(0.5 * (-x + sqrt(x^2 + y^2)))
-  //    u = y / (2 * v)
-  //
-  // Letting w = sqrt(0.5 * (|x| + |z|)),
-  //   if x == 0: u = w, v = sign(y) * w
-  //   if x > 0:  u = w, v = y / (2 * w)
-  //   if x < 0:  u = |y| / (2 * w), v = sign(y) * w
+template <typename ComplexT, bool Reciprocal>
+EIGEN_DEVICE_FUNC EIGEN_DONT_INLINE ComplexT complex_sqrt_extreme(const ComplexT& z) {
   using T = typename NumTraits<ComplexT>::Real;
   const T x = numext::real(z);
   const T y = numext::imag(z);
   const T zero = T(0);
-  const T w = numext::sqrt(T(0.5) * (numext::abs(x) + numext::hypot(x, y)));
+  const T inf = NumTraits<T>::infinity();
+  EIGEN_IF_CONSTEXPR (Reciprocal) {
+    if ((numext::isinf)(x) || (numext::isinf)(y)) return ComplexT(zero, numext::copysign<T>(zero, -y));
+  } else {
+    if ((numext::isinf)(y)) return ComplexT(inf, y);
+    if ((numext::isinf)(x)) {
+      const T other = (numext::isnan)(y) ? y : zero;
+      return x > zero ? ComplexT(inf, numext::copysign(other, y))
+                      : ComplexT(numext::abs(other), numext::copysign(inf, y));
+    }
+  }
+  if ((numext::isnan)(x) || (numext::isnan)(y)) {
+    return ComplexT(NumTraits<T>::quiet_NaN(), NumTraits<T>::quiet_NaN());
+  }
+  if (numext::is_exactly_zero(x) && numext::is_exactly_zero(y)) {
+    return Reciprocal ? ComplexT(inf, NumTraits<T>::quiet_NaN()) : ComplexT(zero, y);
+  }
 
-  return (numext::isinf)(y)           ? ComplexT(NumTraits<T>::infinity(), y)
-         : numext::is_exactly_zero(x) ? ComplexT(w, y < zero ? -w : w)
-         : x > zero                   ? ComplexT(w, y / (2 * w))
-                                      : ComplexT(numext::abs(y) / (2 * w), y < zero ? -w : w);
+  T ax = numext::abs(x);
+  T ay = numext::abs(y);
+  const T p = numext::maxi(ax, ay);
+  const T r = numext::mini(ax, ay) / p;
+  const T h = numext::sqrt(T(1) + r * r);
+  // Evaluate at z/p, restoring sqrt(p) only after taking the square root.
+  ax /= p;
+  ay /= p;
+  const T scale = numext::sqrt(p);
+  const T sum = ax + h;
+  const T w = numext::sqrt(T(0.5) * sum);
+  T major = w * scale;
+  T minor = zero;
+  EIGEN_IF_CONSTEXPR (Reciprocal) {
+    major = (w / h) / scale;
+    minor = (ay / sum) * major;
+  } else {
+    // Use the original y: normalizing z/p can underflow its smaller component.
+    minor = numext::abs(y) / (T(2) * major);
+  }
+  if (numext::is_exactly_zero(x)) minor = major;
+  const T imag_sign = Reciprocal ? -y : y;
+  return x < zero ? ComplexT(minor, numext::copysign(major, imag_sign))
+                  : ComplexT(major, numext::copysign(minor, imag_sign));
 }
 
-// Generic complex rsqrt implementation.
-template <typename ComplexT>
-EIGEN_DEVICE_FUNC constexpr ComplexT complex_rsqrt(const ComplexT& z) {
-  // Computes the principal reciprocal sqrt of the input.
-  //
-  // For a complex reciprocal square root of the number z = x + i*y. We want to
-  // find real numbers u and v such that
-  //    (u + i*v)^2 = 1 / (x + i*y)  <=>
-  //    u^2 - v^2 + i*2*u*v = x/|z|^2 - i*v/|z|^2.
-  // By equating the real and imaginary parts we get:
-  //    u^2 - v^2 = x/|z|^2
-  //    2*u*v = y/|z|^2.
-  //
-  // For x >= 0, this has the numerically stable solution
-  //    u = sqrt(0.5 * (x + |z|)) / |z|
-  //    v = -y / (2 * u * |z|)
-  // and for x < 0,
-  //    v = -sign(y) * sqrt(0.5 * (-x + |z|)) / |z|
-  //    u = -y / (2 * v * |z|)
-  //
-  // Letting w = sqrt(0.5 * (|x| + |z|)),
-  //   if x == 0: u = w / |z|, v = -sign(y) * w / |z|
-  //   if x > 0:  u = w / |z|, v = -y / (2 * w * |z|)
-  //   if x < 0:  u = |y| / (2 * w * |z|), v = -sign(y) * w / |z|
+template <typename ComplexT, bool Reciprocal>
+EIGEN_DEVICE_FUNC constexpr ComplexT complex_sqrt_impl(const ComplexT& z) {
   using T = typename NumTraits<ComplexT>::Real;
   const T x = numext::real(z);
   const T y = numext::imag(z);
-  const T zero = T(0);
+  const T ax = numext::abs(x);
+  const T ay = numext::abs(y);
+  const bool real_larger = ax > ay;
+  const T p = real_larger ? ax : ay;
+  const T q = real_larger ? ay : ax;
+  // These bounds keep (|x| + |z|)/2 normal and finite. Using the same comparison
+  // for p and q preserves a NaN in either component.
+  if (EIGEN_PREDICT_FALSE(!(p > T(2) * (numext::numeric_limits<T>::min)() && p <= NumTraits<T>::highest() / T(4)))) {
+    return complex_sqrt_extreme<ComplexT, Reciprocal>(z);
+  }
+  const T r = q / p;
+  const T abs_z = p * numext::sqrt(T(1) + r * r);
+  const T sum = ax + abs_z;
+  const T w = numext::sqrt(T(0.5) * sum);
+  T major = w;
+  T minor = T(0);
+  EIGEN_IF_CONSTEXPR (Reciprocal) {
+    major = w / abs_z;
+    // |y|/(2*w*|z|) = (|y|/(|x| + |z|)) * (w/|z|), without a cubic-scale denominator.
+    minor = (ay / sum) * major;
+  } else {
+    minor = ay / (T(2) * w);
+  }
+  if (numext::is_exactly_zero(x)) minor = major;
+  const T imag_sign = Reciprocal ? -y : y;
+  return x < T(0) ? ComplexT(minor, numext::copysign(major, imag_sign))
+                  : ComplexT(major, numext::copysign(minor, imag_sign));
+}
 
-  const T abs_z = numext::hypot(x, y);
-  const T w = numext::sqrt(T(0.5) * (numext::abs(x) + abs_z));
-  const T woz = w / abs_z;
-  // Corner cases consistent with 1/sqrt(z) on gcc/clang.
-  return numext::is_exactly_zero(abs_z)               ? ComplexT(NumTraits<T>::infinity(), NumTraits<T>::quiet_NaN())
-         : ((numext::isinf)(x) || (numext::isinf)(y)) ? ComplexT(zero, zero)
-         : numext::is_exactly_zero(x)                 ? ComplexT(woz, y < zero ? woz : -woz)
-         : x > zero                                   ? ComplexT(woz, -y / (2 * w * abs_z))
-                    : ComplexT(numext::abs(y) / (2 * w * abs_z), y < zero ? woz : -woz);
+// Principal square root, with the branch cut selected by the sign of the imaginary part.
+template <typename ComplexT>
+EIGEN_DEVICE_FUNC constexpr ComplexT complex_sqrt(const ComplexT& z) {
+  return complex_sqrt_impl<ComplexT, false>(z);
+}
+
+template <typename ComplexT>
+EIGEN_DEVICE_FUNC constexpr ComplexT complex_rsqrt(const ComplexT& z) {
+  return complex_sqrt_impl<ComplexT, true>(z);
 }
 
 template <typename ComplexT>
@@ -252,9 +271,35 @@ EIGEN_DEVICE_FUNC constexpr ComplexT complex_log(const ComplexT& z) {
   // Computes complex log.
   using T = typename NumTraits<ComplexT>::Real;
   T a = numext::abs(z);
-  EIGEN_USING_STD(atan2);
-  T b = atan2(z.imag(), z.real());
+  T b = numext::atan2(z.imag(), z.real());
+  // log|z| is finite where |z| itself overflows or rounds to a subnormal: scale z exactly by a power of two first.
+  if (EIGEN_PREDICT_FALSE((numext::isinf)(a) && (numext::isfinite)(z.real()) && (numext::isfinite)(z.imag()))) {
+    const T half = T(0.5);
+    return ComplexT(numext::log(numext::abs(ComplexT(z.real() * half, z.imag() * half))) + T(EIGEN_LN2), b);
+  }
+  if (EIGEN_PREDICT_FALSE(a < (numext::numeric_limits<T>::min)() && !numext::is_exactly_zero(a))) {
+    const T eps = NumTraits<T>::epsilon();
+    return ComplexT(numext::log(numext::abs(ComplexT(z.real() / eps, z.imag() / eps))) + numext::log(eps), b);
+  }
   return ComplexT(numext::log(a), b);
+}
+
+// log2|z| + i arg(z) log2(e), scaled as in complex_log. The real part comes from log2, which is exact where |z| is a
+// power of two; log2(e) log|z| can be an ulp off there.
+template <typename ComplexT>
+EIGEN_DEVICE_FUNC ComplexT complex_log2(const ComplexT& z) {
+  using T = typename NumTraits<ComplexT>::Real;
+  const T a = numext::abs(z);
+  const T b = T(EIGEN_LOG2E) * numext::atan2(z.imag(), z.real());
+  if (EIGEN_PREDICT_FALSE((numext::isinf)(a) && (numext::isfinite)(z.real()) && (numext::isfinite)(z.imag()))) {
+    const T half = T(0.5);
+    return ComplexT(numext::log2(numext::abs(ComplexT(z.real() * half, z.imag() * half))) + T(1), b);
+  }
+  if (EIGEN_PREDICT_FALSE(a < (numext::numeric_limits<T>::min)() && !numext::is_exactly_zero(a))) {
+    const T eps = NumTraits<T>::epsilon();
+    return ComplexT(numext::log2(numext::abs(ComplexT(z.real() / eps, z.imag() / eps))) + numext::log2(eps), b);
+  }
+  return ComplexT(numext::log2(a), b);
 }
 
 }  // end namespace internal

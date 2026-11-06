@@ -245,6 +245,7 @@ class DenseBase
   using ConstantReturnType = CwiseNullaryOp<internal::scalar_constant_op<Scalar>, PlainObject>;
   /** \internal Represents a matrix with all coefficients equal to zero*/
   using ZeroReturnType = CwiseNullaryOp<internal::scalar_zero_op<Scalar>, PlainObject>;
+  // Keep typedef: EIGEN_DEPRECATED uses __declspec on MSVC, which cannot annotate a using declaration.
   /** \internal \deprecated Represents a vector with linearly spaced coefficients that allows sequential access only. */
   EIGEN_DEPRECATED typedef CwiseNullaryOp<internal::linspaced_op<Scalar>, PlainObject> SequentialLinSpacedReturnType;
   /** \internal Represents a vector with linearly spaced coefficients that allows random access. */
@@ -395,7 +396,7 @@ class DenseBase
   template <typename OtherDerived>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void swap(const DenseBase<OtherDerived>& other) {
     EIGEN_STATIC_ASSERT(!OtherDerived::IsPlainObjectBase, THIS_EXPRESSION_IS_NOT_A_LVALUE__IT_IS_READ_ONLY);
-    eigen_assert(rows() == other.rows() && cols() == other.cols());
+    EIGEN_INTERNAL_ASSERT_SAME_SHAPE(*this, other);
     call_assignment(derived(), other.const_cast_derived(), internal::swap_assign_op<Scalar>());
   }
 
@@ -404,7 +405,7 @@ class DenseBase
    */
   template <typename OtherDerived>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void swap(PlainObjectBase<OtherDerived>& other) {
-    eigen_assert(rows() == other.rows() && cols() == other.cols());
+    EIGEN_INTERNAL_ASSERT_SAME_SHAPE(*this, other);
     call_assignment(derived(), other.derived(), internal::swap_assign_op<Scalar>());
   }
 
@@ -448,7 +449,7 @@ class DenseBase
 
   /** \returns the unique coefficient of a 1x1 expression */
   EIGEN_DEVICE_FUNC CoeffReturnType value() const {
-    EIGEN_STATIC_ASSERT_SIZE_1x1(Derived) eigen_assert(this->rows() == 1 && this->cols() == 1);
+    EIGEN_INTERNAL_ASSERT_SCALAR(*this);
     return derived().coeff(0, 0);
   }
 
@@ -509,17 +510,37 @@ class DenseBase
   select(const typename DenseBase<ElseDerived>::Scalar& thenScalar, const DenseBase<ElseDerived>& elseMatrix) const;
 
   template <int p>
-  RealScalar lpNorm() const;
+  EIGEN_DEVICE_FUNC RealScalar lpNorm() const;
 
   template <int RowFactor, int ColFactor>
   EIGEN_DEVICE_FUNC const Replicate<Derived, RowFactor, ColFactor> replicate() const;
+
+  /**
+   * \return an expression of the replication of \c *this
+   *
+   * The replication factors can be passed at run time as integers, or at compile time as Eigen::fix<N> or
+   * Eigen::fix<N>(n). In the latter case, \c n is the runtime value used when \c N equals Eigen::Dynamic, and must
+   * equal \c N otherwise. For example, with a fixed row factor \c NRows and a runtime column factor \c cols:
+   * \code mat.replicate(fix<NRows>, cols) \endcode
+   *
+   * \sa DenseBase::replicate(Index,Index) const, DenseBase::replicate<int,int>(), class Replicate, fix, fix<N>(int)
+   */
+  template <typename NRowsType, typename NColsType>
+  EIGEN_DEVICE_FUNC const
+      Replicate<Derived, internal::get_fixed_value<NRowsType>::value, internal::get_fixed_value<NColsType>::value>
+      replicate(NRowsType nRows, NColsType nCols) const {
+    return Replicate<Derived, internal::get_fixed_value<NRowsType>::value, internal::get_fixed_value<NColsType>::value>(
+        derived(), internal::get_runtime_value(nRows), internal::get_runtime_value(nCols));
+  }
+
   /**
    * \return an expression of the replication of \c *this
    *
    * Example: \include MatrixBase_replicate_int_int.cpp
    * Output: \verbinclude MatrixBase_replicate_int_int.out
    *
-   * \sa VectorwiseOp::replicate(), DenseBase::replicate<int,int>(), class Replicate
+   * \sa VectorwiseOp::replicate(), DenseBase::replicate<int,int>(), DenseBase::replicate(NRowsType,NColsType) const,
+   * class Replicate
    */
   // Code moved here due to a CUDA compiler bug
   EIGEN_DEVICE_FUNC const Replicate<Derived, Dynamic, Dynamic> replicate(Index rowFactor, Index colFactor) const {
@@ -538,9 +559,9 @@ class DenseBase
   /** STL-like <a href="https://en.cppreference.com/w/cpp/named_req/RandomAccessIterator">RandomAccessIterator</a>
    * iterator type as returned by the begin() and end() methods.
    */
-  typedef random_access_iterator_type iterator;
+  using iterator = random_access_iterator_type;
   /** This is the const version of iterator (aka read-only) */
-  typedef random_access_iterator_type const_iterator;
+  using const_iterator = random_access_iterator_type;
 #else
   using iterator_type =
       std::conditional_t<(Flags & DirectAccessBit) == DirectAccessBit, internal::pointer_based_stl_iterator<Derived>,

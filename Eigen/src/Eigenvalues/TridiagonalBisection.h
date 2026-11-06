@@ -357,11 +357,16 @@ Index tridiagonal_sturm_count_below(const RealScalar* alpha, const RealScalar* b
  *                     max(abs_tol, eps * ||T||). Pass 0 for full precision.
  * \param[out] eivalues  filled with the selected eigenvalues in non-decreasing
  *                     order; resized to the number of selected eigenvalues.
+ * \param[out] effective_abs_tol  if not null, receives the convergence tolerance in the units of
+ *                     \a diag: max(abs_tol, eps * (Gershgorin bound of T), 2 * pivmin), the bracket
+ *                     width below which an eigenvalue counts as converged (before any rounding of
+ *                     eigenvalues that unscale into the subnormal range).
  * \returns the number of eigenvalues written to \c eivalues.
  */
 template <typename DiagType, typename SubdiagType, typename EivalType>
 Index tridiagonal_bisection(const DiagType& diag, const SubdiagType& subdiag, const EigenvalueRange& range,
-                            typename DiagType::Scalar abs_tol, EivalType& eivalues) {
+                            typename DiagType::Scalar abs_tol, EivalType& eivalues,
+                            typename DiagType::Scalar* effective_abs_tol = nullptr) {
   using RealScalar = typename DiagType::Scalar;
   using ArrayType = Array<RealScalar, Dynamic, 1>;
   EIGEN_STATIC_ASSERT(NumTraits<RealScalar>::IsInteger == 0 && NumTraits<RealScalar>::IsComplex == 0,
@@ -370,6 +375,7 @@ Index tridiagonal_bisection(const DiagType& diag, const SubdiagType& subdiag, co
   const Index n = diag.size();
   if (n == 0) {
     eivalues.derived().resize(0);
+    if (effective_abs_tol) *effective_abs_tol = RealScalar(0);
     return 0;
   }
 
@@ -377,16 +383,23 @@ Index tridiagonal_bisection(const DiagType& diag, const SubdiagType& subdiag, co
   // off-diagonal and during the Sturm recurrence; eigenvalues scale linearly, so the
   // scaling is undone at the very end. (The caller has already verified the input is
   // finite.) This mirrors the uniform scaling done in SelfAdjointEigenSolver::compute().
-  // Divide each entry directly by the scale rather than multiplying by its reciprocal: when the scale
-  // is subnormal, 1/scale overflows to infinity, the normalization silently disables itself, and the
-  // Sturm recurrence underflows and returns wrong eigenvalues.
-  RealScalar scale = diag.cwiseAbs().maxCoeff();
-  if (n >= 2) scale = numext::maxi(scale, subdiag.cwiseAbs().maxCoeff());
-  if (numext::is_exactly_zero(scale)) scale = RealScalar(1);
+  // The rescan recovers an all-subnormal input that a flushing SIMD unit reads as zero.
+  RealScalar maxCoeff = safe_scaling<RealScalar>::recover_flushed_max_coeff(diag, diag.cwiseAbs().maxCoeff());
+  if (n >= 2) {
+    maxCoeff = max_preserving_subnormals(
+        maxCoeff, safe_scaling<RealScalar>::recover_flushed_max_coeff(subdiag, subdiag.cwiseAbs().maxCoeff()));
+  }
 
   // Local contiguous copies of the scaled matrix data, |off-diagonal|, and its square.
-  const ArrayType alpha = diag.array() / scale;
-  const ArrayType beta_abs = (n >= 2) ? ArrayType(subdiag.array().abs() / scale) : ArrayType(0);
+  ArrayType alpha(n), beta_abs(n - 1);
+  const auto factors = safe_scaling<RealScalar>::scale_to(alpha, diag.array(), maxCoeff);
+  if (n >= 2) {
+    safe_scaling<RealScalar>::scale_to(beta_abs, subdiag.array(), maxCoeff, factors);
+    // |e| from the representation after scaling: MSVC's fabsf goes through double, and narrowing a subnormal result
+    // back to float flushes it to zero under FTZ.
+    for (Index i = 0; i < n - 1; ++i) beta_abs(i) = abs_preserving_subnormals(beta_abs(i));
+  }
+  const RealScalar scale = factors.scale;
   const ArrayType beta_sq = (n >= 2) ? ArrayType(beta_abs.square()) : ArrayType(0);
 
   // Smallest pivot allowed during the Sturm recurrence (positive, floored so
@@ -421,7 +434,8 @@ Index tridiagonal_bisection(const DiagType& diag, const SubdiagType& subdiag, co
   // below the pivot floor the Sturm counts are meaningless anyway, and stopping there keeps the
   // bracket midpoints out of the subnormal range, where hardware with flush-to-zero packet
   // arithmetic (ARMv7 NEON) would evaluate them inconsistently between the packet and scalar paths.
-  abs_tol = numext::maxi(abs_tol, numext::maxi(eps * tnorm, RealScalar(2) * pivmin));
+  abs_tol = numext::maxi(abs_tol / scale, numext::maxi(eps * tnorm, RealScalar(2) * pivmin));
+  if (effective_abs_tol) *effective_abs_tol = abs_tol * scale;
   // Widen the Gershgorin bracket so that, despite rounding in the Sturm recurrence, count() really does
   // reach 0 at lambda_min and n at lambda_max. The n*eps*tnorm term bounds the worst-case count error
   // accumulated over the n recurrence steps; the 2*pivmin term covers the pivot floor. The 2.1 prefactor
@@ -550,7 +564,8 @@ Index tridiagonal_bisection(const DiagType& diag, const SubdiagType& subdiag, co
   }
 
   // Undo the normalization.
-  eivalues = (mid_all.head(m_out) * scale).matrix();
+  eivalues = mid_all.head(m_out).matrix();
+  safe_scaling<RealScalar>::unscale_in_place(eivalues, maxCoeff, factors);
   return m_out;
 }
 

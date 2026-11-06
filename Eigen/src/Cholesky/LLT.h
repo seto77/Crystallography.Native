@@ -321,7 +321,6 @@ struct llt_inplace;
 template <typename MatrixType, typename VectorType>
 static Index llt_rank_update_lower(MatrixType& mat, const VectorType& vec,
                                    const typename MatrixType::RealScalar& sigma) {
-  using std::sqrt;
   using Scalar = typename MatrixType::Scalar;
   using RealScalar = typename MatrixType::RealScalar;
   using ColXpr = typename MatrixType::ColXpr;
@@ -331,7 +330,8 @@ static Index llt_rank_update_lower(MatrixType& mat, const VectorType& vec,
   using TempVecSegment = typename TempVectorType::SegmentReturnType;
 
   Index n = mat.cols();
-  eigen_assert(mat.rows() == n && vec.size() == n);
+  EIGEN_INTERNAL_ASSERT_SQUARE(mat);
+  EIGEN_INTERNAL_ASSERT_SIZE_MATCHES_COLS(vec, mat);
 
   TempVectorType temp;
 
@@ -339,7 +339,7 @@ static Index llt_rank_update_lower(MatrixType& mat, const VectorType& vec,
     // This version is based on Givens rotations.
     // It is faster than the other one below, but only works for updates,
     // i.e., for sigma > 0
-    temp = sqrt(sigma) * vec;
+    temp = numext::sqrt(sigma) * vec;
 
     for (Index i = 0; i < n; ++i) {
       JacobiRotation<Scalar> g;
@@ -364,7 +364,7 @@ static Index llt_rank_update_lower(MatrixType& mat, const VectorType& vec,
 
       RealScalar x = dj + swj2 / beta;
       if (x <= RealScalar(0)) return j;
-      RealScalar nLjj = sqrt(x);
+      RealScalar nLjj = numext::sqrt(x);
       mat.coeffRef(j, j) = nLjj;
       beta += swj2 / dj;
 
@@ -386,9 +386,7 @@ struct llt_inplace<Scalar, Lower> {
   using RealScalar = typename NumTraits<Scalar>::Real;
   template <typename MatrixType>
   static Index unblocked(MatrixType& mat) {
-    using std::sqrt;
-
-    eigen_assert(mat.rows() == mat.cols());
+    EIGEN_INTERNAL_ASSERT_SQUARE(mat);
     const Index size = mat.rows();
     for (Index k = 0; k < size; ++k) {
       Index rs = size - k - 1;  // remaining size
@@ -400,7 +398,7 @@ struct llt_inplace<Scalar, Lower> {
       RealScalar x = numext::real(mat.coeff(k, k));
       if (k > 0) x -= A10.squaredNorm();
       if (x <= RealScalar(0)) return k;
-      mat.coeffRef(k, k) = x = sqrt(x);
+      mat.coeffRef(k, k) = x = numext::sqrt(x);
       if (k > 0 && rs > 0) A21.noalias() -= A20 * A10.adjoint();
       if (rs > 0) A21 /= x;
     }
@@ -409,13 +407,15 @@ struct llt_inplace<Scalar, Lower> {
 
   template <typename MatrixType>
   static Index blocked(MatrixType& m) {
-    eigen_assert(m.rows() == m.cols());
+    EIGEN_INTERNAL_ASSERT_SQUARE(m);
     Index size = m.rows();
-    if (size < 32) return unblocked(m);
+    // The unblocked kernel walks row k of the factor, which strides through memory: it wins up to about 48 columns,
+    // and beyond that 16-column blocks keep those walks short while amortizing the level-3 updates.
+    if (size <= 48) return unblocked(m);
 
     Index blockSize = size / 8;
     blockSize = (blockSize / 16) * 16;
-    blockSize = (std::min)((std::max)(blockSize, Index(8)), Index(128));
+    blockSize = (std::min)((std::max)(blockSize, Index(16)), Index(128));
 
     for (Index k = 0; k < size; k += blockSize) {
       // partition the matrix:
@@ -428,8 +428,8 @@ struct llt_inplace<Scalar, Lower> {
       Block<MatrixType, Dynamic, Dynamic> A21(m, k + bs, k, rs, bs);
       Block<MatrixType, Dynamic, Dynamic> A22(m, k + bs, k + bs, rs, rs);
 
-      Index ret;
-      if ((ret = unblocked(A11)) >= 0) return k + ret;
+      const Index ret = unblocked(A11);
+      if (ret >= 0) return k + ret;
       if (rs > 0) A11.adjoint().template triangularView<Upper>().template solveInPlace<OnTheRight>(A21);
       if (rs > 0)
         A22.template selfadjointView<Lower>().rankUpdate(A21,
@@ -499,7 +499,7 @@ struct LLT_Traits<MatrixType, Upper> {
 template <typename MatrixType, int UpLo_>
 template <typename InputType>
 LLT<MatrixType, UpLo_>& LLT<MatrixType, UpLo_>::compute(const EigenBase<InputType>& a) {
-  eigen_assert(a.rows() == a.cols());
+  EIGEN_INTERNAL_ASSERT_SQUARE(a);
   const Index size = a.rows();
   m_matrix.resize(size, size);
   if (!internal::is_same_dense(m_matrix, a.derived())) m_matrix = a.derived();
@@ -523,7 +523,7 @@ template <typename MatrixType_, int UpLo_>
 template <typename VectorType>
 LLT<MatrixType_, UpLo_>& LLT<MatrixType_, UpLo_>::rankUpdate(const VectorType& v, const RealScalar& sigma) {
   EIGEN_STATIC_ASSERT_VECTOR_ONLY(VectorType);
-  eigen_assert(v.size() == m_matrix.cols());
+  EIGEN_INTERNAL_ASSERT_SIZE_MATCHES_COLS(v, m_matrix);
   eigen_assert(m_isInitialized);
   if (internal::llt_inplace<typename MatrixType::Scalar, UpLo>::rankUpdate(m_matrix, v, sigma) >= 0)
     m_info = NumericalIssue;
@@ -595,7 +595,7 @@ template <typename MatrixType, int UpLo_>
 template <typename Derived>
 void LLT<MatrixType, UpLo_>::solveInPlace(const MatrixBase<Derived>& bAndX) const {
   eigen_assert(m_isInitialized && "LLT is not initialized.");
-  eigen_assert(m_matrix.rows() == bAndX.rows());
+  EIGEN_INTERNAL_ASSERT_SAME_ROWS(m_matrix, bAndX);
   matrixL().solveInPlace(bAndX);
   matrixU().solveInPlace(bAndX);
 }
@@ -636,8 +636,8 @@ struct Assignment<DstXprType, Inverse<LLT<MatrixType, UpLo_> >,
       llt.solveInPlace(dst);
     }
     // Mirror; (i, j) reads (j, i), which lies in the computed triangle and is never written here, so
-    // the aliasing is benign. The computed diagonal is exactly real (a squaredNorm above the
-    // threshold, a real scalar below it), so the result is exactly self-adjoint.
+    // the aliasing is benign. LAUUM makes the computed diagonal exactly real, as does the real-scalar
+    // solve below the threshold, so the result is exactly self-adjoint.
     dst.template triangularView<kMirrorMode>() = dst.adjoint();
   }
 };

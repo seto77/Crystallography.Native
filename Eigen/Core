@@ -33,7 +33,7 @@
 #include <hip/hip_runtime.h>
 #endif
 
-#ifdef EIGEN_EXCEPTIONS
+#if defined(EIGEN_EXCEPTIONS) || defined(EIGEN_GPU_COMPILE_PHASE)
 #include <new>
 #endif
 
@@ -128,6 +128,7 @@
 #if EIGEN_OS_LINUX
 #if !defined(EIGEN_NO_CPU_CACHE_SYSFS)
 #include <cstdio>
+#include <fcntl.h>
 #include <sched.h>
 #endif
 #include <unistd.h>
@@ -176,7 +177,7 @@ using std::size_t;
 #elif defined(EIGEN_LAPACKE_SYSTEM)
 #include <lapacke.h>
 #else
-#include "src/misc/lapacke.h"
+#include "src/LAPACKESupport/lapacke.h"
 #endif
 #endif
 
@@ -191,6 +192,7 @@ using std::size_t;
 #include "src/Core/util/Assert.h"
 #include "src/Core/util/ForwardDeclarations.h"
 #include "src/Core/util/StaticAssert.h"
+#include "src/Core/util/ShapeChecks.h"
 #include "src/Core/util/XprHelper.h"
 #include "src/Core/util/Memory.h"
 #include "src/Core/util/IntegralConstant.h"
@@ -273,13 +275,16 @@ using std::size_t;
 #include "src/Core/arch/NEON/PacketMath.h"
 #include "src/Core/arch/NEON/TypeCasting.h"
 #include "src/Core/arch/NEON/MathFunctions.h"
+#include "src/Core/arch/NEON/PacketMathBF16.h"
 #include "src/Core/arch/NEON/Complex.h"
 #elif defined EIGEN_VECTORIZE_SME
-// Utilize NEON for non-GEMM kernels.
+// Keep NEON packet types outside the specialized streaming kernels.
 #include "src/Core/arch/NEON/PacketMath.h"
 #include "src/Core/arch/NEON/TypeCasting.h"
 #include "src/Core/arch/NEON/MathFunctions.h"
+#include "src/Core/arch/NEON/PacketMathBF16.h"
 #include "src/Core/arch/NEON/Complex.h"
+#include "src/Core/arch/SME/PacketMath.h"
 #elif defined EIGEN_VECTORIZE_LSX
 #include "src/Core/arch/LSX/PacketMath.h"
 #include "src/Core/arch/LSX/TypeCasting.h"
@@ -388,6 +393,7 @@ using std::size_t;
 #include "src/Core/CwiseUnaryView.h"
 #include "src/Core/SelfCwiseBinaryOp.h"
 #include "src/Core/InnerProduct.h"
+#include "src/Core/SafeScaling.h"
 #include "src/Core/Dot.h"
 #include "src/Core/StableNorm.h"
 #include "src/Core/Stride.h"
@@ -405,8 +411,9 @@ using std::size_t;
 #include "src/Core/SkewSymmetricMatrix3.h"
 #include "src/Core/Redux.h"
 #include "src/Core/Visitor.h"
+#include "src/Core/Predicator.h"
 #include "src/Core/FindCoeff.h"
-#include "src/Core/Fuzzy.h"
+#include "src/Core/ApproxComparisons.h"
 #include "src/Core/Swap.h"
 #include "src/Core/CommaInitializer.h"
 #include "src/Core/GeneralProduct.h"
@@ -416,6 +423,7 @@ using std::size_t;
 #include "src/Core/PermutationMatrix.h"
 #include "src/Core/Transpositions.h"
 #include "src/Core/TriangularMatrix.h"
+#include "src/Core/MatrixNorms.h"
 #include "src/Core/SelfAdjointView.h"
 #include "src/Core/products/GeneralBlockPanelKernel.h"
 #include "src/Core/DeviceWrapper.h"
@@ -424,6 +432,7 @@ using std::size_t;
 #endif
 #include "src/Core/products/Parallelizer.h"
 #include "src/Core/ProductEvaluators.h"
+#include "src/Core/ScaledPermutationMatrix.h"
 #include "src/Core/products/GeneralMatrixVector.h"
 #include "src/Core/products/GeneralMatrixMatrix.h"
 #include "src/Core/SolveTriangular.h"
@@ -450,6 +459,7 @@ using std::size_t;
 #include "src/Core/arch/SVE/GeneralBlockPanelKernel.h"
 #elif defined EIGEN_VECTORIZE_SME
 #include "src/Core/arch/SME/GeneralBlockPanelKernel.h"
+#include "src/Core/arch/SME/VectorKernels.h"
 #elif defined EIGEN_VECTORIZE_LSX
 #include "src/Core/arch/LSX/GeneralBlockPanelKernel.h"
 #elif defined EIGEN_VECTORIZE_RVV10
