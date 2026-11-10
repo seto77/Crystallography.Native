@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <new>
+#include <memory>
 #include <bit>
 #include <../Eigen/Core>
 #include <../Eigen/Dense>
@@ -52,11 +53,23 @@ inline uint32_t Bf16Bits(float f) { uint32_t u; std::memcpy(&u, &f, 4); u += 0x7
 inline float RoundToBf16(float f) { uint32_t u = Bf16Bits(f) << 16; float r; std::memcpy(&r, &u, 4); return r; } // 261110Cl 追加: AVX-512 の版と同じ bf16 の丸め (版の間で X の丸めをそろえる)
 
 #if defined(DT_X86)
+// 261110Cl (codex2 第 32 回): BF16 だけでなく、使う AVX-512 の下位機能 (F・BW・VL) と OS の状態保存 (XGETBV の opmask・ZMM) も確かめる
+#if defined(__clang__)
+__attribute__((target("xsave")))
+#endif
+unsigned long long ReadXcr0() { return _xgetbv(0); }
 bool CpuHasAvx512Bf16()
 {
 	int r[4];
 	__cpuidex(r, 0, 0);
 	if (r[0] < 7) return false;
+	__cpuidex(r, 1, 0);
+	const bool osxsave = ((r[2] >> 27) & 1) != 0; // CPUID.1:ECX[27] = OSXSAVE
+	if (!osxsave) return false;
+	if ((ReadXcr0() & 0xE6) != 0xE6) return false; // XMM・YMM・opmask・ZMM_Hi256・Hi16_ZMM の状態を OS が保存する
+	__cpuidex(r, 7, 0);
+	const bool f = ((r[1] >> 16) & 1) != 0, bw = ((r[1] >> 30) & 1) != 0, vl = ((unsigned)r[1] >> 31) != 0; // EBX[16] F・[30] BW・[31] VL
+	if (!(f && bw && vl)) return false;
 	__cpuidex(r, 7, 1);
 	return ((r[0] >> 5) & 1) != 0; // CPUID.(EAX=7, ECX=1):EAX[5] = AVX512_BF16
 }
@@ -145,12 +158,11 @@ void AccumRowBf(int n, const int* hq, const uint32_t* bre, const uint32_t* bim, 
 #endif
 #endif
 
-bool g_bf16Checked = false, g_bf16Available = false;
 bool Bf16Available()
 {
 #if defined(DT_HAS_BF16_PATH)
-	if (!g_bf16Checked) { g_bf16Available = CpuHasAvx512Bf16(); g_bf16Checked = true; } // 同じ値を書くだけなので並列の競合は無害
-	return g_bf16Available;
+	static const bool available = CpuHasAvx512Bf16(); // 261110Cl (codex2 第 32 回): 関数の中の static の初期化はスレッドに安全 (未同期の書き込みをやめた)
+	return available;
 #else
 	return false;
 #endif
@@ -388,7 +400,7 @@ int DressedSolveImpl(const Tables& c, Workspace& ws, const DressedTailSettings& 
 		{
 			int r = r0 + rr, col = qPhaseCol[r]; float dq = (float)Dq[r];
 			cf* dst = ws.pc.data() + (size_t)rr * ns;
-			if (col < 0 || col >= c.nPhaseCols) { std::fill(dst, dst + ns, cf(0)); continue; }
+			if (col < 0 || col >= c.nPhaseCols) return DT_FAIL_ARGS; // 261110Cl (codex2 第 32 回): 位相の表の列の範囲外を黙って 0 の源にしない
 			const cf* src = c.phase.data() + (size_t)col * ns;
 			for (int i = 0; i < ns; i++) dst[i] = src[i] * dq;
 		}
@@ -437,7 +449,7 @@ EIGEN_FUNCS_API void* _DressedTailCreateTables(const double* diffU, const double
 	}
 	try
 	{
-		auto t = new Tables();
+		auto t = std::make_unique<Tables>(); // 261110Cl (codex2 第 32 回): 途中の例外でも確保した分を返す
 		t->DH = DH; t->DK = DK; t->DL = DL;
 		t->diffU.resize(diffLength); t->diffF.resize(diffLength);
 		for (int i = 0; i < diffLength; i++) { t->diffU[i] = cf((float)diffU[2 * i], (float)diffU[2 * i + 1]); t->diffF[i] = cf((float)diffF[2 * i], (float)diffF[2 * i + 1]); }
@@ -456,7 +468,7 @@ EIGEN_FUNCS_API void* _DressedTailCreateTables(const double* diffU, const double
 		t->phase.resize((size_t)nPhaseCols * nSites);
 		for (size_t i = 0; i < t->phase.size(); i++) t->phase[i] = cf((float)phase[2 * i], (float)phase[2 * i + 1]);
 		t->wsite.assign(wsite, wsite + nSites);
-		return t;
+		return t.release();
 	}
 	catch (const std::bad_alloc&) { if (status) *status = DT_FAIL_OOM; return nullptr; }
 	catch (...) { if (status) *status = DT_FAIL_UNKNOWN; return nullptr; }
