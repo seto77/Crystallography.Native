@@ -49,6 +49,7 @@ constexpr int kAbiVersion = 1;
 inline bool IsFiniteBits(double x) { return (std::bit_cast<uint64_t>(x) & 0x7FF0000000000000ull) != 0x7FF0000000000000ull; }
 
 inline uint32_t Bf16Bits(float f) { uint32_t u; std::memcpy(&u, &f, 4); u += 0x7FFF + ((u >> 16) & 1); return u >> 16; } // 最近接偶数への丸め
+inline float RoundToBf16(float f) { uint32_t u = Bf16Bits(f) << 16; float r; std::memcpy(&r, &u, 4); return r; } // 261110Cl 追加: AVX-512 の版と同じ bf16 の丸め (版の間で X の丸めをそろえる)
 
 #if defined(DT_X86)
 bool CpuHasAvx512Bf16()
@@ -224,14 +225,14 @@ void SparseProduct(const Tables& c, Workspace& ws, bool useUBf16, int nQ, int nM
 	}
 #else
 	(void)useUBf16;
-	// AVX-512 の無い版: X は単精度 (行優先の実部・虚部)、当たる相手と足す順は同じ
+	// AVX-512 の無い版: X は単精度の配列 (行優先の実部・虚部) に、AVX-512 の版と同じ bf16 の丸めをした値で持つ。当たる相手と足す順は同じ
 	const int kp = nM;
 	ws.yr.resize(kp); ws.yi.resize(kp);
 	ws.xr.resize((size_t)nQ * kp); ws.xi.resize((size_t)nQ * kp);
 	for (int col = 0; col < nM; col++)
 	{
 		const cf* xc = ws.t.data() + (size_t)col * nQ;
-		for (int r = 0; r < nQ; r++) { float dv = (float)Dq[r]; ws.xr[(size_t)r * kp + col] = xc[r].real() * dv; ws.xi[(size_t)r * kp + col] = xc[r].imag() * dv; }
+		for (int r = 0; r < nQ; r++) { float dv = (float)Dq[r]; ws.xr[(size_t)r * kp + col] = RoundToBf16(xc[r].real() * dv); ws.xi[(size_t)r * kp + col] = RoundToBf16(xc[r].imag() * dv); }
 	}
 	for (int o = 0; o < nQ; o++)
 	{
