@@ -310,6 +310,7 @@
   <ItemGroup>
     <!-- 261106Ch: shared stable Bloch thickness integral -->
     <ClInclude Include="BlochWaveIntegral.h" />
+    <ClInclude Include="DressedTail.h" /><!-- 261110Cl 追加: EBSD のビーム選択の新方式 (着衣つきの裾) -->
     <ClInclude Include="EigenFuncs.h" />
     <ClInclude Include="HRTEM.h" />
     <ClInclude Include="PseudoVoigt.h" />
@@ -319,6 +320,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="DressedTail.cpp" /><!-- 261110Cl 追加 -->
     <ClCompile Include="EigenFuncs.cpp" />
     <ClCompile Include="HRTEM.cpp" />
     <ClCompile Include="PseudoVoigt.cpp" />
